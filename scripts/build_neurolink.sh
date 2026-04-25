@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ENV_SCRIPT="${ROOT_DIR}/applocation/NeuroLink/scripts/setup_neurolink_env.sh"
+STYLE_SCRIPT="${ROOT_DIR}/applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh"
+UNIT_SOURCE_DIR="applocation/NeuroLink/neuro_unit"
+UNIT_APP_SOURCE_DIR="${ROOT_DIR}/applocation/NeuroLink/subprojects/neuro_unit_app"
+UNIT_APP_NAME="neuro_unit_app"
+PRESET="unit"
+BOARD="dnesp32s3b/esp32s3/procpu"
+BUILD_DIR=""
+PRISTINE_ALWAYS=0
+ESP_DEVICE=""
+CHECK_C_STYLE=1
+EXTRA_WEST_ARGS=()
+EXTRA_CMAKE_ARGS=()
+ZENOH_PICO_MODULE_FILE="${ROOT_DIR}/modules/lib/zenoh-pico/zephyr/CMakeLists.txt"
+
+usage() {
+  cat <<'EOF'
+Usage: bash applocation/NeuroLink/scripts/build_neurolink.sh [options]
+  --preset <unit|unit-ut|unit-edk|unit-app|unit-ext|flash-unit>
+  --board <board>
+  --build-dir <build/path>
+  --pristine-always
+  --esp-device <device>
+  --no-c-style-check
+  --extra-west-arg <arg>
+  --extra-cmake-arg <arg>
+EOF
+}
+
+assert_build_dir() {
+  local candidate="$1"
+  local normalized
+
+  [[ -n "${candidate}" ]] || {
+    echo "build dir is required" >&2
+    exit 2
+  }
+
+  normalized="$(printf '%s' "${candidate}" | tr '\\' '/' | sed 's/[[:space:]]*$//')"
+  [[ ! "${normalized}" =~ \.\. ]] || {
+    echo "invalid build dir '${candidate}': parent traversal is not allowed" >&2
+    exit 2
+  }
+  [[ ! "${normalized}" =~ ^build_ ]] || {
+    echo "invalid build dir '${candidate}': root-level build_* is forbidden" >&2
+    exit 2
+  }
+  [[ "${normalized}" =~ ^build/.+ ]] || {
+    echo "invalid build dir '${candidate}': only build/<target> is allowed" >&2
+    exit 2
+  }
+}
+
+assert_zenoh_pico_module() {
+  [[ -f "${ZENOH_PICO_MODULE_FILE}" ]] && return 0
+
+  echo "missing zenoh-pico Zephyr module at ${ZENOH_PICO_MODULE_FILE}" >&2
+  echo "run 'west update zenoh-pico' or 'west update' after keeping zephyr/submanifests/zenoh-pico.yaml in the workspace" >&2
+  exit 2
+}
+
+get_unit_app_build_dir() {
+  local parent_dir
+  local base_name
+
+  parent_dir="$(dirname "${BUILD_DIR}")"
+  base_name="$(basename "${BUILD_DIR}")"
+  printf '%s/%s_app' "${parent_dir}" "${base_name}"
+}
+
+ensure_unit_build_configured() {
+  if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
+    return 0
+  fi
+
+  local cmd=(west build)
+
+  [[ ${PRISTINE_ALWAYS} -eq 1 ]] && cmd+=(-p always)
+  cmd+=("${EXTRA_WEST_ARGS[@]}" -b "${BOARD}" -s "${UNIT_SOURCE_DIR}" -d "${BUILD_DIR}")
+  if [[ ${#EXTRA_CMAKE_ARGS[@]} -gt 0 ]]; then
+    cmd+=(-- "${EXTRA_CMAKE_ARGS[@]}")
+  fi
+  "${cmd[@]}"
+}
+
+cmake_cache_value() {
+  local cache_file="$1"
+  local key="$2"
+
+  awk -F= -v cache_key="${key}" '
+    index($0, cache_key ":") == 1 {
+      sub(/^[^=]*=/, "", $0)
+      print
+      exit
+    }
+  ' "${cache_file}"
+}
+
+build_unit_edk() {
+  ensure_unit_build_configured
+  west build -d "${BUILD_DIR}" -t llext-edk "${EXTRA_WEST_ARGS[@]}"
+}
+
+extract_unit_edk() {
+  local edk_archive="${BUILD_DIR}/zephyr/llext-edk.tar.xz"
+  local zephyr_dir="${BUILD_DIR}/zephyr"
+
+  [[ -f "${edk_archive}" ]] || {
+    echo "missing llext EDK archive at ${edk_archive}" >&2
+    exit 2
+  }
+
+  rm -rf "${zephyr_dir}/llext-edk"
+  tar -xf "${edk_archive}" -C "${zephyr_dir}"
+}
+
+build_unit_app_external() {
+  local cache_file="${BUILD_DIR}/CMakeCache.txt"
+  local app_build_dir
+  local c_compiler
+  local edk_install_dir
+  local staged_artifact_dir="${BUILD_DIR}/llext"
+  local staged_artifact_file="${staged_artifact_dir}/${UNIT_APP_NAME}.llext"
+
+  app_build_dir="$(get_unit_app_build_dir)"
+  assert_build_dir "${app_build_dir}"
+
+  build_unit_edk
+  extract_unit_edk
+
+  c_compiler="$(cmake_cache_value "${cache_file}" CMAKE_C_COMPILER)"
+  [[ -n "${c_compiler}" ]] || {
+    echo "failed to resolve C compiler from ${cache_file}" >&2
+    exit 2
+  }
+  edk_install_dir="$(cd "${BUILD_DIR}/zephyr/llext-edk" && pwd)"
+
+  cmake -S "${UNIT_APP_SOURCE_DIR}" -B "${app_build_dir}" \
+    -DCMAKE_TOOLCHAIN_FILE="${UNIT_APP_SOURCE_DIR}/toolchain.cmake" \
+    -DCMAKE_C_COMPILER="${c_compiler}" \
+    -DLLEXT_EDK_INSTALL_DIR="${edk_install_dir}"
+  cmake --build "${app_build_dir}"
+
+  mkdir -p "${staged_artifact_dir}"
+  cp "${app_build_dir}/${UNIT_APP_NAME}.llext" "${staged_artifact_file}"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --preset)
+      PRESET="$2"
+      shift 2
+      ;;
+    --board)
+      BOARD="$2"
+      shift 2
+      ;;
+    --build-dir)
+      BUILD_DIR="$2"
+      shift 2
+      ;;
+    --pristine-always)
+      PRISTINE_ALWAYS=1
+      shift
+      ;;
+    --esp-device)
+      ESP_DEVICE="$2"
+      shift 2
+      ;;
+    --no-c-style-check)
+      CHECK_C_STYLE=0
+      shift
+      ;;
+    --extra-west-arg)
+      EXTRA_WEST_ARGS+=("$2")
+      shift 2
+      ;;
+    --extra-cmake-arg)
+      EXTRA_CMAKE_ARGS+=("$2")
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "${PRESET}" in
+  unit|unit-ut|unit-edk|unit-app|unit-ext|flash-unit)
+    ;;
+  *)
+    echo "invalid preset '${PRESET}'" >&2
+    exit 2
+    ;;
+esac
+
+if [[ -n "${BUILD_DIR}" ]]; then
+  assert_build_dir "${BUILD_DIR}"
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_SCRIPT}" --activate --strict
+cd "${ROOT_DIR}"
+
+if [[ ${CHECK_C_STYLE} -eq 1 ]]; then
+  bash "${STYLE_SCRIPT}"
+fi
+
+if [[ -z "${BUILD_DIR}" ]]; then
+  case "${PRESET}" in
+    unit|unit-edk|unit-app|unit-ext|flash-unit)
+      BUILD_DIR="build/neurolink_unit"
+      ;;
+    unit-ut)
+      BUILD_DIR="build/neurolink_unit_ut"
+      ;;
+  esac
+fi
+
+assert_build_dir "${BUILD_DIR}"
+
+case "${PRESET}" in
+  unit|unit-edk|unit-app|unit-ext)
+    assert_zenoh_pico_module
+    ;;
+esac
+
+case "${PRESET}" in
+  unit)
+    cmd=(west build)
+    [[ ${PRISTINE_ALWAYS} -eq 1 ]] && cmd+=(-p always)
+    cmd+=("${EXTRA_WEST_ARGS[@]}" -b "${BOARD}" -s "${UNIT_SOURCE_DIR}" -d "${BUILD_DIR}")
+    if [[ ${#EXTRA_CMAKE_ARGS[@]} -gt 0 ]]; then
+      cmd+=(-- "${EXTRA_CMAKE_ARGS[@]}")
+    fi
+    "${cmd[@]}"
+    ;;
+  unit-ut)
+    cmd=(west build)
+    [[ ${PRISTINE_ALWAYS} -eq 1 ]] && cmd+=(-p always)
+    cmd+=("${EXTRA_WEST_ARGS[@]}" -b "${BOARD}" -s "applocation/NeuroLink/neuro_unit/tests/unit" -d "${BUILD_DIR}")
+    if [[ ${#EXTRA_CMAKE_ARGS[@]} -gt 0 ]]; then
+      cmd+=(-- "${EXTRA_CMAKE_ARGS[@]}")
+    fi
+    "${cmd[@]}"
+    ;;
+  unit-edk)
+    build_unit_edk
+    extract_unit_edk
+    ;;
+  unit-app|unit-ext)
+    build_unit_app_external
+    ;;
+  flash-unit)
+    cmd=(west flash -d "${BUILD_DIR}")
+    [[ -n "${ESP_DEVICE}" ]] && cmd+=(--esp-device "${ESP_DEVICE}")
+    cmd+=("${EXTRA_WEST_ARGS[@]}")
+    "${cmd[@]}"
+    ;;
+esac

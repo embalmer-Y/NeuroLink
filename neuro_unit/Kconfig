@@ -1,0 +1,62 @@
+source "Kconfig.zephyr"
+
+menu "NeuroLink Unit"
+
+config NEUROLINK_NODE_ID
+	string "NeuroLink node id"
+	default "unit-01"
+	help
+	  Node id used in neuro key expressions and event payload metadata.
+
+config NEUROLINK_ZENOH_MODE
+	string "Zenoh mode"
+	default "client"
+	help
+	  Zenoh session mode passed to Z_CONFIG_MODE_KEY.
+
+config NEUROLINK_ZENOH_CONNECT
+	string "Zenoh connect endpoint"
+	default "tcp/192.168.2.95:7447"
+	help
+	  Default zenoh connect locator. Runtime override can replace this value.
+
+config NEUROLINK_ZENOH_PICO_DEBUG
+	bool "Enable zenoh-pico debug logs"
+	default y
+	help
+	  Enable low-level zenoh-pico transport/session debug logs through
+	  compile-time debug macros.
+
+config NEUROLINK_ZENOH_PICO_DEBUG_LEVEL
+	int "zenoh-pico debug verbosity"
+	range 0 3
+	default 3 if NEUROLINK_ZENOH_PICO_DEBUG
+	default 0
+	help
+	  Debug verbosity value passed to ZENOH_DEBUG. 0 disables detailed
+	  traces; 3 enables maximum transport/session diagnostics.
+
+config NEUROLINK_UNIT_DEBUG_MODE
+	bool "Enable NeuroLink Unit framework debug mode"
+	default n
+	help
+	  Enables framework-level diagnostics for Unit modules. This setting
+	  is independent from zenoh-pico transport debug logs and is intended
+	  for release-grade troubleshooting of Unit lifecycle flows.
+
+config NEUROLINK_UNIT_DEBUG_VERBOSE_EVENTS
+	bool "Enable verbose Unit event diagnostics"
+	depends on NEUROLINK_UNIT_DEBUG_MODE
+	default y
+	help
+	  Adds detailed event build/publish traces for Unit event helpers.
+
+config NEUROLINK_UNIT_DEBUG_VERBOSE_STATE
+	bool "Enable verbose Unit state diagnostics"
+	depends on NEUROLINK_UNIT_DEBUG_MODE
+	default y
+	help
+	  Adds detailed state snapshot traces when semantic state transitions
+	  are committed to the Unit state registry.
+
+endmenu

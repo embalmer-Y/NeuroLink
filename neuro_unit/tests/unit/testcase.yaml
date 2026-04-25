@@ -1,0 +1,10 @@
+tests:
+  neurolink.neuro_unit.modules:
+    type: unit
+    tags:
+      - neurolink
+      - neuro_unit
+      - unit_ut
+      - modules
+    platform_allow:
+      - native_sim

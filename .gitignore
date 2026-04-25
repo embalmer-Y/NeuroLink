@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Zephyr and build outputs
+build/
+.out/
+out/
+twister-out*/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+zephyr/.config
+zephyr/include/generated/
+
+# Generated smoke and diagnostic evidence
+smoke-evidence/*
+!smoke-evidence/.gitkeep
+
+# Logs and transient runtime files
+*.log
+*.pid
+*.tmp
+*.swp
+.DS_Store
+
+# Editor metadata
+.vscode/
+.idea/
