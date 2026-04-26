@@ -3,10 +3,13 @@
 #include <errno.h>
 #include <string.h>
 
+#include "neuro_protocol_codec_cbor.h"
 #include "neuro_unit_event.h"
 
 static char g_last_keyexpr[NEURO_UNIT_EVENT_KEY_LEN];
 static char g_last_payload[NEURO_UNIT_EVENT_JSON_LEN];
+static uint8_t g_last_bytes[NEURO_UNIT_EVENT_JSON_LEN];
+static size_t g_last_bytes_len;
 static int g_publish_calls;
 static int g_publish_ret;
 
@@ -21,11 +24,27 @@ static int mock_publish(
 	return g_publish_ret;
 }
 
+static int mock_publish_bytes(const char *keyexpr, const uint8_t *payload,
+	size_t payload_len, void *ctx)
+{
+	ARG_UNUSED(ctx);
+
+	g_publish_calls++;
+	snprintk(g_last_keyexpr, sizeof(g_last_keyexpr), "%s", keyexpr);
+	zassert_true(payload_len <= sizeof(g_last_bytes),
+		"test payload buffer should be large enough");
+	memcpy(g_last_bytes, payload, payload_len);
+	g_last_bytes_len = payload_len;
+	return g_publish_ret;
+}
+
 static void test_reset(void *fixture)
 {
 	ARG_UNUSED(fixture);
 	memset(g_last_keyexpr, 0, sizeof(g_last_keyexpr));
 	memset(g_last_payload, 0, sizeof(g_last_payload));
+	memset(g_last_bytes, 0, sizeof(g_last_bytes));
+	g_last_bytes_len = 0U;
 	g_publish_calls = 0;
 	g_publish_ret = 0;
 	neuro_unit_event_reset();
@@ -105,6 +124,7 @@ ZTEST(neuro_unit_event, test_publish_callback_event_contract)
 
 	ret = neuro_unit_publish_callback_event(&event);
 	zassert_equal(ret, 0, "callback event publish should succeed");
+	k_sleep(K_MSEC(20));
 	zassert_equal(g_publish_calls, 1, "publish callback should run once");
 	zassert_true(
 		strcmp(g_last_keyexpr,
@@ -116,6 +136,39 @@ ZTEST(neuro_unit_event, test_publish_callback_event_contract)
 			"{\"app_id\":\"neuro_unit_app\",\"event_name\":\"callback-test\",\"invoke_count\":3,\"start_count\":1}") ==
 			0,
 		"callback event payload contract changed");
+}
+
+ZTEST(neuro_unit_event, test_publish_callback_event_binary_contract)
+{
+	const struct neuro_unit_app_callback_event event = {
+		.app_id = "neuro_unit_app",
+		.event_name = "callback-test",
+		.invoke_count = 3U,
+		.start_count = 1,
+	};
+	struct neuro_protocol_cbor_envelope envelope;
+	int ret;
+
+	ret = neuro_unit_event_configure_bytes(
+		"unit-01", mock_publish_bytes, NULL);
+	zassert_equal(ret, 0, "binary event configure should succeed");
+
+	ret = neuro_unit_publish_callback_event(&event);
+	zassert_equal(ret, 0, "callback event publish should succeed");
+	k_sleep(K_MSEC(50));
+	zassert_equal(g_publish_calls, 1, "publish callback should run once");
+	zassert_true(
+		strcmp(g_last_keyexpr,
+			"neuro/unit-01/event/app/neuro_unit_app/callback-test") ==
+			0,
+		"callback event keyexpr contract changed");
+	zassert_true(g_last_bytes_len > 0U, "CBOR payload should be captured");
+	zassert_equal(neuro_protocol_cbor_decode_envelope_header(
+			      g_last_bytes, g_last_bytes_len, &envelope),
+		0, "callback event CBOR envelope should decode");
+	zassert_equal(envelope.message_kind,
+		NEURO_PROTOCOL_CBOR_MSG_CALLBACK_EVENT,
+		"callback event kind should decode");
 }
 
 ZTEST(neuro_unit_event, test_write_command_reply_json_contract)

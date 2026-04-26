@@ -1,5 +1,6 @@
 #include <zephyr/llext/symbol.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
 #include <errno.h>
@@ -10,6 +11,7 @@
 #include "neuro_unit_event.h"
 #include "neuro_protocol.h"
 #include "neuro_protocol_codec.h"
+#include "neuro_protocol_codec_cbor.h"
 
 #if defined(CONFIG_NEUROLINK_UNIT_DEBUG_MODE) &&                               \
 	CONFIG_NEUROLINK_UNIT_DEBUG_MODE
@@ -18,15 +20,44 @@
 #define NEURO_UNIT_EVENT_LOG_LEVEL LOG_LEVEL_INF
 #endif
 
+#define NEURO_UNIT_EVENT_ASYNC_QUEUE_DEPTH 8
+
 LOG_MODULE_REGISTER(neuro_unit_event, NEURO_UNIT_EVENT_LOG_LEVEL);
+
+struct neuro_unit_pending_event_bytes {
+	char keyexpr[NEURO_UNIT_EVENT_KEY_LEN];
+	uint8_t payload[NEURO_UNIT_EVENT_JSON_LEN];
+	size_t payload_len;
+};
 
 struct neuro_unit_event_ctx {
 	char node_id[NEURO_UNIT_EVENT_NODE_ID_LEN];
 	neuro_unit_event_publish_fn publish_fn;
+	neuro_unit_event_publish_bytes_fn publish_bytes_fn;
 	void *publish_ctx;
 };
 
 static struct neuro_unit_event_ctx g_event_ctx;
+
+K_MSGQ_DEFINE(g_event_bytes_msgq, sizeof(struct neuro_unit_pending_event_bytes),
+	NEURO_UNIT_EVENT_ASYNC_QUEUE_DEPTH, 4);
+
+static int neuro_unit_event_publish_bytes_now(
+	const char *keyexpr, const uint8_t *payload, size_t payload_len);
+
+static void neuro_unit_event_work_handler(struct k_work *work)
+{
+	struct neuro_unit_pending_event_bytes event;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&g_event_bytes_msgq, &event, K_NO_WAIT) == 0) {
+		(void)neuro_unit_event_publish_bytes_now(
+			event.keyexpr, event.payload, event.payload_len);
+	}
+}
+
+K_WORK_DEFINE(g_event_bytes_work, neuro_unit_event_work_handler);
 
 static bool token_is_valid(const char *token)
 {
@@ -67,14 +98,40 @@ int neuro_unit_event_configure(
 	}
 
 	g_event_ctx.publish_fn = publish_fn;
+	g_event_ctx.publish_bytes_fn = NULL;
 	g_event_ctx.publish_ctx = ctx;
 	LOG_INF("event module configured: node=%s", g_event_ctx.node_id);
+	return 0;
+}
+
+int neuro_unit_event_configure_bytes(const char *node_id,
+	neuro_unit_event_publish_bytes_fn publish_fn, void *ctx)
+{
+	if (!token_is_valid(node_id) || publish_fn == NULL) {
+		neuro_unit_diag_contract_error(
+			"event.configure_bytes", "node_id/publish_fn", -EINVAL);
+		return -EINVAL;
+	}
+
+	if (snprintk(g_event_ctx.node_id, sizeof(g_event_ctx.node_id), "%s",
+		    node_id) >= (int)sizeof(g_event_ctx.node_id)) {
+		neuro_unit_diag_contract_error(
+			"event.configure_bytes", "node_id", -ENAMETOOLONG);
+		return -ENAMETOOLONG;
+	}
+
+	g_event_ctx.publish_fn = NULL;
+	g_event_ctx.publish_bytes_fn = publish_fn;
+	g_event_ctx.publish_ctx = ctx;
+	LOG_INF("event module configured for binary payloads: node=%s",
+		g_event_ctx.node_id);
 	return 0;
 }
 
 void neuro_unit_event_reset(void)
 {
 	memset(&g_event_ctx, 0, sizeof(g_event_ctx));
+	k_msgq_purge(&g_event_bytes_msgq);
 	LOG_DBG("event module context reset");
 }
 
@@ -146,6 +203,39 @@ int neuro_unit_event_publish(const char *keyexpr, const char *payload_json)
 	return ret;
 }
 
+static int neuro_unit_event_publish_bytes_now(
+	const char *keyexpr, const uint8_t *payload, size_t payload_len)
+{
+	int ret;
+
+	if (g_event_ctx.publish_bytes_fn == NULL) {
+		neuro_unit_diag_contract_error(
+			"event.publish_bytes", "publish_fn", -ENOSYS);
+		return -ENOSYS;
+	}
+
+	if (keyexpr == NULL || keyexpr[0] == '\0' ||
+		(payload == NULL && payload_len > 0U) || payload_len == 0U) {
+		neuro_unit_diag_contract_error(
+			"event.publish_bytes", "keyexpr/payload", -EINVAL);
+		return -EINVAL;
+	}
+
+	neuro_unit_diag_event_attempt(keyexpr, payload_len);
+	ret = g_event_ctx.publish_bytes_fn(
+		keyexpr, payload, payload_len, g_event_ctx.publish_ctx);
+	neuro_unit_diag_event_result(keyexpr, ret);
+
+	return ret;
+}
+
+int neuro_unit_event_publish_bytes(
+	const char *keyexpr, const uint8_t *payload, size_t payload_len)
+{
+	return neuro_unit_event_publish_bytes_now(
+		keyexpr, payload, payload_len);
+}
+
 int neuro_unit_publish_app_event(
 	const char *app_id, const char *event_name, const char *payload_json)
 {
@@ -169,10 +259,55 @@ int neuro_unit_publish_app_event(
 	return neuro_unit_event_publish(keyexpr, payload_json);
 }
 
+int neuro_unit_publish_app_event_bytes(const char *app_id,
+	const char *event_name, const uint8_t *payload, size_t payload_len)
+{
+	char keyexpr[NEURO_UNIT_EVENT_KEY_LEN];
+	struct neuro_unit_pending_event_bytes pending;
+	int ret;
+
+	if (g_event_ctx.node_id[0] == '\0') {
+		neuro_unit_diag_contract_error(
+			"event.publish_app_event_bytes", "node_id", -ENOSYS);
+		return -ENOSYS;
+	}
+
+	ret = neuro_unit_event_build_app_key(keyexpr, sizeof(keyexpr),
+		g_event_ctx.node_id, app_id, event_name);
+	if (ret != 0) {
+		LOG_ERR("app event key build failed: app=%s event=%s ret=%d",
+			app_id, event_name, ret);
+		return ret;
+	}
+
+	if (payload == NULL || payload_len == 0U ||
+		payload_len > sizeof(pending.payload)) {
+		neuro_unit_diag_contract_error(
+			"event.publish_app_event_bytes", "payload", -EINVAL);
+		return -EINVAL;
+	}
+
+	memset(&pending, 0, sizeof(pending));
+	snprintk(pending.keyexpr, sizeof(pending.keyexpr), "%s", keyexpr);
+	memcpy(pending.payload, payload, payload_len);
+	pending.payload_len = payload_len;
+	ret = k_msgq_put(&g_event_bytes_msgq, &pending, K_NO_WAIT);
+	if (ret != 0) {
+		neuro_unit_diag_contract_error(
+			"event.publish_app_event_bytes", "queue", ret);
+		return ret;
+	}
+
+	(void)k_work_submit(&g_event_bytes_work);
+	return 0;
+}
+
 int neuro_unit_publish_callback_event(
 	const struct neuro_unit_app_callback_event *event)
 {
 	struct neuro_protocol_callback_event dto;
+	uint8_t cbor_payload[NEURO_UNIT_EVENT_JSON_LEN];
+	size_t encoded_len = 0U;
 	char payload[NEURO_UNIT_EVENT_JSON_LEN];
 	int ret;
 
@@ -188,6 +323,19 @@ int neuro_unit_publish_callback_event(
 	dto.invoke_count = event->invoke_count;
 	dto.start_count = event->start_count;
 
+	if (g_event_ctx.publish_bytes_fn != NULL) {
+		ret = neuro_protocol_encode_callback_event_cbor(
+			cbor_payload, sizeof(cbor_payload), &dto, &encoded_len);
+		if (ret != 0) {
+			neuro_unit_diag_contract_error(
+				"event.publish_callback", "payload", ret);
+			return ret;
+		}
+
+		return neuro_unit_publish_app_event_bytes(event->app_id,
+			event->event_name, cbor_payload, encoded_len);
+	}
+
 	ret = neuro_protocol_encode_callback_event_json(
 		payload, sizeof(payload), &dto);
 	if (ret != 0) {
@@ -195,7 +343,6 @@ int neuro_unit_publish_callback_event(
 			"event.publish_callback", "payload", ret);
 		return ret;
 	}
-
 	return neuro_unit_publish_app_event(
 		event->app_id, event->event_name, payload);
 }
@@ -239,3 +386,6 @@ int neuro_unit_write_command_reply_json(char *reply_buf, size_t reply_buf_len,
 EXPORT_SYMBOL(neuro_unit_publish_callback_event);
 EXPORT_SYMBOL(neuro_unit_write_command_reply_json);
 EXPORT_SYMBOL(neuro_unit_publish_app_event);
+EXPORT_SYMBOL(neuro_unit_publish_app_event_bytes);
+EXPORT_SYMBOL(neuro_unit_event_configure_bytes);
+EXPORT_SYMBOL(neuro_unit_event_publish_bytes);

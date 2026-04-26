@@ -4,6 +4,11 @@
 #include <zephyr/llext/buf_loader.h>
 #include <zephyr/sys/slist.h>
 
+#if defined(CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER) &&                   \
+	CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
+#include <zephyr/multi_heap/shared_multi_heap.h>
+#endif
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -30,11 +35,18 @@ typedef int (*app_deinit_fn_t)(void);
 typedef int (*app_on_command_fn_t)(const char *command_name,
 	const char *request_json, char *reply_buf, size_t reply_buf_len);
 
+enum app_runtime_elf_buffer_source {
+	APP_RUNTIME_ELF_BUFFER_MALLOC = 0,
+	APP_RUNTIME_ELF_BUFFER_STATIC,
+	APP_RUNTIME_ELF_BUFFER_PSRAM,
+};
+
 struct app_runtime_app {
 	sys_snode_t node;
 	struct llext *ext;
 	uint8_t *elf_buf;
 	size_t elf_size;
+	enum app_runtime_elf_buffer_source elf_buf_source;
 	app_init_fn_t app_init;
 	app_start_legacy_fn_t app_start_legacy;
 	app_start_v2_fn_t app_start_v2;
@@ -60,6 +72,15 @@ struct app_runtime_ctx {
 };
 
 static struct app_runtime_ctx g_ctx;
+
+#if defined(CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE) &&                    \
+	CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE > 0
+static bool g_static_elf_buf_in_use;
+static union {
+	uint32_t align;
+	uint8_t bytes[CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE];
+} g_static_elf_buf;
+#endif
 
 static int app_runtime_fail(
 	const char *op, enum app_rt_exception_code code, int cause);
@@ -110,8 +131,82 @@ static int app_runtime_fail_errno(const char *op, int errno_value)
 	return err;
 }
 
-static int load_file_to_ram(
-	const char *path, uint8_t **out_buf, size_t *out_size)
+static const char *app_runtime_elf_buffer_source_str(
+	enum app_runtime_elf_buffer_source source)
+{
+	switch (source) {
+	case APP_RUNTIME_ELF_BUFFER_PSRAM:
+		return "psram";
+	case APP_RUNTIME_ELF_BUFFER_STATIC:
+		return "static";
+	case APP_RUNTIME_ELF_BUFFER_MALLOC:
+	default:
+		return "malloc";
+	}
+}
+
+static uint8_t *app_runtime_alloc_elf_buffer(
+	size_t size, enum app_runtime_elf_buffer_source *source)
+{
+	uint8_t *buf;
+
+	if (source == NULL) {
+		return NULL;
+	}
+
+	*source = APP_RUNTIME_ELF_BUFFER_MALLOC;
+#if defined(CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER) &&                   \
+	CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
+	buf = shared_multi_heap_aligned_alloc(SMH_REG_ATTR_EXTERNAL, 32, size);
+	if (buf != NULL) {
+		*source = APP_RUNTIME_ELF_BUFFER_PSRAM;
+		return buf;
+	}
+	LOG_WRN("LLEXT ELF PSRAM staging alloc failed: bytes=%zu", size);
+#endif
+#if defined(CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE) &&                    \
+	CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE > 0
+	if (!g_static_elf_buf_in_use &&
+		size <= sizeof(g_static_elf_buf.bytes)) {
+		g_static_elf_buf_in_use = true;
+		*source = APP_RUNTIME_ELF_BUFFER_STATIC;
+		return g_static_elf_buf.bytes;
+	}
+#endif
+
+	return malloc(size);
+}
+
+static void app_runtime_release_elf_buffer(
+	uint8_t *buf, enum app_runtime_elf_buffer_source source)
+{
+	if (buf == NULL) {
+		return;
+	}
+
+	if (source == APP_RUNTIME_ELF_BUFFER_PSRAM) {
+#if defined(CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER) &&                   \
+	CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
+		shared_multi_heap_free(buf);
+#endif
+		return;
+	}
+
+	if (source == APP_RUNTIME_ELF_BUFFER_STATIC) {
+#if defined(CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE) &&                    \
+	CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE > 0
+		if (buf == g_static_elf_buf.bytes) {
+			g_static_elf_buf_in_use = false;
+		}
+#endif
+		return;
+	}
+
+	free(buf);
+}
+
+static int load_file_to_ram(const char *path, uint8_t **out_buf,
+	size_t *out_size, enum app_runtime_elf_buffer_source *out_source)
 {
 	struct fs_dirent ent;
 	struct fs_file_t file;
@@ -123,6 +218,7 @@ static int load_file_to_ram(
 
 	*out_buf = NULL;
 	*out_size = 0;
+	*out_source = APP_RUNTIME_ELF_BUFFER_MALLOC;
 
 	if (fs_ops == NULL || fs_ops->stat == NULL || fs_ops->open == NULL ||
 		fs_ops->read == NULL || fs_ops->close == NULL) {
@@ -141,7 +237,7 @@ static int load_file_to_ram(
 		return -EINVAL;
 	}
 
-	buf = malloc(ent.size);
+	buf = app_runtime_alloc_elf_buffer(ent.size, out_source);
 	if (buf == NULL) {
 		return -ENOMEM;
 	}
@@ -149,7 +245,7 @@ static int load_file_to_ram(
 	fs_file_t_init(&file);
 	ret = fs_ops->open(&file, path, FS_O_READ);
 	if (ret) {
-		free(buf);
+		app_runtime_release_elf_buffer(buf, *out_source);
 		return ret;
 	}
 
@@ -158,16 +254,17 @@ static int load_file_to_ram(
 	rd = fs_ops->read(&file, buf, ent.size);
 	(void)fs_ops->close(&file);
 	if (rd < 0) {
-		free(buf);
+		app_runtime_release_elf_buffer(buf, *out_source);
 		return (int)rd;
 	}
 
 	if ((size_t)rd != ent.size) {
-		free(buf);
+		app_runtime_release_elf_buffer(buf, *out_source);
 		return -EIO;
 	}
 
-	LOG_INF("%s: fs_read ok path=%s bytes=%zu", __func__, path, ent.size);
+	LOG_INF("%s: fs_read ok path=%s bytes=%zu source=%s", __func__, path,
+		ent.size, app_runtime_elf_buffer_source_str(*out_source));
 
 	*out_buf = buf;
 	*out_size = ent.size;
@@ -552,12 +649,14 @@ static void app_runtime_cleanup_app(struct app_runtime_app *app)
 	}
 
 	if (app->elf_buf != NULL) {
-		free(app->elf_buf);
+		app_runtime_release_elf_buffer(
+			app->elf_buf, app->elf_buf_source);
 	}
 
 	app->ext = NULL;
 	app->elf_buf = NULL;
 	app->elf_size = 0U;
+	app->elf_buf_source = APP_RUNTIME_ELF_BUFFER_MALLOC;
 }
 
 static void app_runtime_release_app_locked(struct app_runtime_app *app)
@@ -665,7 +764,8 @@ int app_runtime_load(const char *name, const char *path)
 			"load", APP_RT_EX_RESOURCE_LIMIT, -ENOMEM);
 	}
 
-	ret = load_file_to_ram(path, &app->elf_buf, &app->elf_size);
+	ret = load_file_to_ram(
+		path, &app->elf_buf, &app->elf_size, &app->elf_buf_source);
 	if (ret) {
 		k_mutex_unlock(&g_ctx.lock);
 		return app_runtime_fail_errno("load_file", ret);

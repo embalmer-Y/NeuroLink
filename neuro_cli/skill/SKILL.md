@@ -1,5 +1,9 @@
 # Skill: NeuroLink Neuro CLI Orchestration
 
+This legacy seed is mirrored into the project-shared skill at
+`.github/skills/neuro-cli/SKILL.md`. Prefer the project-shared skill for Agent
+discovery and keep this file as a compatibility pointer for older references.
+
 ## Goal
 
 Provide a stable invocation entry for skills to operate NeuroLink Unit through the Neuro CLI.
@@ -40,4 +44,4 @@ Optional:
 
 ## Implementation Pointer
 
-Use `invoke_neuro_cli.py` in this folder for script-level integration.
+Use `../scripts/invoke_neuro_cli.py` for script-level integration.

@@ -48,19 +48,32 @@ bool neuro_unit_validate_request_metadata_payload(const char *payload,
 int neuro_unit_build_error_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id, int status_code,
 	const char *message);
+int neuro_unit_build_error_response_cbor(uint8_t *payload, size_t payload_len,
+	const char *request_id, const char *node_id, int status_code,
+	const char *message, size_t *encoded_len);
 
 int neuro_unit_build_lease_acquire_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *lease);
+int neuro_unit_build_lease_acquire_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_lease_entry *lease, size_t *encoded_len);
 
 int neuro_unit_build_lease_release_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *lease);
+int neuro_unit_build_lease_release_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_lease_entry *lease, size_t *encoded_len);
 
 int neuro_unit_build_query_device_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id, const char *board,
 	const char *zenoh_mode, bool session_ready,
 	const struct neuro_network_status *network_status);
+int neuro_unit_build_query_device_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const char *board, const char *zenoh_mode, bool session_ready,
+	const struct neuro_network_status *network_status, size_t *encoded_len);
 
 int neuro_unit_build_query_apps_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
@@ -71,10 +84,18 @@ int neuro_unit_build_query_apps_response(char *json, size_t json_len,
 int neuro_unit_build_query_apps_snapshot_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_unit_query_apps_snapshot *snapshot);
+int neuro_unit_build_query_apps_snapshot_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_unit_query_apps_snapshot *snapshot,
+	size_t *encoded_len);
 
 int neuro_unit_build_query_leases_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *entries, size_t entry_count);
+int neuro_unit_build_query_leases_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_lease_entry *entries, size_t entry_count,
+	size_t *encoded_len);
 
 #ifdef __cplusplus
 }

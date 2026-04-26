@@ -7,7 +7,9 @@
 
 #include "app_runtime.h"
 #include "app_runtime_cmd.h"
+#include "app_runtime_exception.h"
 #include "neuro_app_command_registry.h"
+#include "neuro_protocol_codec_cbor.h"
 #include "neuro_unit_port.h"
 #include "neuro_unit_diag.h"
 #include "neuro_unit_update_service.h"
@@ -19,6 +21,43 @@ LOG_MODULE_REGISTER(neuro_unit_update_service, LOG_LEVEL_INF);
 #define NEURO_UNIT_UPDATE_FIELD_LEN 96
 #define NEURO_UNIT_PREPARE_DEFAULT_CHUNK_SIZE 1024
 #define NEURO_UNIT_PREPARE_MAX_CHUNK_SIZE 4096
+
+static void query_reply_update_cbor_or_json(
+	struct neuro_unit_update_service *service,
+	const struct neuro_unit_reply_context *reply_ctx,
+	const char *request_id, const char *app_id, const char *action,
+	const struct neuro_protocol_update_reply_cbor *reply, const char *json)
+{
+	uint8_t cbor[256];
+	size_t encoded_len = 0U;
+	int ret = -ENOTSUP;
+
+	if (service->ops->query_reply_cbor != NULL) {
+		if (strcmp(action, "prepare") == 0) {
+			ret = neuro_protocol_encode_update_prepare_reply_cbor(
+				cbor, sizeof(cbor), reply, &encoded_len);
+		} else if (strcmp(action, "verify") == 0) {
+			ret = neuro_protocol_encode_update_verify_reply_cbor(
+				cbor, sizeof(cbor), reply, &encoded_len);
+		} else if (strcmp(action, "activate") == 0) {
+			ret = neuro_protocol_encode_update_activate_reply_cbor(
+				cbor, sizeof(cbor), reply, &encoded_len);
+		} else if (strcmp(action, "rollback") == 0 ||
+			   strcmp(action, "recover") == 0) {
+			ret = neuro_protocol_encode_update_rollback_reply_cbor(
+				cbor, sizeof(cbor), reply, &encoded_len);
+		}
+	}
+
+	ARG_UNUSED(request_id);
+	ARG_UNUSED(app_id);
+	if (ret == 0) {
+		service->ops->query_reply_cbor(reply_ctx, cbor, encoded_len);
+		return;
+	}
+
+	service->ops->query_reply_json(reply_ctx, json);
+}
 
 static void service_log_transaction(struct neuro_unit_update_service *service,
 	const char *app_id, const char *action, const char *request_id,
@@ -260,19 +299,45 @@ static int persist_recovery_seed_snapshot(
 	return 0;
 }
 
+static void format_runtime_failure_detail(
+	char *buf, size_t buf_len, const char *fallback, int ret)
+{
+	struct app_rt_exception exc = { 0 };
+
+	if (buf == NULL || buf_len == 0U) {
+		return;
+	}
+
+	app_rt_get_last_exception(&exc);
+	if (exc.code != APP_RT_EX_NONE) {
+		snprintk(buf, buf_len, "%s: %s/%s %s cause=%d ret=%d", fallback,
+			exc.component, exc.operation,
+			app_rt_exception_code_str(exc.code), exc.cause, ret);
+		return;
+	}
+
+	snprintk(buf, buf_len, "%s: ret=%d", fallback, ret);
+}
+
 static void handle_update_prepare(struct neuro_unit_update_service *service,
 	const struct neuro_unit_reply_context *reply_ctx, const char *app_id,
 	const char *payload, const char *request_id)
 {
-	char transport[16] = "zenoh";
+	const struct neuro_unit_request_fields *request_fields;
+	char transport[32] = "zenoh";
 	char keyexpr[128];
+	char artifact_key[128] = "";
 	char path[NEURO_UNIT_UPDATE_FIELD_LEN];
 	char json[NEURO_UNIT_UPDATE_JSON_LEN];
+	struct neuro_protocol_update_reply_cbor reply;
+	struct fs_dirent ent;
+	size_t requested_size = 0U;
 	int chunk_size;
 	int ret;
 
 	service_log_transaction(
 		service, app_id, "prepare", request_id, "begin", 0, "enter");
+	request_fields = neuro_unit_reply_context_request_fields(reply_ctx);
 	ret = neuro_update_manager_prepare_begin(
 		service->ctx.update_manager, app_id);
 	if (ret) {
@@ -283,10 +348,32 @@ static void handle_update_prepare(struct neuro_unit_update_service *service,
 		return;
 	}
 
-	(void)neuro_json_extract_string(
-		payload, "transport", transport, sizeof(transport));
-	chunk_size = neuro_json_extract_int(
-		payload, "chunk_size", NEURO_UNIT_PREPARE_DEFAULT_CHUNK_SIZE);
+	if (request_fields != NULL && request_fields->transport[0] != '\0') {
+		snprintk(transport, sizeof(transport), "%s",
+			request_fields->transport);
+	} else {
+		(void)neuro_json_extract_string(
+			payload, "transport", transport, sizeof(transport));
+	}
+	if (request_fields != NULL && request_fields->chunk_size > 0U) {
+		chunk_size = (int)request_fields->chunk_size;
+	} else {
+		chunk_size = neuro_json_extract_int(payload, "chunk_size",
+			NEURO_UNIT_PREPARE_DEFAULT_CHUNK_SIZE);
+	}
+	if (request_fields != NULL && request_fields->artifact_key[0] != '\0') {
+		snprintk(artifact_key, sizeof(artifact_key), "%s",
+			request_fields->artifact_key);
+	} else {
+		(void)neuro_json_extract_string(payload, "artifact_key",
+			artifact_key, sizeof(artifact_key));
+	}
+	if (request_fields != NULL && request_fields->size > 0U) {
+		requested_size = request_fields->size;
+	} else {
+		requested_size =
+			(size_t)neuro_json_extract_int(payload, "size", 0);
+	}
 	if (chunk_size <= 0) {
 		chunk_size = NEURO_UNIT_PREPARE_DEFAULT_CHUNK_SIZE;
 	}
@@ -296,10 +383,81 @@ static void handle_update_prepare(struct neuro_unit_update_service *service,
 	}
 
 	build_app_path(app_id, path, sizeof(path));
-	snprintk(keyexpr, sizeof(keyexpr), "neuro/%s/update/app/%s/artifact",
-		service->ops->node_id, app_id);
+	snprintk(keyexpr, sizeof(keyexpr), "%s",
+		artifact_key[0] != '\0' ? artifact_key : "");
+	if (strcmp(transport, "zenoh") == 0) {
+		if (keyexpr[0] == '\0' || requested_size == 0U ||
+			service->ops->download_artifact == NULL) {
+			ret = -EINVAL;
+			(void)neuro_update_manager_prepare_fail(
+				service->ctx.update_manager, app_id,
+				"artifact download contract invalid");
+			(void)persist_recovery_seed_snapshot(service);
+			service->ops->publish_update_event(app_id, "prepare",
+				"error", "artifact download contract invalid");
+			service_log_transaction(service, app_id, "prepare",
+				request_id, "fail", ret,
+				"artifact download contract invalid");
+			service->ops->reply_error(reply_ctx, request_id,
+				"prepare artifact download contract invalid",
+				400);
+			return;
+		}
+
+		ret = service->ops->download_artifact(app_id, keyexpr,
+			requested_size, (size_t)chunk_size, path);
+		if (ret) {
+			const struct neuro_unit_port_fs_ops *fs_ops =
+				neuro_unit_port_get_fs_ops();
+
+			if (fs_ops != NULL && fs_ops->remove != NULL) {
+				(void)fs_ops->remove(path);
+			}
+			(void)neuro_update_manager_prepare_fail(
+				service->ctx.update_manager, app_id,
+				"artifact download failed");
+			(void)persist_recovery_seed_snapshot(service);
+			service->ops->publish_update_event(app_id, "prepare",
+				"error", "artifact download failed");
+			service_log_transaction(service, app_id, "prepare",
+				request_id, "fail", ret,
+				"artifact download failed");
+			service->ops->reply_error(reply_ctx, request_id,
+				"prepare artifact download failed", 500);
+			return;
+		}
+
+		ret = artifact_stat(path, &ent);
+		if (ret || ent.type != FS_DIR_ENTRY_FILE ||
+			(size_t)ent.size != requested_size) {
+			const struct neuro_unit_port_fs_ops *fs_ops =
+				neuro_unit_port_get_fs_ops();
+
+			if (fs_ops != NULL && fs_ops->remove != NULL) {
+				(void)fs_ops->remove(path);
+			}
+			ret = ret != 0 ? ret : -EIO;
+			(void)neuro_update_manager_prepare_fail(
+				service->ctx.update_manager, app_id,
+				"artifact size mismatch");
+			(void)persist_recovery_seed_snapshot(service);
+			service->ops->publish_update_event(app_id, "prepare",
+				"error", "artifact size mismatch");
+			service_log_transaction(service, app_id, "prepare",
+				request_id, "fail", ret,
+				"artifact size mismatch");
+			service->ops->reply_error(reply_ctx, request_id,
+				"prepare artifact size mismatch", 500);
+			return;
+		}
+	} else {
+		snprintk(keyexpr, sizeof(keyexpr),
+			"neuro/%s/update/app/%s/artifact",
+			service->ops->node_id, app_id);
+	}
 	ret = neuro_artifact_store_stage(service->ctx.artifact_store, app_id,
-		transport, keyexpr, path, 0U, (size_t)chunk_size, 0U);
+		transport, keyexpr, path, requested_size, (size_t)chunk_size,
+		0U);
 	if (ret) {
 		(void)neuro_update_manager_prepare_fail(
 			service->ctx.update_manager, app_id,
@@ -331,9 +489,17 @@ static void handle_update_prepare(struct neuro_unit_update_service *service,
 	snprintk(json, sizeof(json),
 		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"app_id\":\"%s\",\"path\":\"%s\",\"transport\":\"%s\"}",
 		request_id, service->ops->node_id, app_id, path, transport);
+	reply.request_id = request_id;
+	reply.node_id = service->ops->node_id;
+	reply.app_id = app_id;
+	reply.path = path;
+	reply.transport = transport;
+	reply.size = 0U;
+	reply.reason = "";
 	service_log_transaction(service, app_id, "prepare", request_id,
 		"commit", 0, "prepare success");
-	service->ops->query_reply_json(reply_ctx, json);
+	query_reply_update_cbor_or_json(service, reply_ctx, request_id, app_id,
+		"prepare", &reply, json);
 }
 
 static void handle_update_verify(struct neuro_unit_update_service *service,
@@ -342,6 +508,8 @@ static void handle_update_verify(struct neuro_unit_update_service *service,
 {
 	char path[NEURO_UNIT_UPDATE_FIELD_LEN];
 	char json[NEURO_UNIT_UPDATE_JSON_LEN];
+	struct neuro_protocol_update_reply_cbor reply;
+	const struct neuro_artifact_meta *artifact;
 	struct fs_dirent ent;
 	int ret;
 	int save_ret;
@@ -374,6 +542,26 @@ static void handle_update_verify(struct neuro_unit_update_service *service,
 			"fail", ret != 0 ? ret : -ENOENT, "artifact missing");
 		service->ops->reply_error(
 			reply_ctx, request_id, "artifact missing", 404);
+		return;
+	}
+
+	artifact =
+		neuro_artifact_store_get(service->ctx.artifact_store, app_id);
+	if (artifact != NULL && artifact->size_bytes > 0U &&
+		(size_t)ent.size != artifact->size_bytes) {
+		(void)neuro_artifact_store_set_state(
+			service->ctx.artifact_store, app_id,
+			NEURO_ARTIFACT_INVALID);
+		(void)neuro_update_manager_verify_fail(
+			service->ctx.update_manager, app_id,
+			"artifact size mismatch");
+		(void)persist_recovery_seed_snapshot(service);
+		service->ops->publish_update_event(
+			app_id, "verify", "error", "artifact size mismatch");
+		service_log_transaction(service, app_id, "verify", request_id,
+			"fail", -EIO, "artifact size mismatch");
+		service->ops->reply_error(
+			reply_ctx, request_id, "artifact size mismatch", 500);
 		return;
 	}
 
@@ -419,9 +607,17 @@ static void handle_update_verify(struct neuro_unit_update_service *service,
 	snprintk(json, sizeof(json),
 		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"app_id\":\"%s\",\"size\":%zu}",
 		request_id, service->ops->node_id, app_id, ent.size);
+	reply.request_id = request_id;
+	reply.node_id = service->ops->node_id;
+	reply.app_id = app_id;
+	reply.path = "";
+	reply.transport = "";
+	reply.size = (uint32_t)ent.size;
+	reply.reason = "";
 	service_log_transaction(service, app_id, "verify", request_id, "commit",
 		0, "verify success");
-	service->ops->query_reply_json(reply_ctx, json);
+	query_reply_update_cbor_or_json(
+		service, reply_ctx, request_id, app_id, "verify", &reply, json);
 }
 
 static void handle_update_activate(struct neuro_unit_update_service *service,
@@ -429,10 +625,14 @@ static void handle_update_activate(struct neuro_unit_update_service *service,
 	const char *payload, const char *request_id)
 {
 	struct neuro_request_metadata metadata;
+	const struct neuro_request_metadata *request_metadata;
+	const struct neuro_unit_request_fields *request_fields;
 	char start_args[NEURO_UNIT_UPDATE_FIELD_LEN] = "";
 	char path[NEURO_UNIT_UPDATE_FIELD_LEN];
 	char resource[64];
+	char error_detail[128];
 	char json[NEURO_UNIT_UPDATE_JSON_LEN];
+	struct neuro_protocol_update_reply_cbor reply;
 	int64_t t_start_ms;
 	int64_t t_stage_ms;
 	int ret;
@@ -440,16 +640,22 @@ static void handle_update_activate(struct neuro_unit_update_service *service,
 
 	service_log_transaction(
 		service, app_id, "activate", request_id, "begin", 0, "enter");
-	neuro_request_metadata_init(&metadata);
-	(void)neuro_request_metadata_parse(payload, &metadata);
+	request_metadata = neuro_unit_reply_context_metadata(reply_ctx);
+	request_fields = neuro_unit_reply_context_request_fields(reply_ctx);
+	if (request_metadata == NULL) {
+		neuro_request_metadata_init(&metadata);
+		(void)neuro_request_metadata_parse(payload, &metadata);
+		request_metadata = &metadata;
+	}
 	t_start_ms = k_uptime_get();
 	LOG_INF("activate request: app=%s request_id=%s lease_id=%s", app_id,
-		request_id != NULL ? request_id : "-", metadata.lease_id);
+		request_id != NULL ? request_id : "-",
+		request_metadata->lease_id);
 
 	snprintk(resource, sizeof(resource), "update/app/%s/activate", app_id);
 	t_stage_ms = k_uptime_get();
 	if (!service->ops->require_resource_lease_or_reply(
-		    reply_ctx, request_id, resource, &metadata)) {
+		    reply_ctx, request_id, resource, request_metadata)) {
 		LOG_WRN("activate lease check failed: app=%s elapsed=%lldms",
 			app_id, (long long)(k_uptime_get() - t_start_ms));
 		service_log_transaction(service, app_id, "activate", request_id,
@@ -500,36 +706,45 @@ static void handle_update_activate(struct neuro_unit_update_service *service,
 	t_stage_ms = k_uptime_get();
 	ret = app_runtime_load(app_id, path);
 	if (ret) {
+		format_runtime_failure_detail(error_detail,
+			sizeof(error_detail), "activate load failed", ret);
 		(void)neuro_update_manager_activate_fail(
-			service->ctx.update_manager, app_id, "load failed");
+			service->ctx.update_manager, app_id, error_detail);
 		(void)persist_recovery_seed_snapshot(service);
 		service->ops->publish_update_event(
-			app_id, "activate", "error", "load failed");
+			app_id, "activate", "error", error_detail);
 		service_log_transaction(service, app_id, "activate", request_id,
-			"fail", ret, "load failed");
+			"fail", ret, error_detail);
 		service->ops->reply_error(
-			reply_ctx, request_id, "activate load failed", 500);
+			reply_ctx, request_id, error_detail, 500);
 		return;
 	}
 	LOG_INF("activate: app_runtime_load ok app=%s elapsed=%lldms", app_id,
 		(long long)(k_uptime_get() - t_stage_ms));
 
-	(void)neuro_json_extract_string(
-		payload, "start_args", start_args, sizeof(start_args));
+	if (request_fields != NULL && request_fields->start_args[0] != '\0') {
+		snprintk(start_args, sizeof(start_args), "%s",
+			request_fields->start_args);
+	} else {
+		(void)neuro_json_extract_string(
+			payload, "start_args", start_args, sizeof(start_args));
+	}
 	LOG_INF("activate: calling app_runtime_start app=%s start_args=%s",
 		app_id, start_args[0] ? start_args : "<null>");
 	t_stage_ms = k_uptime_get();
 	ret = app_runtime_start(app_id, start_args[0] ? start_args : NULL);
 	if (ret) {
+		format_runtime_failure_detail(error_detail,
+			sizeof(error_detail), "activate start failed", ret);
 		(void)neuro_update_manager_activate_fail(
-			service->ctx.update_manager, app_id, "start failed");
+			service->ctx.update_manager, app_id, error_detail);
 		(void)persist_recovery_seed_snapshot(service);
 		service->ops->publish_update_event(
-			app_id, "activate", "error", "start failed");
+			app_id, "activate", "error", error_detail);
 		service_log_transaction(service, app_id, "activate", request_id,
-			"fail", ret, "start failed");
+			"fail", ret, error_detail);
 		service->ops->reply_error(
-			reply_ctx, request_id, "activate start failed", 500);
+			reply_ctx, request_id, error_detail, 500);
 		return;
 	}
 	LOG_INF("activate: app_runtime_start ok app=%s elapsed=%lldms", app_id,
@@ -567,11 +782,19 @@ static void handle_update_activate(struct neuro_unit_update_service *service,
 	snprintk(json, sizeof(json),
 		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"app_id\":\"%s\",\"path\":\"%s\"}",
 		request_id, service->ops->node_id, app_id, path);
+	reply.request_id = request_id;
+	reply.node_id = service->ops->node_id;
+	reply.app_id = app_id;
+	reply.path = path;
+	reply.transport = "";
+	reply.size = 0U;
+	reply.reason = "";
 	service_log_transaction(service, app_id, "activate", request_id,
 		"commit", 0, "activate success");
 	LOG_INF("activate response ready: app=%s total_elapsed=%lldms", app_id,
 		(long long)(k_uptime_get() - t_start_ms));
-	service->ops->query_reply_json(reply_ctx, json);
+	query_reply_update_cbor_or_json(service, reply_ctx, request_id, app_id,
+		"activate", &reply, json);
 }
 
 static void handle_update_rollback(struct neuro_unit_update_service *service,
@@ -579,23 +802,35 @@ static void handle_update_rollback(struct neuro_unit_update_service *service,
 	const char *payload, const char *request_id)
 {
 	struct neuro_request_metadata metadata;
+	const struct neuro_request_metadata *request_metadata;
+	const struct neuro_unit_request_fields *request_fields;
 	char reason[64] = "rollback requested";
 	char resource[64];
 	char json[NEURO_UNIT_UPDATE_JSON_LEN];
+	struct neuro_protocol_update_reply_cbor reply;
 	const char *stable_ref;
 	int ret;
 	int save_ret;
 
 	service_log_transaction(
 		service, app_id, "recover", request_id, "begin", 0, "enter");
-	neuro_request_metadata_init(&metadata);
-	(void)neuro_request_metadata_parse(payload, &metadata);
-	(void)neuro_json_extract_string(
-		payload, "reason", reason, sizeof(reason));
+	request_metadata = neuro_unit_reply_context_metadata(reply_ctx);
+	request_fields = neuro_unit_reply_context_request_fields(reply_ctx);
+	if (request_metadata == NULL) {
+		neuro_request_metadata_init(&metadata);
+		(void)neuro_request_metadata_parse(payload, &metadata);
+		request_metadata = &metadata;
+	}
+	if (request_fields != NULL && request_fields->reason[0] != '\0') {
+		snprintk(reason, sizeof(reason), "%s", request_fields->reason);
+	} else {
+		(void)neuro_json_extract_string(
+			payload, "reason", reason, sizeof(reason));
+	}
 
 	snprintk(resource, sizeof(resource), "update/app/%s/rollback", app_id);
 	if (!service->ops->require_resource_lease_or_reply(
-		    reply_ctx, request_id, resource, &metadata)) {
+		    reply_ctx, request_id, resource, request_metadata)) {
 		service_log_transaction(service, app_id, "recover", request_id,
 			"reject", -EPERM, "lease check failed");
 		return;
@@ -718,9 +953,17 @@ static void handle_update_rollback(struct neuro_unit_update_service *service,
 	snprintk(json, sizeof(json),
 		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"app_id\":\"%s\",\"reason\":\"%s\"}",
 		request_id, service->ops->node_id, app_id, reason);
+	reply.request_id = request_id;
+	reply.node_id = service->ops->node_id;
+	reply.app_id = app_id;
+	reply.path = "";
+	reply.transport = "";
+	reply.size = 0U;
+	reply.reason = reason;
 	service_log_transaction(service, app_id, "recover", request_id,
 		"commit", 0, "recover success");
-	service->ops->query_reply_json(reply_ctx, json);
+	query_reply_update_cbor_or_json(service, reply_ctx, request_id, app_id,
+		"rollback", &reply, json);
 }
 
 int neuro_unit_update_service_init(struct neuro_unit_update_service *service,

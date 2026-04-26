@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "neuro_protocol_codec.h"
+#include "neuro_protocol_codec_cbor.h"
 
 #if defined(CONFIG_NEUROLINK_UNIT_DEBUG_MODE) &&                               \
 	CONFIG_NEUROLINK_UNIT_DEBUG_MODE
@@ -155,6 +156,21 @@ int neuro_unit_build_error_response(char *json, size_t json_len,
 	return neuro_protocol_encode_error_reply_json(json, json_len, &reply);
 }
 
+int neuro_unit_build_error_response_cbor(uint8_t *payload, size_t payload_len,
+	const char *request_id, const char *node_id, int status_code,
+	const char *message, size_t *encoded_len)
+{
+	const struct neuro_protocol_error_reply reply = {
+		.request_id = request_id,
+		.node_id = node_id,
+		.status_code = status_code,
+		.message = message,
+	};
+
+	return neuro_protocol_encode_error_reply_cbor(
+		payload, payload_len, &reply, encoded_len);
+}
+
 int neuro_unit_build_lease_acquire_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *lease)
@@ -175,6 +191,27 @@ int neuro_unit_build_lease_acquire_response(char *json, size_t json_len,
 	return neuro_protocol_encode_lease_reply_json(json, json_len, &reply);
 }
 
+int neuro_unit_build_lease_acquire_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_lease_entry *lease, size_t *encoded_len)
+{
+	struct neuro_protocol_lease_reply reply;
+
+	if (lease == NULL) {
+		return -EINVAL;
+	}
+
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.lease_id = lease->lease_id;
+	reply.resource = lease->resource;
+	reply.expires_at_ms = lease->expires_at_ms;
+	reply.include_expires_at_ms = true;
+
+	return neuro_protocol_encode_lease_reply_cbor(
+		payload, payload_len, &reply, encoded_len);
+}
+
 int neuro_unit_build_lease_release_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *lease)
@@ -193,6 +230,27 @@ int neuro_unit_build_lease_release_response(char *json, size_t json_len,
 	reply.include_expires_at_ms = false;
 
 	return neuro_protocol_encode_lease_reply_json(json, json_len, &reply);
+}
+
+int neuro_unit_build_lease_release_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_lease_entry *lease, size_t *encoded_len)
+{
+	struct neuro_protocol_lease_reply reply;
+
+	if (lease == NULL) {
+		return -EINVAL;
+	}
+
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.lease_id = lease->lease_id;
+	reply.resource = lease->resource;
+	reply.expires_at_ms = 0;
+	reply.include_expires_at_ms = false;
+
+	return neuro_protocol_encode_lease_reply_cbor(
+		payload, payload_len, &reply, encoded_len);
 }
 
 int neuro_unit_build_query_device_response(char *json, size_t json_len,
@@ -216,6 +274,29 @@ int neuro_unit_build_query_device_response(char *json, size_t json_len,
 
 	return neuro_protocol_encode_query_device_reply_json(
 		json, json_len, &reply);
+}
+
+int neuro_unit_build_query_device_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const char *board, const char *zenoh_mode, bool session_ready,
+	const struct neuro_network_status *network_status, size_t *encoded_len)
+{
+	struct neuro_protocol_query_device_reply reply;
+
+	if (network_status == NULL) {
+		return -EINVAL;
+	}
+
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.board = board;
+	reply.zenoh_mode = zenoh_mode;
+	reply.session_ready = session_ready;
+	reply.network_state = network_state_to_str(network_status->state);
+	reply.ipv4 = network_status->ipv4_addr;
+
+	return neuro_protocol_encode_query_device_reply_cbor(
+		payload, payload_len, &reply, encoded_len);
 }
 
 int neuro_unit_build_query_apps_response(char *json, size_t json_len,
@@ -324,6 +405,53 @@ int neuro_unit_build_query_apps_snapshot_response(char *json, size_t json_len,
 	return 0;
 }
 
+int neuro_unit_build_query_apps_snapshot_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_unit_query_apps_snapshot *snapshot,
+	size_t *encoded_len)
+{
+	struct neuro_protocol_query_app_cbor
+		apps[APP_RT_STATUS_SNAPSHOT_CAPACITY];
+	struct neuro_protocol_query_apps_reply_cbor reply;
+	size_t i;
+
+	if (snapshot == NULL ||
+		(snapshot->apps == NULL && snapshot->app_snapshot_count > 0U) ||
+		snapshot->app_snapshot_count > ARRAY_SIZE(apps)) {
+		return -EINVAL;
+	}
+
+	for (i = 0; i < snapshot->app_snapshot_count; i++) {
+		const struct neuro_unit_query_app_snapshot *app =
+			&snapshot->apps[i];
+
+		apps[i].app_id = app->app_id;
+		apps[i].runtime_state =
+			app_runtime_state_to_str(app->runtime_state);
+		apps[i].path = app->path;
+		apps[i].priority = app->priority;
+		apps[i].manifest_present = app->manifest_present;
+		apps[i].update_state =
+			app->update_state != NULL ? app->update_state : "NONE";
+		apps[i].artifact_state =
+			artifact_state_to_str(app->artifact_state);
+		apps[i].stable_ref = app->stable_ref;
+		apps[i].last_error = app->last_error;
+		apps[i].rollback_reason = app->rollback_reason;
+	}
+
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.app_count = (uint32_t)snapshot->app_count;
+	reply.running_count = (uint32_t)snapshot->running_count;
+	reply.suspended_count = (uint32_t)snapshot->suspended_count;
+	reply.apps = apps;
+	reply.app_count_listed = snapshot->app_snapshot_count;
+
+	return neuro_protocol_encode_query_apps_reply_cbor(
+		payload, payload_len, &reply, encoded_len);
+}
+
 int neuro_unit_build_query_leases_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *entries, size_t entry_count)
@@ -357,4 +485,37 @@ int neuro_unit_build_query_leases_response(char *json, size_t json_len,
 	}
 
 	return 0;
+}
+
+int neuro_unit_build_query_leases_response_cbor(uint8_t *payload,
+	size_t payload_len, const char *request_id, const char *node_id,
+	const struct neuro_lease_entry *entries, size_t entry_count,
+	size_t *encoded_len)
+{
+	struct neuro_protocol_query_lease_cbor
+		leases[NEURO_LEASE_MANAGER_MAX_ENTRIES];
+	struct neuro_protocol_query_leases_reply_cbor reply;
+	size_t i;
+
+	if ((entries == NULL && entry_count > 0U) ||
+		entry_count > ARRAY_SIZE(leases)) {
+		return -EINVAL;
+	}
+
+	for (i = 0; i < entry_count; i++) {
+		leases[i].lease_id = entries[i].lease_id;
+		leases[i].resource = entries[i].resource;
+		leases[i].source_core = entries[i].source_core;
+		leases[i].source_agent = entries[i].source_agent;
+		leases[i].priority = entries[i].priority;
+		leases[i].expires_at_ms = entries[i].expires_at_ms;
+	}
+
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.leases = leases;
+	reply.lease_count = entry_count;
+
+	return neuro_protocol_encode_query_leases_reply_cbor(
+		payload, payload_len, &reply, encoded_len);
 }

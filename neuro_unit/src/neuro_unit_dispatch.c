@@ -5,7 +5,9 @@
 
 #include <string.h>
 
+#include "neuro_protocol.h"
 #include "neuro_request_policy.h"
+#include "neuro_unit_diag.h"
 
 #if defined(CONFIG_NEUROLINK_UNIT_DEBUG_MODE) &&                               \
 	CONFIG_NEUROLINK_UNIT_DEBUG_MODE
@@ -75,15 +77,162 @@ bool neuro_unit_dispatch_extract_app_route(const char *key, const char *prefix,
 	return true;
 }
 
+static void route_reset(struct neuro_unit_dispatch_route *route)
+{
+	if (route == NULL) {
+		return;
+	}
+
+	memset(route, 0, sizeof(*route));
+	route->kind = NEURO_UNIT_DISPATCH_ROUTE_INVALID;
+}
+
+static bool key_matches_query_route(const char *key, const char *node_id,
+	enum neuro_protocol_query_kind kind)
+{
+	char route[NEURO_PROTOCOL_ROUTE_LEN];
+
+	return neuro_protocol_build_query_route(
+		       route, sizeof(route), node_id, kind) == 0 &&
+	       strcmp(key, route) == 0;
+}
+
+static bool key_matches_lease_route(const char *key, const char *node_id,
+	enum neuro_protocol_lease_action action)
+{
+	char route[NEURO_PROTOCOL_ROUTE_LEN];
+
+	return neuro_protocol_build_lease_route(
+		       route, sizeof(route), node_id, action) == 0 &&
+	       strcmp(key, route) == 0;
+}
+
+static bool extract_scoped_app_route(const char *key, const char *node_id,
+	const char *scope, char *app_id, size_t app_id_len, const char **action)
+{
+	char prefix[NEURO_PROTOCOL_ROUTE_LEN];
+	const char *start;
+	const char *sep;
+	size_t prefix_len;
+	size_t app_id_size;
+	int ret;
+
+	if (key == NULL || !neuro_protocol_token_is_valid(node_id) ||
+		scope == NULL || app_id == NULL || app_id_len == 0U ||
+		action == NULL) {
+		return false;
+	}
+
+	ret = snprintk(
+		prefix, sizeof(prefix), "neuro/%s/%s/app/", node_id, scope);
+	if (ret < 0 || (size_t)ret >= sizeof(prefix)) {
+		return false;
+	}
+
+	prefix_len = strlen(prefix);
+	if (strncmp(key, prefix, prefix_len) != 0) {
+		return false;
+	}
+
+	start = key + prefix_len;
+	sep = strchr(start, '/');
+	if (sep == NULL) {
+		return false;
+	}
+
+	app_id_size = (size_t)(sep - start);
+	if (app_id_size == 0U || app_id_size >= app_id_len) {
+		return false;
+	}
+
+	memcpy(app_id, start, app_id_size);
+	app_id[app_id_size] = '\0';
+	*action = sep + 1;
+	return neuro_protocol_token_is_valid(app_id) &&
+	       neuro_protocol_token_is_valid(*action);
+}
+
+bool neuro_unit_dispatch_classify_command_route(const char *key,
+	const char *node_id, struct neuro_unit_dispatch_route *route)
+{
+	route_reset(route);
+	if (key == NULL || route == NULL) {
+		return false;
+	}
+
+	if (key_matches_lease_route(
+		    key, node_id, NEURO_PROTOCOL_LEASE_ACQUIRE)) {
+		route->kind = NEURO_UNIT_DISPATCH_ROUTE_LEASE_ACQUIRE;
+		return true;
+	}
+
+	if (key_matches_lease_route(
+		    key, node_id, NEURO_PROTOCOL_LEASE_RELEASE)) {
+		route->kind = NEURO_UNIT_DISPATCH_ROUTE_LEASE_RELEASE;
+		return true;
+	}
+
+	if (extract_scoped_app_route(key, node_id, "cmd", route->app_id,
+		    sizeof(route->app_id), &route->action)) {
+		route->kind = NEURO_UNIT_DISPATCH_ROUTE_APP_ACTION;
+		return true;
+	}
+
+	return false;
+}
+
+bool neuro_unit_dispatch_classify_query_route(const char *key,
+	const char *node_id, struct neuro_unit_dispatch_route *route)
+{
+	route_reset(route);
+	if (key == NULL || route == NULL) {
+		return false;
+	}
+
+	if (key_matches_query_route(
+		    key, node_id, NEURO_PROTOCOL_QUERY_DEVICE)) {
+		route->kind = NEURO_UNIT_DISPATCH_ROUTE_QUERY_DEVICE;
+		return true;
+	}
+
+	if (key_matches_query_route(key, node_id, NEURO_PROTOCOL_QUERY_APPS)) {
+		route->kind = NEURO_UNIT_DISPATCH_ROUTE_QUERY_APPS;
+		return true;
+	}
+
+	if (key_matches_query_route(
+		    key, node_id, NEURO_PROTOCOL_QUERY_LEASES)) {
+		route->kind = NEURO_UNIT_DISPATCH_ROUTE_QUERY_LEASES;
+		return true;
+	}
+
+	return false;
+}
+
+bool neuro_unit_dispatch_classify_update_route(const char *key,
+	const char *node_id, struct neuro_unit_dispatch_route *route)
+{
+	route_reset(route);
+	if (key == NULL || route == NULL) {
+		return false;
+	}
+
+	if (extract_scoped_app_route(key, node_id, "update", route->app_id,
+		    sizeof(route->app_id), &route->action)) {
+		route->kind = NEURO_UNIT_DISPATCH_ROUTE_UPDATE_ACTION;
+		return true;
+	}
+
+	return false;
+}
+
 void neuro_unit_dispatch_command_query(const z_loaned_query_t *query,
 	const char *key, const char *payload,
 	struct neuro_request_metadata *metadata,
+	const struct neuro_unit_request_fields *request_fields,
 	const struct neuro_unit_dispatch_ops *ops)
 {
-	char app_id[32];
-	const char *action;
-	char route_lease_acquire[96];
-	char route_lease_release[96];
+	struct neuro_unit_dispatch_route route;
 	uint32_t required_fields;
 
 	if (!ops_are_valid(ops) || key == NULL || payload == NULL ||
@@ -92,7 +241,8 @@ void neuro_unit_dispatch_command_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	LOG_INF("cmd query: %s payload=%s", key, payload[0] ? payload : "-");
+	LOG_DBG("cmd query: key=%s request_id=%s payload_len=%zu", key,
+		metadata->request_id, strlen(payload));
 	if (!ops->transport_healthy()) {
 		ops->log_transport_health_snapshot(
 			"cmd_gate", key, metadata->request_id);
@@ -108,12 +258,18 @@ void neuro_unit_dispatch_command_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	snprintk(route_lease_acquire, sizeof(route_lease_acquire),
-		"neuro/%s/cmd/lease/acquire", ops->node_id);
-	snprintk(route_lease_release, sizeof(route_lease_release),
-		"neuro/%s/cmd/lease/release", ops->node_id);
+	if (!neuro_unit_dispatch_classify_command_route(
+		    key, ops->node_id, &route)) {
+		neuro_unit_diag_dispatch_result(
+			"cmd", key, metadata->request_id, "unsupported", 404);
+		ops->reply_error(query, metadata->request_id,
+			"unsupported command path", 404);
+		return;
+	}
 
-	if (strcmp(key, route_lease_acquire) == 0) {
+	if (route.kind == NEURO_UNIT_DISPATCH_ROUTE_LEASE_ACQUIRE) {
+		neuro_unit_diag_dispatch_result(
+			"cmd", key, metadata->request_id, "lease_acquire", 0);
 		if (ops->handle_lease_acquire != NULL) {
 			ops->handle_lease_acquire(
 				query, payload, metadata->request_id);
@@ -124,7 +280,9 @@ void neuro_unit_dispatch_command_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	if (strcmp(key, route_lease_release) == 0) {
+	if (route.kind == NEURO_UNIT_DISPATCH_ROUTE_LEASE_RELEASE) {
+		neuro_unit_diag_dispatch_result(
+			"cmd", key, metadata->request_id, "lease_release", 0);
 		if (ops->handle_lease_release != NULL) {
 			ops->handle_lease_release(
 				query, payload, metadata->request_id);
@@ -135,11 +293,13 @@ void neuro_unit_dispatch_command_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	if (neuro_unit_dispatch_extract_app_route(
-		    key, "/cmd/app/", app_id, sizeof(app_id), &action)) {
+	if (route.kind == NEURO_UNIT_DISPATCH_ROUTE_APP_ACTION) {
+		neuro_unit_diag_dispatch_result(
+			"cmd", key, metadata->request_id, "app_action", 0);
 		if (ops->handle_app_action != NULL) {
-			ops->handle_app_action(query, app_id, action, payload,
-				metadata->request_id);
+			ops->handle_app_action(query, route.app_id,
+				route.action, payload, metadata->request_id,
+				metadata, request_fields);
 			return;
 		}
 		ops->reply_error(query, metadata->request_id,
@@ -156,9 +316,7 @@ void neuro_unit_dispatch_query_query(const z_loaned_query_t *query,
 	struct neuro_request_metadata *metadata,
 	const struct neuro_unit_dispatch_ops *ops)
 {
-	char route_device[96];
-	char route_apps[96];
-	char route_leases[96];
+	struct neuro_unit_dispatch_route route;
 	uint32_t required_fields;
 
 	if (!ops_are_valid(ops) || key == NULL || payload == NULL ||
@@ -167,7 +325,8 @@ void neuro_unit_dispatch_query_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	LOG_INF("state query: %s", key);
+	LOG_DBG("state query: key=%s request_id=%s payload_len=%zu", key,
+		metadata->request_id, strlen(payload));
 	if (!ops->transport_healthy()) {
 		ops->log_transport_health_snapshot(
 			"query_gate", key, metadata->request_id);
@@ -183,14 +342,18 @@ void neuro_unit_dispatch_query_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	snprintk(route_device, sizeof(route_device), "neuro/%s/query/device",
-		ops->node_id);
-	snprintk(route_apps, sizeof(route_apps), "neuro/%s/query/apps",
-		ops->node_id);
-	snprintk(route_leases, sizeof(route_leases), "neuro/%s/query/leases",
-		ops->node_id);
+	if (!neuro_unit_dispatch_classify_query_route(
+		    key, ops->node_id, &route)) {
+		neuro_unit_diag_dispatch_result(
+			"query", key, metadata->request_id, "unsupported", 404);
+		ops->reply_error(query, metadata->request_id,
+			"unsupported query path", 404);
+		return;
+	}
 
-	if (strcmp(key, route_device) == 0) {
+	if (route.kind == NEURO_UNIT_DISPATCH_ROUTE_QUERY_DEVICE) {
+		neuro_unit_diag_dispatch_result(
+			"query", key, metadata->request_id, "device", 0);
 		if (ops->handle_query_device != NULL) {
 			ops->handle_query_device(query, metadata->request_id);
 			return;
@@ -200,7 +363,9 @@ void neuro_unit_dispatch_query_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	if (strcmp(key, route_apps) == 0) {
+	if (route.kind == NEURO_UNIT_DISPATCH_ROUTE_QUERY_APPS) {
+		neuro_unit_diag_dispatch_result(
+			"query", key, metadata->request_id, "apps", 0);
 		if (ops->handle_query_apps != NULL) {
 			ops->handle_query_apps(query, metadata->request_id);
 			return;
@@ -210,7 +375,9 @@ void neuro_unit_dispatch_query_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	if (strcmp(key, route_leases) == 0) {
+	if (route.kind == NEURO_UNIT_DISPATCH_ROUTE_QUERY_LEASES) {
+		neuro_unit_diag_dispatch_result(
+			"query", key, metadata->request_id, "leases", 0);
 		if (ops->handle_query_leases != NULL) {
 			ops->handle_query_leases(query, metadata->request_id);
 			return;
@@ -227,10 +394,10 @@ void neuro_unit_dispatch_query_query(const z_loaned_query_t *query,
 void neuro_unit_dispatch_update_query(const z_loaned_query_t *query,
 	const char *key, const char *payload,
 	struct neuro_request_metadata *metadata,
+	const struct neuro_unit_request_fields *request_fields,
 	const struct neuro_unit_dispatch_ops *ops)
 {
-	char app_id[32];
-	const char *action;
+	struct neuro_unit_dispatch_route route;
 	uint32_t required_fields;
 	bool lifecycle_action;
 
@@ -240,7 +407,8 @@ void neuro_unit_dispatch_update_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	LOG_INF("update query: %s payload=%s", key, payload[0] ? payload : "-");
+	LOG_DBG("update query: key=%s request_id=%s payload_len=%zu", key,
+		metadata->request_id, strlen(payload));
 	if (!ops->transport_healthy()) {
 		ops->log_transport_health_snapshot(
 			"update_gate", key, metadata->request_id);
@@ -249,26 +417,29 @@ void neuro_unit_dispatch_update_query(const z_loaned_query_t *query,
 		return;
 	}
 
-	if (!neuro_unit_dispatch_extract_app_route(
-		    key, "/update/app/", app_id, sizeof(app_id), &action)) {
+	if (!neuro_unit_dispatch_classify_update_route(
+		    key, ops->node_id, &route)) {
+		neuro_unit_diag_dispatch_result(
+			"update", key, metadata->request_id, "invalid", 400);
 		ops->reply_error(query, metadata->request_id,
 			"invalid update path", 400);
 		return;
 	}
 
 	required_fields =
-		neuro_request_policy_required_fields_for_update_action(action);
+		neuro_request_policy_required_fields_for_update_action(
+			route.action);
 	if (required_fields != 0U &&
 		!ops->validate_request_metadata_or_reply(
 			query, payload, metadata, required_fields)) {
 		return;
 	}
 
-	lifecycle_action = strcmp(action, "prepare") == 0 ||
-			   strcmp(action, "verify") == 0 ||
-			   strcmp(action, "activate") == 0 ||
-			   strcmp(action, "rollback") == 0 ||
-			   strcmp(action, "recover") == 0;
+	lifecycle_action = strcmp(route.action, "prepare") == 0 ||
+			   strcmp(route.action, "verify") == 0 ||
+			   strcmp(route.action, "activate") == 0 ||
+			   strcmp(route.action, "rollback") == 0 ||
+			   strcmp(route.action, "recover") == 0;
 
 	if (lifecycle_action) {
 		if (ops->ensure_recovery_seed_initialized == NULL) {
@@ -285,9 +456,12 @@ void neuro_unit_dispatch_update_query(const z_loaned_query_t *query,
 	}
 
 	if (lifecycle_action) {
+		neuro_unit_diag_dispatch_result(
+			"update", key, metadata->request_id, route.action, 0);
 		if (ops->handle_update_action != NULL) {
-			ops->handle_update_action(query, app_id, action,
-				payload, metadata->request_id);
+			ops->handle_update_action(query, route.app_id,
+				route.action, payload, metadata->request_id,
+				metadata, request_fields);
 			return;
 		}
 		ops->reply_error(query, metadata->request_id,
@@ -295,6 +469,8 @@ void neuro_unit_dispatch_update_query(const z_loaned_query_t *query,
 		return;
 	}
 
+	neuro_unit_diag_dispatch_result(
+		"update", key, metadata->request_id, "unsupported", 404);
 	ops->reply_error(
 		query, metadata->request_id, "unsupported update path", 404);
 }

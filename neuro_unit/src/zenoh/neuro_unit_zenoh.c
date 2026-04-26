@@ -272,7 +272,8 @@ int neuro_unit_zenoh_download_artifact(z_owned_session_t *session,
 	unsigned int chunk_index = 0U;
 	char stage[64];
 
-	if (session == NULL || artifact_key == NULL || dst_path == NULL ||
+	if (session == NULL || artifact_key == NULL ||
+		artifact_key[0] == '\0' || dst_path == NULL ||
 		total_size == 0U) {
 		return -EINVAL;
 	}
@@ -347,8 +348,16 @@ int neuro_unit_zenoh_download_artifact(z_owned_session_t *session,
 
 	ret = 0;
 
-out:
-	(void)fs_ops->close(&file);
+out: {
+	int close_ret = fs_ops->close(&file);
+
+	if (ret == 0 && close_ret < 0) {
+		ret = close_ret;
+	}
+}
+	if (ret != 0 && fs_ops->remove != NULL) {
+		(void)fs_ops->remove(dst_path);
+	}
 	free(chunk_buf);
 	return ret;
 }
@@ -427,6 +436,34 @@ void neuro_unit_zenoh_query_payload_to_cstr(
 	z_drop(z_move(payload_string));
 }
 
+int neuro_unit_zenoh_query_payload_to_buf(const z_loaned_query_t *query,
+	uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+	z_owned_slice_t slice;
+	size_t payload_len;
+
+	if (query == NULL || buf == NULL || out_len == NULL) {
+		return -EINVAL;
+	}
+
+	if (z_bytes_to_slice(z_query_payload(query), &slice) != Z_OK) {
+		return -EBADMSG;
+	}
+
+	payload_len = z_slice_len(z_loan(slice));
+	if (payload_len > buf_len) {
+		z_drop(z_move(slice));
+		return -EMSGSIZE;
+	}
+
+	if (payload_len > 0U) {
+		memcpy(buf, z_slice_data(z_loan(slice)), payload_len);
+	}
+	*out_len = payload_len;
+	z_drop(z_move(slice));
+	return 0;
+}
+
 void neuro_unit_zenoh_query_reply_json(
 	struct neuro_unit_zenoh_transport *transport,
 	const z_loaned_query_t *query, const char *json)
@@ -443,6 +480,37 @@ void neuro_unit_zenoh_query_reply_json(
 		query, z_query_keyexpr(query), z_move(payload), NULL);
 	if (ret < 0) {
 		LOG_ERR("query_reply failed: ret=%d session_ready=%d read_task=%d lease_task=%d",
+			ret, transport->session_ready ? 1 : 0,
+			zp_read_task_is_running(z_loan(transport->session)) ? 1
+									    : 0,
+			zp_lease_task_is_running(z_loan(transport->session))
+				? 1
+				: 0);
+	}
+}
+
+void neuro_unit_zenoh_query_reply_bytes(
+	struct neuro_unit_zenoh_transport *transport,
+	const z_loaned_query_t *query, const uint8_t *bytes, size_t bytes_len)
+{
+	z_owned_bytes_t payload;
+	z_result_t ret;
+
+	if (transport == NULL || query == NULL ||
+		(bytes == NULL && bytes_len > 0U)) {
+		return;
+	}
+
+	if (z_bytes_copy_from_buf(&payload, bytes, bytes_len) != Z_OK) {
+		LOG_ERR("query_reply CBOR payload copy failed: len=%zu",
+			bytes_len);
+		return;
+	}
+
+	ret = z_query_reply(
+		query, z_query_keyexpr(query), z_move(payload), NULL);
+	if (ret < 0) {
+		LOG_ERR("query_reply CBOR failed: ret=%d session_ready=%d read_task=%d lease_task=%d",
 			ret, transport->session_ready ? 1 : 0,
 			zp_read_task_is_running(z_loan(transport->session)) ? 1
 									    : 0,
@@ -523,6 +591,36 @@ int neuro_unit_zenoh_publish_event_json(
 	if (z_put(z_loan(transport->session), z_loan(key), z_move(payload),
 		    NULL) < 0) {
 		LOG_WRN("event publish failed: %s", keyexpr);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+int neuro_unit_zenoh_publish_event_bytes(
+	const char *keyexpr, const uint8_t *bytes, size_t bytes_len, void *ctx)
+{
+	struct neuro_unit_zenoh_transport *transport = ctx;
+	z_owned_bytes_t payload;
+	z_view_keyexpr_t key;
+
+	if (transport == NULL || !transport->session_ready) {
+		return -ENOTCONN;
+	}
+
+	if (keyexpr == NULL || keyexpr[0] == '\0' ||
+		(bytes == NULL && bytes_len > 0U)) {
+		return -EINVAL;
+	}
+
+	z_view_keyexpr_from_str_unchecked(&key, keyexpr);
+	if (z_bytes_copy_from_buf(&payload, bytes, bytes_len) != Z_OK) {
+		return -ENOMEM;
+	}
+
+	if (z_put(z_loan(transport->session), z_loan(key), z_move(payload),
+		    NULL) < 0) {
+		LOG_WRN("CBOR event publish failed: %s", keyexpr);
 		return -EIO;
 	}
 

@@ -21,6 +21,7 @@
 #include "neuro_unit_diag.h"
 #include "neuro_unit_dispatch.h"
 #include "neuro_network_manager.h"
+#include "neuro_protocol_codec_cbor.h"
 #include "neuro_request_envelope.h"
 #include "neuro_request_policy.h"
 #include "neuro_unit_response.h"
@@ -34,6 +35,7 @@ LOG_MODULE_REGISTER(neurolink_unit, LOG_LEVEL_INF);
 
 #define NEURO_MAX_KEY_LEN 128
 #define NEURO_MAX_JSON_LEN 1024
+#define NEURO_MAX_CBOR_LEN 1024
 #define NEURO_MAX_FIELD_LEN 96
 #define NEURO_DEFAULT_LEASE_TTL_MS 30000
 #define NEURO_CONNECT_STACK_SIZE 6144
@@ -56,6 +58,8 @@ static struct k_thread g_neuro_connect_thread;
 static void reply_error(const z_loaned_query_t *query, const char *request_id,
 	const char *message, int status_code);
 static void query_reply_json(const z_loaned_query_t *query, const char *json);
+static void query_reply_cbor(const z_loaned_query_t *query,
+	const uint8_t *payload, size_t payload_len);
 static void publish_state_event(void);
 static void publish_update_event(const char *app_id, const char *stage,
 	const char *status, const char *message);
@@ -71,8 +75,14 @@ static bool reply_context_require_resource_lease_or_reply(
 	const struct neuro_request_metadata *metadata);
 static void reply_context_query_reply_json(
 	const struct neuro_unit_reply_context *reply_ctx, const char *json);
+static void reply_context_query_reply_cbor(
+	const struct neuro_unit_reply_context *reply_ctx,
+	const uint8_t *payload, size_t payload_len);
 static int ensure_recovery_seed_initialized(void);
 static bool runtime_app_is_loaded(const char *app_id);
+static int neuro_download_update_artifact(const char *app_id,
+	const char *artifact_key, size_t total_size, size_t chunk_size,
+	const char *dst_path);
 static void neuro_register_app_callback_command(const char *app_id);
 static void log_update_transaction(const char *app_id, const char *action,
 	const char *request_id, const char *phase, int code,
@@ -84,6 +94,7 @@ static const struct neuro_unit_app_command_ops g_app_command_ops = {
 	.require_resource_lease_or_reply =
 		reply_context_require_resource_lease_or_reply,
 	.query_reply_json = reply_context_query_reply_json,
+	.query_reply_cbor = reply_context_query_reply_cbor,
 	.publish_state_event = publish_state_event,
 };
 
@@ -99,9 +110,11 @@ static const struct neuro_unit_update_service_ops g_update_service_ops = {
 	.require_resource_lease_or_reply =
 		reply_context_require_resource_lease_or_reply,
 	.query_reply_json = reply_context_query_reply_json,
+	.query_reply_cbor = reply_context_query_reply_cbor,
 	.publish_update_event = publish_update_event,
 	.publish_state_event = publish_state_event,
 	.runtime_app_is_loaded = runtime_app_is_loaded,
+	.download_artifact = neuro_download_update_artifact,
 	.register_app_callback_command = neuro_register_app_callback_command,
 	.log_transaction = log_update_transaction,
 };
@@ -127,6 +140,8 @@ static void neuro_register_app_callback_command(const char *app_id)
 	int ret;
 
 	if (!app_runtime_supports_command_callback(app_id)) {
+		neuro_unit_diag_callback_registration(app_id,
+			NEURO_APP_CMD_DEFAULT_NAME, "unsupported", -ENOSYS);
 		return;
 	}
 
@@ -142,16 +157,20 @@ static void neuro_register_app_callback_command(const char *app_id)
 
 	ret = neuro_app_command_registry_register(&desc);
 	if (ret) {
-		LOG_ERR("app command register failed: app=%s cmd=%s ret=%d",
-			app_id, desc.command_name, ret);
+		neuro_unit_diag_callback_registration(
+			app_id, desc.command_name, "register", ret);
 		return;
 	}
 
 	ret = neuro_app_command_registry_set_app_enabled(app_id, true);
 	if (ret) {
-		LOG_ERR("app command enable failed: app=%s ret=%d", app_id,
-			ret);
+		neuro_unit_diag_callback_registration(
+			app_id, desc.command_name, "enable", ret);
+		return;
 	}
+
+	neuro_unit_diag_callback_registration(
+		app_id, desc.command_name, "enabled", 0);
 }
 
 static bool json_extract_string(
@@ -172,8 +191,9 @@ static bool validate_request_metadata_or_reply(const z_loaned_query_t *query,
 {
 	char error[96];
 
-	if (!neuro_unit_validate_request_metadata_payload(payload, metadata,
-		    required_fields, NEUROLINK_NODE_ID, error, sizeof(error))) {
+	ARG_UNUSED(payload);
+	if (!neuro_request_metadata_validate(metadata, required_fields,
+		    NEUROLINK_NODE_ID, error, sizeof(error))) {
 		reply_error(query, metadata->request_id, error, 400);
 		return false;
 	}
@@ -184,20 +204,21 @@ static bool validate_request_metadata_or_reply(const z_loaned_query_t *query,
 static void reply_error(const z_loaned_query_t *query, const char *request_id,
 	const char *message, int status_code)
 {
-	char json[256];
+	uint8_t payload[256];
+	size_t encoded_len = 0U;
 	int ret;
 
 	LOG_WRN("%s: request_id=%s status_code=%d message=%s", __func__,
 		request_id ? request_id : "", status_code,
 		message ? message : "error");
-	ret = neuro_unit_build_error_response(json, sizeof(json), request_id,
-		NEUROLINK_NODE_ID, status_code, message);
+	ret = neuro_unit_build_error_response_cbor(payload, sizeof(payload),
+		request_id, NEUROLINK_NODE_ID, status_code, message,
+		&encoded_len);
 	if (ret != 0) {
-		snprintk(json, sizeof(json),
-			"{\"status\":\"error\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"status_code\":500,\"message\":\"error response encode failed\"}",
-			request_id ? request_id : "", NEUROLINK_NODE_ID);
+		LOG_ERR("error response CBOR encode failed: ret=%d", ret);
+		return;
 	}
-	query_reply_json(query, json);
+	query_reply_cbor(query, payload, encoded_len);
 }
 
 static void query_reply_json(const z_loaned_query_t *query, const char *json)
@@ -205,9 +226,183 @@ static void query_reply_json(const z_loaned_query_t *query, const char *json)
 	neuro_unit_zenoh_query_reply_json(&g_demo, query, json);
 }
 
+static void query_reply_cbor(const z_loaned_query_t *query,
+	const uint8_t *payload, size_t payload_len)
+{
+	neuro_unit_zenoh_query_reply_bytes(
+		&g_demo, query, payload, payload_len);
+}
+
+static void copy_cbor_metadata(
+	const struct neuro_protocol_request_metadata *src,
+	struct neuro_request_metadata *dst)
+{
+	neuro_request_metadata_init(dst);
+	snprintk(dst->request_id, sizeof(dst->request_id), "%s",
+		src->request_id);
+	snprintk(dst->source_core, sizeof(dst->source_core), "%s",
+		src->source_core);
+	snprintk(dst->source_agent, sizeof(dst->source_agent), "%s",
+		src->source_agent);
+	snprintk(dst->target_node, sizeof(dst->target_node), "%s",
+		src->target_node);
+	snprintk(dst->lease_id, sizeof(dst->lease_id), "%s", src->lease_id);
+	snprintk(dst->idempotency_key, sizeof(dst->idempotency_key), "%s",
+		src->idempotency_key);
+	dst->timeout_ms = src->timeout_ms;
+	dst->priority = src->priority;
+	dst->forwarded = src->forwarded;
+}
+
+static void copy_cbor_request_fields(
+	const struct neuro_protocol_request_fields_cbor *src,
+	struct neuro_unit_request_fields *dst)
+{
+	memset(dst, 0, sizeof(*dst));
+	snprintk(dst->resource, sizeof(dst->resource), "%s", src->resource);
+	dst->ttl_ms = src->ttl_ms;
+	snprintk(dst->start_args, sizeof(dst->start_args), "%s",
+		src->start_args);
+	snprintk(dst->reason, sizeof(dst->reason), "%s", src->reason);
+	snprintk(dst->transport, sizeof(dst->transport), "%s", src->transport);
+	snprintk(dst->artifact_key, sizeof(dst->artifact_key), "%s",
+		src->artifact_key);
+	dst->size = src->size;
+	dst->chunk_size = src->chunk_size;
+	dst->has_callback_enabled = src->has_callback_enabled;
+	dst->callback_enabled = src->callback_enabled;
+	dst->has_trigger_every = src->has_trigger_every;
+	dst->trigger_every = src->trigger_every;
+	dst->has_event_name = src->has_event_name;
+	snprintk(dst->event_name, sizeof(dst->event_name), "%s",
+		src->event_name);
+}
+
+static int cbor_request_to_internal_json(const char *route,
+	const uint8_t *payload, size_t payload_len, char *json, size_t json_len,
+	struct neuro_request_metadata *metadata,
+	struct neuro_unit_request_fields *request_fields,
+	enum neuro_protocol_cbor_message_kind *message_kind)
+{
+	struct neuro_protocol_request_metadata cbor_metadata;
+	struct neuro_protocol_request_fields_cbor fields;
+	int used;
+	int ret;
+
+	if (json == NULL || json_len == 0U || metadata == NULL ||
+		message_kind == NULL) {
+		neuro_unit_diag_protocol_failure(
+			route, "contract", "-", -EINVAL, payload_len);
+		return -EINVAL;
+	}
+
+	memset(&cbor_metadata, 0, sizeof(cbor_metadata));
+	memset(&fields, 0, sizeof(fields));
+	ret = neuro_protocol_decode_request_metadata_cbor(
+		payload, payload_len, &cbor_metadata, message_kind);
+	if (ret != 0) {
+		neuro_unit_diag_protocol_failure(
+			route, "metadata", "-", ret, payload_len);
+		return ret;
+	}
+
+	ret = neuro_protocol_decode_request_fields_cbor(
+		payload, payload_len, &fields);
+	if (ret != 0) {
+		neuro_unit_diag_protocol_failure(route, "fields",
+			cbor_metadata.request_id, ret, payload_len);
+		return ret;
+	}
+
+	copy_cbor_metadata(&cbor_metadata, metadata);
+	if (request_fields != NULL) {
+		copy_cbor_request_fields(&fields, request_fields);
+	}
+	used = snprintk(json, json_len,
+		"{\"request_id\":\"%s\",\"source_core\":\"%s\",\"source_agent\":\"%s\",\"target_node\":\"%s\",\"timeout_ms\":%u,\"priority\":%d,\"idempotency_key\":\"%s\",\"lease_id\":\"%s\",\"forwarded\":%s,\"resource\":\"%s\",\"ttl_ms\":%u,\"start_args\":\"%s\",\"reason\":\"%s\",\"transport\":\"%s\",\"artifact_key\":\"%s\",\"size\":%u,\"chunk_size\":%u",
+		metadata->request_id, metadata->source_core,
+		metadata->source_agent, metadata->target_node,
+		metadata->timeout_ms, metadata->priority,
+		metadata->idempotency_key, metadata->lease_id,
+		metadata->forwarded ? "true" : "false", fields.resource,
+		fields.ttl_ms, fields.start_args, fields.reason,
+		fields.transport, fields.artifact_key, fields.size,
+		fields.chunk_size);
+	if (used < 0 || used >= (int)json_len) {
+		neuro_unit_diag_protocol_failure(route, "json_bridge",
+			metadata->request_id, -ENAMETOOLONG, payload_len);
+		return -ENAMETOOLONG;
+	}
+
+	if (fields.has_callback_enabled) {
+		ret = snprintk(json + used, json_len - (size_t)used,
+			",\"callback_enabled\":%s",
+			fields.callback_enabled ? "true" : "false");
+		if (ret < 0 || ret >= (int)(json_len - (size_t)used)) {
+			neuro_unit_diag_protocol_failure(route, "json_bridge",
+				metadata->request_id, -ENAMETOOLONG,
+				payload_len);
+			return -ENAMETOOLONG;
+		}
+		used += ret;
+	}
+
+	if (fields.has_trigger_every) {
+		ret = snprintk(json + used, json_len - (size_t)used,
+			",\"trigger_every\":%d", fields.trigger_every);
+		if (ret < 0 || ret >= (int)(json_len - (size_t)used)) {
+			neuro_unit_diag_protocol_failure(route, "json_bridge",
+				metadata->request_id, -ENAMETOOLONG,
+				payload_len);
+			return -ENAMETOOLONG;
+		}
+		used += ret;
+	}
+
+	if (fields.has_event_name) {
+		ret = snprintk(json + used, json_len - (size_t)used,
+			",\"event_name\":\"%s\"", fields.event_name);
+		if (ret < 0 || ret >= (int)(json_len - (size_t)used)) {
+			neuro_unit_diag_protocol_failure(route, "json_bridge",
+				metadata->request_id, -ENAMETOOLONG,
+				payload_len);
+			return -ENAMETOOLONG;
+		}
+		used += ret;
+	}
+
+	ret = snprintk(json + used, json_len - (size_t)used, "}");
+	if (ret < 0 || ret >= (int)(json_len - (size_t)used)) {
+		neuro_unit_diag_protocol_failure(route, "json_bridge",
+			metadata->request_id, -ENAMETOOLONG, payload_len);
+		return -ENAMETOOLONG;
+	}
+
+	return 0;
+}
+
 static bool zenoh_transport_healthy(void)
 {
 	return neuro_unit_zenoh_transport_healthy(&g_demo);
+}
+
+static int neuro_download_update_artifact(const char *app_id,
+	const char *artifact_key, size_t total_size, size_t chunk_size,
+	const char *dst_path)
+{
+	z_owned_session_t aux_session;
+	int ret;
+
+	ret = neuro_unit_zenoh_open_aux_session(&g_demo, &aux_session);
+	if (ret) {
+		return ret;
+	}
+
+	ret = neuro_unit_zenoh_download_artifact(&aux_session, app_id,
+		artifact_key, total_size, chunk_size, dst_path, NULL);
+	(void)z_close(z_loan_mut(aux_session), NULL);
+	z_drop(z_move(aux_session));
+	return ret;
 }
 
 static void log_transport_health_snapshot(
@@ -217,18 +412,21 @@ static void log_transport_health_snapshot(
 		&g_demo, tag, key, request_id);
 }
 
-static int neuro_unit_publish_event_json(
-	const char *keyexpr, const char *json, void *ctx)
+static int neuro_unit_publish_event_cbor(const char *keyexpr,
+	const uint8_t *payload, size_t payload_len, void *ctx)
 {
-	return neuro_unit_zenoh_publish_event_json(keyexpr, json, ctx);
+	return neuro_unit_zenoh_publish_event_bytes(
+		keyexpr, payload, payload_len, ctx);
 }
 
 static void publish_state_event(void)
 {
 	char key[NEURO_UNIT_EVENT_KEY_LEN];
-	char json[NEURO_UNIT_EVENT_JSON_LEN];
+	uint8_t payload[NEURO_MAX_CBOR_LEN];
+	size_t encoded_len = 0U;
 	struct app_runtime_status status;
 	struct neuro_network_status network_status;
+	struct neuro_protocol_state_event_cbor event;
 
 	memset(&status, 0, sizeof(status));
 	(void)neuro_network_manager_collect_status(
@@ -238,29 +436,39 @@ static void publish_state_event(void)
 		    key, sizeof(key), NEUROLINK_NODE_ID, "state") != 0) {
 		return;
 	}
-	snprintk(json, sizeof(json),
-		"{\"node_id\":\"%s\",\"apps\":%u,\"running\":%u,\"network_state\":\"%s\"}",
-		NEUROLINK_NODE_ID, (unsigned int)status.app_count,
-		(unsigned int)status.running_count,
-		neuro_network_state_to_str(network_status.state));
-	(void)neuro_unit_event_publish(key, json);
+	event.node_id = NEUROLINK_NODE_ID;
+	event.app_count = status.app_count;
+	event.running_count = status.running_count;
+	event.network_state = neuro_network_state_to_str(network_status.state);
+	if (neuro_protocol_encode_state_event_cbor(
+		    payload, sizeof(payload), &event, &encoded_len) != 0) {
+		return;
+	}
+	(void)neuro_unit_event_publish_bytes(key, payload, encoded_len);
 }
 
 static void publish_update_event(const char *app_id, const char *stage,
 	const char *status, const char *message)
 {
 	char key[NEURO_UNIT_EVENT_KEY_LEN];
-	char json[NEURO_UNIT_EVENT_JSON_LEN];
+	uint8_t payload[NEURO_MAX_CBOR_LEN];
+	size_t encoded_len = 0U;
+	struct neuro_protocol_update_event_cbor event;
 
 	if (neuro_unit_event_build_key(
 		    key, sizeof(key), NEUROLINK_NODE_ID, "update") != 0) {
 		return;
 	}
-	snprintk(json, sizeof(json),
-		"{\"node_id\":\"%s\",\"app_id\":\"%s\",\"stage\":\"%s\",\"status\":\"%s\",\"message\":\"%s\"}",
-		NEUROLINK_NODE_ID, app_id, stage, status,
-		message ? message : "-");
-	(void)neuro_unit_event_publish(key, json);
+	event.node_id = NEUROLINK_NODE_ID;
+	event.app_id = app_id;
+	event.stage = stage;
+	event.status = status;
+	event.detail = message ? message : "-";
+	if (neuro_protocol_encode_update_event_cbor(
+		    payload, sizeof(payload), &event, &encoded_len) != 0) {
+		return;
+	}
+	(void)neuro_unit_event_publish_bytes(key, payload, encoded_len);
 }
 
 static void log_update_transaction(const char *app_id, const char *action,
@@ -305,15 +513,37 @@ static bool runtime_app_is_loaded(const char *app_id)
 static void publish_lease_event(
 	const struct neuro_lease_entry *lease, const char *action)
 {
+	const struct neuro_protocol_lease_event_cbor event = {
+		.node_id = NEUROLINK_NODE_ID,
+		.action = action,
+		.lease_id = lease->lease_id,
+		.resource = lease->resource,
+		.source_core = lease->source_core,
+		.source_agent = lease->source_agent,
+		.priority = lease->priority,
+	};
 	char key[NEURO_UNIT_EVENT_KEY_LEN];
 	char suffix[64];
 	char json[NEURO_UNIT_EVENT_JSON_LEN];
+	uint8_t cbor[NEURO_UNIT_EVENT_JSON_LEN];
+	size_t encoded_len = 0U;
+	int ret;
 
 	snprintk(suffix, sizeof(suffix), "lease/%s", lease->lease_id);
 	if (neuro_unit_event_build_key(
 		    key, sizeof(key), NEUROLINK_NODE_ID, suffix) != 0) {
 		return;
 	}
+
+	ret = neuro_protocol_encode_lease_event_cbor(
+		cbor, sizeof(cbor), &event, &encoded_len);
+	if (ret == 0) {
+		ret = neuro_unit_event_publish_bytes(key, cbor, encoded_len);
+		if (ret != -ENOSYS) {
+			return;
+		}
+	}
+
 	snprintk(json, sizeof(json),
 		"{\"node_id\":\"%s\",\"action\":\"%s\",\"lease_id\":\"%s\",\"resource\":\"%s\",\"source_core\":\"%s\",\"source_agent\":\"%s\",\"priority\":%d}",
 		NEUROLINK_NODE_ID, action, lease->lease_id, lease->resource,
@@ -362,8 +592,9 @@ static void reply_context_reply_error(
 	const struct neuro_unit_reply_context *reply_ctx,
 	const char *request_id, const char *message, int status_code)
 {
-	reply_error(query_from_reply_context(reply_ctx), request_id, message,
-		status_code);
+	reply_error(query_from_reply_context(reply_ctx),
+		neuro_unit_reply_context_request_id(reply_ctx, request_id),
+		message, status_code);
 }
 
 static bool reply_context_require_resource_lease_or_reply(
@@ -372,8 +603,9 @@ static bool reply_context_require_resource_lease_or_reply(
 	const struct neuro_request_metadata *metadata)
 {
 	return require_resource_lease_or_reply(
-		query_from_reply_context(reply_ctx), request_id, resource,
-		metadata);
+		query_from_reply_context(reply_ctx),
+		neuro_unit_reply_context_request_id(reply_ctx, request_id),
+		resource, metadata);
 }
 
 static void reply_context_query_reply_json(
@@ -382,13 +614,22 @@ static void reply_context_query_reply_json(
 	query_reply_json(query_from_reply_context(reply_ctx), json);
 }
 
+static void reply_context_query_reply_cbor(
+	const struct neuro_unit_reply_context *reply_ctx,
+	const uint8_t *payload, size_t payload_len)
+{
+	query_reply_cbor(
+		query_from_reply_context(reply_ctx), payload, payload_len);
+}
+
 static void handle_lease_acquire(const z_loaned_query_t *query,
 	const char *payload, const char *request_id)
 {
 	struct neuro_request_metadata metadata;
 	struct neuro_lease_acquire_result result;
 	char resource[48] = "";
-	char json[384];
+	uint8_t response[NEURO_MAX_CBOR_LEN];
+	size_t encoded_len = 0U;
 	int ttl_ms;
 	int64_t now_ms;
 	int ret;
@@ -437,13 +678,14 @@ static void handle_lease_acquire(const z_loaned_query_t *query,
 		publish_lease_event(&result.preempted_entry, "preempted");
 	}
 	publish_lease_event(&result.acquired, "acquired");
-	if (neuro_unit_build_lease_acquire_response(json, sizeof(json),
-		    request_id, NEUROLINK_NODE_ID, &result.acquired) != 0) {
+	if (neuro_unit_build_lease_acquire_response_cbor(response,
+		    sizeof(response), request_id, NEUROLINK_NODE_ID,
+		    &result.acquired, &encoded_len) != 0) {
 		reply_error(query, request_id,
 			"lease acquire reply build failed", 500);
 		return;
 	}
-	query_reply_json(query, json);
+	query_reply_cbor(query, response, encoded_len);
 }
 
 static void handle_lease_release(const z_loaned_query_t *query,
@@ -451,7 +693,8 @@ static void handle_lease_release(const z_loaned_query_t *query,
 {
 	struct neuro_request_metadata metadata;
 	struct neuro_lease_entry released;
-	char json[320];
+	uint8_t response[NEURO_MAX_CBOR_LEN];
+	size_t encoded_len = 0U;
 	int ret;
 
 	neuro_unit_parse_request_metadata(payload, &metadata);
@@ -475,20 +718,26 @@ static void handle_lease_release(const z_loaned_query_t *query,
 	}
 
 	publish_lease_event(&released, "released");
-	if (neuro_unit_build_lease_release_response(json, sizeof(json),
-		    request_id, NEUROLINK_NODE_ID, &released) != 0) {
+	if (neuro_unit_build_lease_release_response_cbor(response,
+		    sizeof(response), request_id, NEUROLINK_NODE_ID, &released,
+		    &encoded_len) != 0) {
 		reply_error(query, request_id,
 			"lease release reply build failed", 500);
 		return;
 	}
-	query_reply_json(query, json);
+	query_reply_cbor(query, response, encoded_len);
 }
 
 static void handle_app_action(const z_loaned_query_t *query, const char *app_id,
-	const char *action, const char *payload, const char *request_id)
+	const char *action, const char *payload, const char *request_id,
+	const struct neuro_request_metadata *metadata,
+	const struct neuro_unit_request_fields *request_fields)
 {
 	const struct neuro_unit_reply_context reply_ctx = {
 		.transport_query = query,
+		.request_id = request_id,
+		.metadata = metadata,
+		.request_fields = request_fields,
 	};
 
 	neuro_unit_handle_app_command(&reply_ctx, app_id, action, payload,
@@ -497,10 +746,14 @@ static void handle_app_action(const z_loaned_query_t *query, const char *app_id,
 
 static void handle_update_action(const z_loaned_query_t *query,
 	const char *app_id, const char *action, const char *payload,
-	const char *request_id)
+	const char *request_id, const struct neuro_request_metadata *metadata,
+	const struct neuro_unit_request_fields *request_fields)
 {
 	const struct neuro_unit_reply_context reply_ctx = {
 		.transport_query = query,
+		.request_id = request_id,
+		.metadata = metadata,
+		.request_fields = request_fields,
 	};
 
 	neuro_unit_update_service_handle_action(&g_update_service, &reply_ctx,
@@ -510,44 +763,90 @@ static void handle_update_action(const z_loaned_query_t *query,
 static void handle_query_device(
 	const z_loaned_query_t *query, const char *request_id)
 {
-	char json[256];
+	uint8_t response[NEURO_MAX_CBOR_LEN];
+	size_t encoded_len = 0U;
 	struct neuro_network_status network_status;
 
 	(void)neuro_network_manager_collect_status(
 		neuro_unit_get_zenoh_connect(), &network_status);
-	if (neuro_unit_build_query_device_response(json, sizeof(json),
-		    request_id, NEUROLINK_NODE_ID, CONFIG_BOARD,
-		    NEUROLINK_ZENOH_MODE, g_demo.session_ready,
-		    &network_status) != 0) {
+	if (neuro_unit_build_query_device_response_cbor(response,
+		    sizeof(response), request_id, NEUROLINK_NODE_ID,
+		    CONFIG_BOARD, NEUROLINK_ZENOH_MODE, g_demo.session_ready,
+		    &network_status, &encoded_len) != 0) {
 		reply_error(query, request_id,
 			"query device reply build failed", 500);
 		return;
 	}
-	query_reply_json(query, json);
+	query_reply_cbor(query, response, encoded_len);
 }
 
 static void handle_query_apps(
 	const z_loaned_query_t *query, const char *request_id)
 {
-	char json[NEURO_MAX_JSON_LEN];
+	uint8_t response[NEURO_MAX_CBOR_LEN];
+	size_t encoded_len = 0U;
 	struct app_runtime_status status;
+	struct neuro_unit_query_app_snapshot
+		app_snapshots[APP_RT_STATUS_SNAPSHOT_CAPACITY];
+	struct neuro_unit_query_apps_snapshot snapshot;
+	size_t listed_count;
+	size_t i;
 
 	memset(&status, 0, sizeof(status));
 	app_runtime_get_status(&status);
-	if (neuro_unit_build_query_apps_response(json, sizeof(json), request_id,
-		    NEUROLINK_NODE_ID, &status, &g_artifact_store,
-		    &g_update_manager) != 0) {
+	listed_count = app_runtime_status_listed_count(&status);
+	if (listed_count > ARRAY_SIZE(status.apps)) {
+		listed_count = ARRAY_SIZE(status.apps);
+	}
+	for (i = 0; i < listed_count; i++) {
+		const struct neuro_artifact_meta *artifact =
+			neuro_artifact_store_get(
+				&g_artifact_store, status.apps[i].name);
+
+		app_snapshots[i].app_id = status.apps[i].name;
+		app_snapshots[i].runtime_state = status.apps[i].state;
+		app_snapshots[i].path = status.apps[i].path;
+		app_snapshots[i].priority = status.apps[i].priority;
+		app_snapshots[i].manifest_present =
+			status.apps[i].manifest_present;
+		app_snapshots[i].update_state =
+			neuro_update_manager_state_to_str(
+				neuro_update_manager_state_for(
+					&g_update_manager,
+					status.apps[i].name));
+		app_snapshots[i].artifact_state = artifact != NULL
+							  ? artifact->state
+							  : NEURO_ARTIFACT_NONE;
+		app_snapshots[i].stable_ref =
+			neuro_update_manager_stable_ref_for(
+				&g_update_manager, status.apps[i].name);
+		app_snapshots[i].last_error =
+			neuro_update_manager_last_error_for(
+				&g_update_manager, status.apps[i].name);
+		app_snapshots[i].rollback_reason =
+			neuro_update_manager_rollback_reason_for(
+				&g_update_manager, status.apps[i].name);
+	}
+	snapshot.app_count = status.app_count;
+	snapshot.running_count = status.running_count;
+	snapshot.suspended_count = status.suspended_count;
+	snapshot.apps = app_snapshots;
+	snapshot.app_snapshot_count = listed_count;
+	if (neuro_unit_build_query_apps_snapshot_response_cbor(response,
+		    sizeof(response), request_id, NEUROLINK_NODE_ID, &snapshot,
+		    &encoded_len) != 0) {
 		reply_error(query, request_id, "query apps reply build failed",
 			500);
 		return;
 	}
-	query_reply_json(query, json);
+	query_reply_cbor(query, response, encoded_len);
 }
 
 static void handle_query_leases(
 	const z_loaned_query_t *query, const char *request_id)
 {
-	char json[NEURO_MAX_JSON_LEN];
+	uint8_t response[NEURO_MAX_CBOR_LEN];
+	size_t encoded_len = 0U;
 	struct neuro_lease_entry entries[NEURO_LEASE_MANAGER_MAX_ENTRIES];
 	size_t entry_count = 0U;
 	size_t i;
@@ -563,13 +862,14 @@ static void handle_query_leases(
 		}
 	}
 	k_mutex_unlock(&g_demo.lock);
-	if (neuro_unit_build_query_leases_response(json, sizeof(json),
-		    request_id, NEUROLINK_NODE_ID, entries, entry_count) != 0) {
+	if (neuro_unit_build_query_leases_response_cbor(response,
+		    sizeof(response), request_id, NEUROLINK_NODE_ID, entries,
+		    entry_count, &encoded_len) != 0) {
 		reply_error(query, request_id,
 			"query leases reply build failed", 500);
 		return;
 	}
-	query_reply_json(query, json);
+	query_reply_cbor(query, response, encoded_len);
 }
 
 static const struct neuro_unit_dispatch_ops g_dispatch_ops = {
@@ -593,26 +893,62 @@ static void command_query_handler(z_loaned_query_t *query, void *ctx)
 {
 	char key[NEURO_MAX_KEY_LEN];
 	char payload[NEURO_MAX_JSON_LEN];
+	uint8_t cbor_payload[NEURO_MAX_CBOR_LEN];
+	size_t cbor_payload_len = 0U;
 	struct neuro_request_metadata metadata;
+	struct neuro_unit_request_fields request_fields;
+	enum neuro_protocol_cbor_message_kind message_kind;
+	int ret;
 
 	ARG_UNUSED(ctx);
 	neuro_unit_zenoh_query_key_to_cstr(query, key, sizeof(key));
-	neuro_unit_zenoh_query_payload_to_cstr(query, payload, sizeof(payload));
-	neuro_unit_parse_request_metadata(payload, &metadata);
-	neuro_unit_dispatch_command_query(
-		query, key, payload, &metadata, &g_dispatch_ops);
+	ret = neuro_unit_zenoh_query_payload_to_buf(
+		query, cbor_payload, sizeof(cbor_payload), &cbor_payload_len);
+	if (ret != 0) {
+		neuro_unit_diag_protocol_failure(
+			"cmd", "payload", "-", ret, cbor_payload_len);
+		reply_error(query, "-", "CBOR request decode failed", 400);
+		return;
+	}
+	ret = cbor_request_to_internal_json("cmd", cbor_payload,
+		cbor_payload_len, payload, sizeof(payload), &metadata,
+		&request_fields, &message_kind);
+	if (ret != 0) {
+		reply_error(query, "-", "CBOR request decode failed", 400);
+		return;
+	}
+	neuro_unit_dispatch_command_query(query, key, payload, &metadata,
+		&request_fields, &g_dispatch_ops);
 }
 
 static void query_query_handler(z_loaned_query_t *query, void *ctx)
 {
 	char key[NEURO_MAX_KEY_LEN];
 	char payload[NEURO_MAX_JSON_LEN];
+	uint8_t cbor_payload[NEURO_MAX_CBOR_LEN];
+	size_t cbor_payload_len = 0U;
 	struct neuro_request_metadata metadata;
+	struct neuro_unit_request_fields request_fields;
+	enum neuro_protocol_cbor_message_kind message_kind;
+	int ret;
 
 	ARG_UNUSED(ctx);
 	neuro_unit_zenoh_query_key_to_cstr(query, key, sizeof(key));
-	neuro_unit_zenoh_query_payload_to_cstr(query, payload, sizeof(payload));
-	neuro_unit_parse_request_metadata(payload, &metadata);
+	ret = neuro_unit_zenoh_query_payload_to_buf(
+		query, cbor_payload, sizeof(cbor_payload), &cbor_payload_len);
+	if (ret != 0) {
+		neuro_unit_diag_protocol_failure(
+			"query", "payload", "-", ret, cbor_payload_len);
+		reply_error(query, "-", "CBOR request decode failed", 400);
+		return;
+	}
+	ret = cbor_request_to_internal_json("query", cbor_payload,
+		cbor_payload_len, payload, sizeof(payload), &metadata,
+		&request_fields, &message_kind);
+	if (ret != 0) {
+		reply_error(query, "-", "CBOR request decode failed", 400);
+		return;
+	}
 	neuro_unit_dispatch_query_query(
 		query, key, payload, &metadata, &g_dispatch_ops);
 }
@@ -621,14 +957,32 @@ static void update_query_handler(z_loaned_query_t *query, void *ctx)
 {
 	char key[NEURO_MAX_KEY_LEN];
 	char payload[NEURO_MAX_JSON_LEN];
+	uint8_t cbor_payload[NEURO_MAX_CBOR_LEN];
+	size_t cbor_payload_len = 0U;
 	struct neuro_request_metadata metadata;
+	struct neuro_unit_request_fields request_fields;
+	enum neuro_protocol_cbor_message_kind message_kind;
+	int ret;
 
 	ARG_UNUSED(ctx);
 	neuro_unit_zenoh_query_key_to_cstr(query, key, sizeof(key));
-	neuro_unit_zenoh_query_payload_to_cstr(query, payload, sizeof(payload));
-	neuro_unit_parse_request_metadata(payload, &metadata);
-	neuro_unit_dispatch_update_query(
-		query, key, payload, &metadata, &g_dispatch_ops);
+	ret = neuro_unit_zenoh_query_payload_to_buf(
+		query, cbor_payload, sizeof(cbor_payload), &cbor_payload_len);
+	if (ret != 0) {
+		neuro_unit_diag_protocol_failure(
+			"update", "payload", "-", ret, cbor_payload_len);
+		reply_error(query, "-", "CBOR request decode failed", 400);
+		return;
+	}
+	ret = cbor_request_to_internal_json("update", cbor_payload,
+		cbor_payload_len, payload, sizeof(payload), &metadata,
+		&request_fields, &message_kind);
+	if (ret != 0) {
+		reply_error(query, "-", "CBOR request decode failed", 400);
+		return;
+	}
+	neuro_unit_dispatch_update_query(query, key, payload, &metadata,
+		&request_fields, &g_dispatch_ops);
 }
 
 static const struct neuro_unit_zenoh_handlers g_zenoh_handlers = {
@@ -647,8 +1001,8 @@ int neuro_unit_start(void)
 	neuro_unit_zenoh_init(&g_demo, &g_zenoh_handlers);
 	connect = neuro_unit_get_zenoh_connect();
 	neuro_unit_event_reset();
-	ret = neuro_unit_event_configure(
-		NEUROLINK_NODE_ID, neuro_unit_publish_event_json, &g_demo);
+	ret = neuro_unit_event_configure_bytes(
+		NEUROLINK_NODE_ID, neuro_unit_publish_event_cbor, &g_demo);
 	if (ret) {
 		LOG_ERR("unit event module init failed: %d", ret);
 		return ret;

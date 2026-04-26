@@ -1,0 +1,13 @@
+source "Kconfig.zephyr"
+
+menu "NeuroLink Unit Tests"
+
+config NEUROLINK_PROTOCOL_CBOR
+	bool "Enable NeuroLink CBOR-v2 protocol codec support"
+	default y
+	select ZCBOR
+	select ZCBOR_CANONICAL
+	help
+	  Builds the zcbor-backed NeuroLink CBOR-v2 codec facade for unit tests.
+
+endmenu

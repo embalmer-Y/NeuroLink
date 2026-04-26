@@ -50,6 +50,9 @@ import neuro_cli
 import neuro_protocol
 
 
+FIXTURES_DIR = THIS_DIR / "fixtures"
+
+
 class TestNeuroCliPayloadPolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.base_payload = {
@@ -78,6 +81,135 @@ class TestNeuroCliPayloadPolicy(unittest.TestCase):
 
 
 class TestNeuroProtocolModule(unittest.TestCase):
+    def test_cbor_schema_fixture_matches_protocol_constants(self) -> None:
+        schema = json.loads(
+            (FIXTURES_DIR / "protocol_cbor_v2_schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(schema["schema_version"], 2)
+        self.assertEqual(schema["wire_encoding"], "cbor-v2")
+        self.assertEqual(
+            schema["message_kinds"], neuro_protocol.CBOR_V2_MESSAGE_KINDS
+        )
+        self.assertEqual(schema["keys"], neuro_protocol.CBOR_V2_KEYS)
+        self.assertEqual(
+            len(set(schema["message_kinds"].values())),
+            len(schema["message_kinds"]),
+        )
+        self.assertEqual(len(set(schema["keys"].values())), len(schema["keys"]))
+
+    def test_cbor_encode_matches_initial_golden_vectors(self) -> None:
+        schema = json.loads(
+            (FIXTURES_DIR / "protocol_cbor_v2_schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        vectors = {item["name"]: item for item in schema["golden_vectors"]}
+
+        envelope = neuro_protocol.encode_payload_cbor({}, "query_request")
+        self.assertEqual(
+            envelope.hex(),
+            vectors["envelope_header.query_request"]["expected_cbor_hex"],
+        )
+
+        error_payload = {
+            "status": "error",
+            "request_id": "req-1",
+            "node_id": "unit-01",
+            "status_code": 404,
+            "message": "missing",
+        }
+        error_reply = neuro_protocol.encode_payload_cbor(error_payload, "error_reply")
+        self.assertEqual(
+            error_reply.hex(),
+            vectors["error_reply.not_found"]["expected_cbor_hex"],
+        )
+
+    def test_cbor_decode_maps_integer_keys_to_logical_payload(self) -> None:
+        decoded = neuro_protocol.decode_payload_cbor(
+            bytes.fromhex(
+                "a70002011402656572726f7203657265712d310467756e69742d30311419019415676d697373696e67"
+            )
+        )
+
+        self.assertEqual(
+            decoded,
+            {
+                "schema_version": 2,
+                "message_kind": "error_reply",
+                "status": "error",
+                "request_id": "req-1",
+                "node_id": "unit-01",
+                "status_code": 404,
+                "message": "missing",
+            },
+        )
+
+    def test_parse_reply_decodes_cbor_payload(self) -> None:
+        class Payload:
+            def to_bytes(self) -> bytes:
+                return bytes.fromhex("a200020101")
+
+            def to_string(self) -> str:
+                raise AssertionError("CBOR reply should not be parsed as text")
+
+        reply = Namespace(
+            ok=Namespace(payload=Payload(), key_expr="neuro/unit-01/query/device")
+        )
+
+        parsed = neuro_protocol.parse_reply(reply)
+
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["payload"]["schema_version"], 2)
+        self.assertEqual(parsed["payload"]["message_kind"], "query_request")
+
+    def test_parse_wire_payload_decodes_cbor_event(self) -> None:
+        class Payload:
+            def to_bytes(self) -> bytes:
+                return neuro_protocol.encode_payload_cbor(
+                    {
+                        "app_id": "neuro_demo_app",
+                        "event_name": "callback",
+                        "invoke_count": 2,
+                        "start_count": 1,
+                    },
+                    "callback_event",
+                )
+
+            def to_string(self) -> str:
+                raise AssertionError("CBOR payload should not be parsed as text")
+
+        parsed, encoding, payload_hex = neuro_protocol.parse_wire_payload(Payload())
+
+        self.assertEqual(encoding, "cbor-v2")
+        self.assertTrue(payload_hex)
+        self.assertEqual(parsed["message_kind"], "callback_event")
+        self.assertEqual(parsed["app_id"], "neuro_demo_app")
+        self.assertEqual(parsed["invoke_count"], 2)
+
+    def test_parse_wire_payload_decodes_cbor_lease_event(self) -> None:
+        payload = neuro_protocol.encode_payload_cbor(
+            {
+                "node_id": "unit-01",
+                "action": "released",
+                "lease_id": "lease-1",
+                "resource": "app/neuro_demo_app/control",
+                "source_core": "core-cli",
+                "source_agent": "rational",
+                "priority": 50,
+            },
+            "lease_event",
+        )
+
+        parsed, encoding, _payload_hex = neuro_protocol.parse_wire_payload(payload)
+
+        self.assertEqual(encoding, "cbor-v2")
+        self.assertEqual(parsed["message_kind"], "lease_event")
+        self.assertEqual(parsed["action"], "released")
+        self.assertEqual(parsed["lease_id"], "lease-1")
+
     def test_route_builders_match_unit_contract(self) -> None:
         self.assertEqual(
             neuro_protocol.query_route("unit-01", "device"),
@@ -126,6 +258,36 @@ class TestNeuroProtocolModule(unittest.TestCase):
         self.assertTrue(payload["callback_enabled"])
         self.assertEqual(payload["trigger_every"], 3)
         self.assertEqual(payload["event_name"], "notify")
+
+    def test_base_write_and_protected_payload_contracts(self) -> None:
+        args = Namespace(
+            request_id="req-1",
+            source_core="core-cli",
+            source_agent="rational",
+            node="unit-01",
+            timeout=5,
+            priority=60,
+            idempotency_key="idem-1",
+            lease_id="lease-1",
+        )
+
+        base_payload = neuro_protocol.base_payload(args)
+        write_payload = neuro_protocol.write_payload(args)
+        protected_payload = neuro_protocol.protected_write_payload(args)
+
+        self.assertEqual(
+            base_payload,
+            {
+                "request_id": "req-1",
+                "source_core": "core-cli",
+                "source_agent": "rational",
+                "target_node": "unit-01",
+                "timeout_ms": 5000,
+            },
+        )
+        self.assertEqual(write_payload["priority"], 60)
+        self.assertEqual(write_payload["idempotency_key"], "idem-1")
+        self.assertEqual(protected_payload["lease_id"], "lease-1")
 
     def test_parse_reply_decodes_board_status_payload(self) -> None:
         class _Payload:
@@ -216,16 +378,21 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.1.5")
+        self.assertEqual(payload["release_target"], "1.1.6")
         self.assertEqual(payload["protocol"]["version"], "2.0")
-        self.assertEqual(payload["protocol"]["wire_encoding"], "json-v2")
-        self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["json-v2"])
-        self.assertEqual(payload["protocol"]["planned_wire_encodings"], ["cbor-v2"])
-        self.assertFalse(payload["protocol"]["cbor_v2_enabled"])
+        self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
+        self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
+        self.assertEqual(payload["protocol"]["planned_wire_encodings"], [])
+        self.assertTrue(payload["protocol"]["cbor_v2_enabled"])
         self.assertTrue(payload["agent_skill"]["structured_stdout"])
+        self.assertEqual(payload["agent_skill"]["name"], "neuro-cli")
+        self.assertEqual(
+            payload["agent_skill"]["project_shared_path"],
+            ".github/skills/neuro-cli/SKILL.md",
+        )
         self.assertEqual(
             payload["agent_skill"]["callback_handler_execution"],
-            "opt_in_subprocess",
+            "explicit_audited_runner",
         )
         self.assertIn("capabilities", payload)
 
@@ -246,8 +413,11 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(code, 0)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["protocol"]["wire_encoding"], "json-v2")
+        self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertFalse(payload["shell_setup"]["can_modify_parent_shell"])
+        self.assertEqual(payload["agent_skill"]["name"], "neuro-cli")
+        self.assertTrue(payload["agent_skill"]["project_shared_exists"])
+        self.assertTrue(payload["agent_skill"]["wrapper_exists"])
         self.assertTrue(payload["scripts"]["setup_neurolink_env.sh"]["exists"])
 
     def test_parser_parses_workflow_plan_without_session(self) -> None:
@@ -270,6 +440,8 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["workflow"], "preflight")
         self.assertFalse(payload["executes_commands"])
+        self.assertEqual(payload["agent_skill"]["name"], "neuro-cli")
+        self.assertIn("invoke_neuro_cli.py", payload["agent_skill"]["wrapper"])
         self.assertIn("preflight_neurolink_linux.sh", payload["commands"][0])
 
     def test_monitor_app_events_accepts_handler_options(self) -> None:
@@ -286,6 +458,8 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
                 "printf ok",
                 "--handler-timeout",
                 "2",
+                "--handler-max-output-bytes",
+                "4",
                 "--max-events",
                 "1",
             ]
@@ -294,6 +468,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertIs(args.handler, neuro_cli.handle_app_events)
         self.assertEqual(args.handler_command, "printf ok")
         self.assertEqual(args.handler_timeout, 2)
+        self.assertEqual(args.handler_max_output_bytes, 4)
         self.assertEqual(args.max_events, 1)
 
     def test_execute_event_handler_runs_python_file_with_event_stdin(self) -> None:
@@ -310,6 +485,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
                 handler_timeout=2.0,
                 handler_cwd="",
                 handler_max_event_bytes=1024,
+                handler_max_output_bytes=1024,
             )
 
             result = neuro_cli.execute_event_handler(
@@ -320,7 +496,31 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertTrue(result["executed"])
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["returncode"], 0)
+        self.assertIn("cwd", result)
+        self.assertGreater(result["event_bytes"], 0)
+        self.assertFalse(result["stdout_truncated"])
         self.assertIn("neuro/unit-01/event/app/demo/callback", result["stdout"])
+
+    def test_execute_event_handler_bounds_output_and_records_audit(self) -> None:
+        args = Namespace(
+            handler_python="",
+            handler_command="printf abcdef",
+            handler_timeout=2.0,
+            handler_cwd="",
+            handler_max_event_bytes=1024,
+            handler_max_output_bytes=3,
+        )
+
+        result = neuro_cli.execute_event_handler(
+            args, {"keyexpr": "neuro/unit-01/event/demo", "payload": {}}
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["stdout"], "abc")
+        self.assertEqual(result["stdout_bytes"], 6)
+        self.assertTrue(result["stdout_truncated"])
+        self.assertEqual(result["max_output_bytes"], 3)
 
     def test_execute_event_handler_rejects_large_payload(self) -> None:
         args = Namespace(
@@ -329,6 +529,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
             handler_timeout=2.0,
             handler_cwd="",
             handler_max_event_bytes=8,
+            handler_max_output_bytes=1024,
         )
 
         result = neuro_cli.execute_event_handler(
@@ -338,6 +539,25 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertFalse(result["executed"])
         self.assertEqual(result["status"], "payload_too_large")
+        self.assertGreater(result["event_bytes"], result["max_event_bytes"])
+
+    def test_app_callback_smoke_accepts_handler_options(self) -> None:
+        parser = neuro_cli.build_parser()
+        args = parser.parse_args(
+            [
+                "app-callback-smoke",
+                "--app-id",
+                "neuro_demo_app",
+                "--handler-command",
+                "printf ok",
+                "--handler-max-output-bytes",
+                "5",
+            ]
+        )
+
+        self.assertIs(args.handler, neuro_cli.handle_app_callback_smoke)
+        self.assertEqual(args.handler_command, "printf ok")
+        self.assertEqual(args.handler_max_output_bytes, 5)
 
     def test_handle_update_rollback_uses_protected_write_mode(self) -> None:
         args = Namespace(
@@ -453,6 +673,32 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(sent_payload["trigger_every"], 3)
         self.assertEqual(sent_payload["event_name"], "notify")
 
+    def test_handle_query_payload_contract(self) -> None:
+        args = Namespace(
+            node="unit-01",
+            kind="device",
+            timeout=10,
+        )
+        payload = {
+            "request_id": "req-query",
+            "source_core": "core-cli",
+            "source_agent": "rational",
+            "target_node": "unit-01",
+            "timeout_ms": 10000,
+        }
+
+        with mock.patch.object(neuro_cli, "base_payload", return_value=dict(payload)) as bp, \
+            mock.patch.object(neuro_cli, "validate_payload") as validate, \
+            mock.patch.object(neuro_cli, "send_query", return_value=0) as send:
+            code = neuro_cli.handle_query(None, args)
+
+        self.assertEqual(code, 0)
+        bp.assert_called_once_with(args)
+        validate.assert_called_once_with(payload, "common")
+        send.assert_called_once()
+        self.assertEqual(send.call_args[0][1], "neuro/unit-01/query/device")
+        self.assertEqual(send.call_args[0][2], payload)
+
     def test_handle_lease_acquire_payload_contract(self) -> None:
         args = Namespace(
             node="unit-01",
@@ -488,6 +734,35 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(sent_payload["lease_id"], "lease-1")
         self.assertEqual(sent_payload["ttl_ms"], 60000)
         self.assertEqual(sent_payload["priority"], 70)
+
+    def test_handle_lease_release_payload_contract(self) -> None:
+        args = Namespace(
+            node="unit-01",
+            lease_id="lease-1",
+            timeout=10,
+        )
+        payload = {
+            "request_id": "req-release",
+            "source_core": "core-cli",
+            "source_agent": "rational",
+            "target_node": "unit-01",
+            "timeout_ms": 10000,
+            "priority": 50,
+            "idempotency_key": "idem-release",
+            "lease_id": "lease-1",
+        }
+
+        with mock.patch.object(neuro_cli, "protected_write_payload", return_value=dict(payload)) as pwp, \
+            mock.patch.object(neuro_cli, "validate_payload") as validate, \
+            mock.patch.object(neuro_cli, "send_query", return_value=0) as send:
+            code = neuro_cli.handle_lease_release(None, args)
+
+        self.assertEqual(code, 0)
+        pwp.assert_called_once_with(args)
+        validate.assert_called_once_with(payload, "protected")
+        send.assert_called_once()
+        self.assertEqual(send.call_args[0][1], "neuro/unit-01/cmd/lease/release")
+        self.assertEqual(send.call_args[0][2], payload)
 
     def test_handle_app_invoke_payload_contract_with_args_json(self) -> None:
         args = Namespace(
@@ -543,6 +818,76 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(updated["artifact_key"], "neuro/artifact/unit-01/neuro_unit_app")
         self.assertEqual(updated["size"], 4)
         self.assertEqual(updated["chunk_size"], 256)
+
+    def test_handle_update_verify_payload_contract(self) -> None:
+        args = Namespace(
+            stage="verify",
+            node="unit-01",
+            app_id="neuro_unit_app",
+            timeout=10,
+            start_args=None,
+            reason=None,
+        )
+        payload = {
+            "request_id": "req-verify",
+            "source_core": "core-cli",
+            "source_agent": "rational",
+            "target_node": "unit-01",
+            "timeout_ms": 10000,
+        }
+
+        with mock.patch.object(neuro_cli, "base_payload", return_value=dict(payload)) as bp, \
+            mock.patch.object(neuro_cli, "validate_payload") as validate, \
+            mock.patch.object(neuro_cli, "send_query", return_value=0) as send:
+            code = neuro_cli.handle_update(None, args)
+
+        self.assertEqual(code, 0)
+        bp.assert_called_once_with(args)
+        validate.assert_called_once_with(payload, "common")
+        send.assert_called_once()
+        self.assertEqual(
+            send.call_args[0][1],
+            "neuro/unit-01/update/app/neuro_unit_app/verify",
+        )
+        self.assertEqual(send.call_args[0][2], payload)
+
+    def test_handle_update_activate_payload_contract(self) -> None:
+        args = Namespace(
+            stage="activate",
+            node="unit-01",
+            app_id="neuro_unit_app",
+            lease_id="lease-1",
+            timeout=10,
+            start_args="--demo",
+            reason=None,
+        )
+        payload = {
+            "request_id": "req-activate",
+            "source_core": "core-cli",
+            "source_agent": "rational",
+            "target_node": "unit-01",
+            "timeout_ms": 10000,
+            "priority": 50,
+            "idempotency_key": "idem-activate",
+            "lease_id": "lease-1",
+        }
+
+        with mock.patch.object(neuro_cli, "protected_write_payload", return_value=dict(payload)) as pwp, \
+            mock.patch.object(neuro_cli, "validate_payload") as validate, \
+            mock.patch.object(neuro_cli, "send_query", return_value=0) as send:
+            code = neuro_cli.handle_update(None, args)
+
+        expected_payload = dict(payload)
+        expected_payload["start_args"] = "--demo"
+        self.assertEqual(code, 0)
+        pwp.assert_called_once_with(args)
+        validate.assert_called_once_with(expected_payload, "protected")
+        send.assert_called_once()
+        self.assertEqual(
+            send.call_args[0][1],
+            "neuro/unit-01/update/app/neuro_unit_app/activate",
+        )
+        self.assertEqual(send.call_args[0][2], expected_payload)
 
     def test_handle_app_events_uses_app_scoped_subscription(self) -> None:
         class _Payload:
@@ -690,6 +1035,41 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["listener_mode"], "plain_subscriber")
         self.assertEqual(payload["events"], [])
+
+    def test_append_event_row_decodes_cbor_payload_for_json_evidence(self) -> None:
+        class _Payload:
+            def __init__(self) -> None:
+                self.raw = neuro_protocol.encode_payload_cbor(
+                    {
+                        "node_id": "unit-01",
+                        "app_id": "neuro_demo_app",
+                        "stage": "activate",
+                        "status": "ok",
+                        "detail": "app running",
+                    },
+                    "update_event",
+                )
+
+            def to_bytes(self) -> bytes:
+                return self.raw
+
+            def to_string(self) -> str:
+                raise AssertionError("CBOR sample should not be parsed as text")
+
+        sample = Namespace(
+            key_expr="neuro/unit-01/event/update",
+            payload=_Payload(),
+        )
+        args = Namespace(output="json")
+        event_rows: list[dict] = []
+
+        neuro_cli.append_event_row(event_rows, sample, args, "EVT")
+
+        self.assertEqual(len(event_rows), 1)
+        self.assertEqual(event_rows[0]["payload_encoding"], "cbor-v2")
+        self.assertTrue(event_rows[0]["payload_hex"])
+        self.assertEqual(event_rows[0]["payload"]["message_kind"], "update_event")
+        self.assertEqual(event_rows[0]["payload"]["detail"], "app running")
 
     def test_handle_app_events_undeclares_subscriber_on_keyboard_interrupt(self) -> None:
         class _Subscriber:
@@ -925,6 +1305,63 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertEqual(result["status"], "error_reply")
         self.assertEqual(result["replies"][0]["payload"]["status_code"], 409)
 
+    def test_collect_query_result_sends_cbor_payload_bytes(self) -> None:
+        session = mock.Mock()
+        session.get.return_value = []
+        payload = {
+            "request_id": "req-1",
+            "source_core": "core",
+            "source_agent": "agent",
+            "target_node": "unit-01",
+            "timeout_ms": 1000,
+        }
+
+        result = neuro_cli.collect_query_result(
+            session, "neuro/unit-01/query/device", payload, 10.0
+        )
+
+        sent_payload = session.get.call_args.kwargs["payload"]
+        self.assertIsInstance(sent_payload, bytes)
+        self.assertEqual(
+            neuro_protocol.decode_payload_cbor(sent_payload)["message_kind"],
+            "query_request",
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "no_reply")
+
+    def test_app_invoke_and_callback_config_use_distinct_cbor_kinds(self) -> None:
+        base_payload = {
+            "request_id": "req-1",
+            "source_core": "core",
+            "source_agent": "agent",
+            "target_node": "unit-01",
+            "timeout_ms": 1000,
+            "priority": 60,
+            "idempotency_key": "idem-1",
+            "lease_id": "lease-1",
+        }
+        keyexpr = "neuro/unit-01/cmd/app/neuro_unit_app/invoke"
+
+        app_command = neuro_protocol.decode_payload_cbor(
+            neuro_protocol.encode_query_payload(keyexpr, dict(base_payload))
+        )
+        callback_config = neuro_protocol.decode_payload_cbor(
+            neuro_protocol.encode_query_payload(
+                keyexpr,
+                {
+                    **base_payload,
+                    "callback_enabled": True,
+                    "trigger_every": 2,
+                    "event_name": "tick",
+                },
+            )
+        )
+
+        self.assertEqual(app_command["message_kind"], "app_command_request")
+        self.assertEqual(
+            callback_config["message_kind"], "callback_config_request"
+        )
+
     def test_send_query_retries_transient_no_reply(self) -> None:
         session = mock.Mock()
         args = Namespace(
@@ -1064,7 +1501,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.1.5")
+        self.assertEqual(payload["release_target"], "1.1.6")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

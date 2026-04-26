@@ -24,4 +24,13 @@ ZTEST(neuro_unit_diag, test_update_transaction_accepts_null_fields)
 		"demo_app", "activate", "req-1", "fail", -5, NULL);
 }
 
+ZTEST(neuro_unit_diag, test_structured_helpers_accept_null_fields)
+{
+	neuro_unit_diag_protocol_failure(NULL, NULL, NULL, -EINVAL, 0U);
+	neuro_unit_diag_dispatch_result(NULL, NULL, NULL, NULL, 0);
+	neuro_unit_diag_dispatch_result(
+		"cmd", "neuro/demo/cmd", "req-1", "unsupported", 404);
+	neuro_unit_diag_callback_registration(NULL, NULL, NULL, -ENOSYS);
+}
+
 ZTEST_SUITE(neuro_unit_diag, NULL, NULL, NULL, NULL, NULL);

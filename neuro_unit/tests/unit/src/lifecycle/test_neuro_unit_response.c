@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "neuro_protocol_codec_cbor.h"
 #include "neuro_unit_response.h"
 
 ZTEST(neuro_unit_response, test_build_error_response_contract)
@@ -24,6 +25,24 @@ ZTEST(neuro_unit_response, test_build_error_response_contract)
 		"error response should include request id");
 	zassert_not_null(strstr(json, "\"status_code\":404"),
 		"error response should include status code");
+}
+
+ZTEST(neuro_unit_response, test_build_error_response_cbor_contract)
+{
+	struct neuro_protocol_cbor_envelope envelope;
+	uint8_t payload[128];
+	size_t encoded_len;
+	int ret;
+
+	ret = neuro_unit_build_error_response_cbor(payload, sizeof(payload),
+		"req-1", "unit-01", 404, "missing", &encoded_len);
+	zassert_equal(ret, 0, "error response CBOR build should succeed");
+	zassert_equal(neuro_protocol_cbor_decode_envelope_header(
+			      payload, encoded_len, &envelope),
+		0, "error response CBOR envelope should decode");
+	zassert_equal(envelope.message_kind,
+		NEURO_PROTOCOL_CBOR_MSG_ERROR_REPLY,
+		"error response CBOR kind should match");
 }
 
 ZTEST(neuro_unit_response, test_build_lease_responses_contract)
@@ -64,6 +83,42 @@ ZTEST(neuro_unit_response, test_build_lease_responses_contract)
 		"lease release response should include resource");
 }
 
+ZTEST(neuro_unit_response, test_build_lease_responses_cbor_contract)
+{
+	struct neuro_lease_entry lease = {
+		.active = true,
+		.priority = 7,
+		.expires_at_ms = 12345,
+	};
+	struct neuro_protocol_cbor_envelope envelope;
+	uint8_t payload[160];
+	size_t encoded_len;
+	int ret;
+
+	snprintk(lease.lease_id, sizeof(lease.lease_id), "lease-1");
+	snprintk(lease.resource, sizeof(lease.resource), "app/x/control");
+
+	ret = neuro_unit_build_lease_acquire_response_cbor(payload,
+		sizeof(payload), "req-2", "unit-01", &lease, &encoded_len);
+	zassert_equal(ret, 0, "lease acquire CBOR build should succeed");
+	zassert_equal(neuro_protocol_cbor_decode_envelope_header(
+			      payload, encoded_len, &envelope),
+		0, "lease acquire CBOR envelope should decode");
+	zassert_equal(envelope.message_kind,
+		NEURO_PROTOCOL_CBOR_MSG_LEASE_REPLY,
+		"lease acquire CBOR kind should match");
+
+	ret = neuro_unit_build_lease_release_response_cbor(payload,
+		sizeof(payload), "req-3", "unit-01", &lease, &encoded_len);
+	zassert_equal(ret, 0, "lease release CBOR build should succeed");
+	zassert_equal(neuro_protocol_cbor_decode_envelope_header(
+			      payload, encoded_len, &envelope),
+		0, "lease release CBOR envelope should decode");
+	zassert_equal(envelope.message_kind,
+		NEURO_PROTOCOL_CBOR_MSG_LEASE_REPLY,
+		"lease release CBOR kind should match");
+}
+
 ZTEST(neuro_unit_response, test_build_query_device_response_contract)
 {
 	struct neuro_network_status network_status = {
@@ -87,6 +142,30 @@ ZTEST(neuro_unit_response, test_build_query_device_response_contract)
 		"query device response should include board");
 	zassert_not_null(strstr(json, "\"network_state\":\"NETWORK_READY\""),
 		"query device response should include network state");
+}
+
+ZTEST(neuro_unit_response, test_build_query_device_response_cbor_contract)
+{
+	struct neuro_network_status network_status = {
+		.state = NEURO_NETWORK_READY,
+	};
+	struct neuro_protocol_cbor_envelope envelope;
+	uint8_t payload[192];
+	size_t encoded_len;
+	int ret;
+
+	snprintk(network_status.ipv4_addr, sizeof(network_status.ipv4_addr),
+		"192.168.2.69");
+	ret = neuro_unit_build_query_device_response_cbor(payload,
+		sizeof(payload), "req-4", "unit-01", "dnesp32s3b", "client",
+		true, &network_status, &encoded_len);
+	zassert_equal(ret, 0, "query device CBOR build should succeed");
+	zassert_equal(neuro_protocol_cbor_decode_envelope_header(
+			      payload, encoded_len, &envelope),
+		0, "query device CBOR envelope should decode");
+	zassert_equal(envelope.message_kind,
+		NEURO_PROTOCOL_CBOR_MSG_QUERY_DEVICE_REPLY,
+		"query device CBOR kind should match");
 }
 
 ZTEST(neuro_unit_response, test_build_query_apps_response_contract)
@@ -168,6 +247,44 @@ ZTEST(neuro_unit_response, test_build_query_apps_snapshot_response_contract)
 		"query apps snapshot JSON contract changed");
 }
 
+ZTEST(neuro_unit_response,
+	test_build_query_apps_snapshot_response_cbor_contract)
+{
+	const struct neuro_unit_query_app_snapshot app = {
+		.app_id = "neuro_unit_app",
+		.runtime_state = APP_RT_RUNNING,
+		.path = "/SD:/apps/neuro_unit_app.llext",
+		.priority = 3U,
+		.manifest_present = true,
+		.update_state = "NONE",
+		.artifact_state = NEURO_ARTIFACT_STAGED,
+		.stable_ref = "",
+		.last_error = "",
+		.rollback_reason = "",
+	};
+	const struct neuro_unit_query_apps_snapshot snapshot = {
+		.app_count = 1U,
+		.running_count = 1U,
+		.suspended_count = 0U,
+		.apps = &app,
+		.app_snapshot_count = 1U,
+	};
+	struct neuro_protocol_cbor_envelope envelope;
+	uint8_t payload[512];
+	size_t encoded_len;
+	int ret;
+
+	ret = neuro_unit_build_query_apps_snapshot_response_cbor(payload,
+		sizeof(payload), "req-5", "unit-01", &snapshot, &encoded_len);
+	zassert_equal(ret, 0, "query apps snapshot CBOR build should succeed");
+	zassert_equal(neuro_protocol_cbor_decode_envelope_header(
+			      payload, encoded_len, &envelope),
+		0, "query apps CBOR envelope should decode");
+	zassert_equal(envelope.message_kind,
+		NEURO_PROTOCOL_CBOR_MSG_QUERY_APPS_REPLY,
+		"query apps CBOR kind should match");
+}
+
 ZTEST(neuro_unit_response, test_build_query_leases_response_contract)
 {
 	struct neuro_lease_entry entries[2] = { 0 };
@@ -206,6 +323,35 @@ ZTEST(neuro_unit_response, test_build_query_leases_response_contract)
 		"query leases response should include first lease");
 	zassert_not_null(strstr(json, "\"lease_id\":\"l-2\""),
 		"query leases response should include second lease");
+}
+
+ZTEST(neuro_unit_response, test_build_query_leases_response_cbor_contract)
+{
+	struct neuro_lease_entry entries[1] = { 0 };
+	struct neuro_protocol_cbor_envelope envelope;
+	uint8_t payload[256];
+	size_t encoded_len;
+	int ret;
+
+	snprintk(entries[0].lease_id, sizeof(entries[0].lease_id), "l-1");
+	snprintk(entries[0].resource, sizeof(entries[0].resource),
+		"update/app/a/activate");
+	snprintk(
+		entries[0].source_core, sizeof(entries[0].source_core), "core");
+	snprintk(entries[0].source_agent, sizeof(entries[0].source_agent),
+		"agent");
+	entries[0].priority = 4;
+	entries[0].expires_at_ms = 111;
+
+	ret = neuro_unit_build_query_leases_response_cbor(payload,
+		sizeof(payload), "req-6", "unit-01", entries, 1U, &encoded_len);
+	zassert_equal(ret, 0, "query leases CBOR build should succeed");
+	zassert_equal(neuro_protocol_cbor_decode_envelope_header(
+			      payload, encoded_len, &envelope),
+		0, "query leases CBOR envelope should decode");
+	zassert_equal(envelope.message_kind,
+		NEURO_PROTOCOL_CBOR_MSG_QUERY_LEASES_REPLY,
+		"query leases CBOR kind should match");
 }
 
 ZTEST(neuro_unit_response, test_validate_request_metadata_payload)

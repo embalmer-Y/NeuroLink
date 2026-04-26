@@ -54,12 +54,20 @@ void neuro_unit_zenoh_disconnect_locked(
 void neuro_unit_zenoh_query_reply_json(
 	struct neuro_unit_zenoh_transport *transport,
 	const z_loaned_query_t *query, const char *json);
+void neuro_unit_zenoh_query_reply_bytes(
+	struct neuro_unit_zenoh_transport *transport,
+	const z_loaned_query_t *query, const uint8_t *payload,
+	size_t payload_len);
 int neuro_unit_zenoh_publish_event_json(
 	const char *keyexpr, const char *json, void *ctx);
+int neuro_unit_zenoh_publish_event_bytes(const char *keyexpr,
+	const uint8_t *payload, size_t payload_len, void *ctx);
 void neuro_unit_zenoh_query_key_to_cstr(
 	const z_loaned_query_t *query, char *buf, size_t buf_len);
 void neuro_unit_zenoh_query_payload_to_cstr(
 	const z_loaned_query_t *query, char *buf, size_t buf_len);
+int neuro_unit_zenoh_query_payload_to_buf(const z_loaned_query_t *query,
+	uint8_t *buf, size_t buf_len, size_t *out_len);
 int neuro_unit_zenoh_open_aux_session(
 	struct neuro_unit_zenoh_transport *transport,
 	z_owned_session_t *session);

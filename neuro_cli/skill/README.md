@@ -2,13 +2,14 @@
 
 ## Purpose
 
-This project packages the Neuro CLI invocation contract as a reusable skill-facing engineering unit.
+This project preserves the legacy Neuro CLI invocation contract as a reusable skill-facing engineering unit.
 
-It does not replace the main CLI implementation. Instead, it standardizes how skills invoke and parse CLI behavior.
+It does not replace the main CLI implementation. The project-shared skill now lives at `.github/skills/neuro-cli/SKILL.md`; this directory remains as a compatibility pointer.
 
 ## Structure
 
-- `SKILL.md`: skill contract, boundaries, and workflow guidance.
+- `.github/skills/neuro-cli/SKILL.md`: project-shared skill contract, boundaries, and workflow guidance.
+- `SKILL.md`: legacy compatibility pointer.
 - `invoke_neuro_cli.py`: thin Python wrapper that executes `applocation/NeuroLink/neuro_cli/src/neuro_cli.py` in JSON mode.
 
 ## Quick Usage

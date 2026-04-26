@@ -71,6 +71,44 @@ void neuro_unit_diag_log_result(
 	LOG_INF("%s ok: %s", safe_token(operation), context);
 }
 
+void neuro_unit_diag_protocol_failure(const char *route, const char *stage,
+	const char *request_id, int ret, size_t payload_len)
+{
+	LOG_WRN("protocol failure: route=%s stage=%s request_id=%s ret=%d payload_len=%zu",
+		safe_token(route), safe_token(stage), safe_token(request_id),
+		ret, payload_len);
+}
+
+void neuro_unit_diag_dispatch_result(const char *family, const char *key,
+	const char *request_id, const char *result, int code)
+{
+	if (code == 0) {
+		LOG_DBG("dispatch route: family=%s key=%s request_id=%s result=%s",
+			safe_token(family), safe_token(key),
+			safe_token(request_id), safe_token(result));
+		return;
+	}
+
+	LOG_WRN("dispatch route rejected: family=%s key=%s request_id=%s result=%s code=%d",
+		safe_token(family), safe_token(key), safe_token(request_id),
+		safe_token(result), code);
+}
+
+void neuro_unit_diag_callback_registration(const char *app_id,
+	const char *command_name, const char *stage, int ret)
+{
+	if (ret == 0) {
+		LOG_INF("callback registration: app=%s command=%s stage=%s ret=0",
+			safe_token(app_id), safe_token(command_name),
+			safe_token(stage));
+		return;
+	}
+
+	LOG_WRN("callback registration: app=%s command=%s stage=%s ret=%d",
+		safe_token(app_id), safe_token(command_name), safe_token(stage),
+		ret);
+}
+
 void neuro_unit_diag_update_transaction(const char *app_id, const char *action,
 	const char *request_id, const char *phase, int code, const char *detail)
 {

@@ -59,4 +59,33 @@ config NEUROLINK_UNIT_DEBUG_VERBOSE_STATE
 	  Adds detailed state snapshot traces when semantic state transitions
 	  are committed to the Unit state registry.
 
+config NEUROLINK_PROTOCOL_CBOR
+	bool "Enable NeuroLink CBOR-v2 protocol codec support"
+	default y
+	select ZCBOR
+	select ZCBOR_CANONICAL
+	help
+	  Builds the zcbor-backed NeuroLink CBOR-v2 codec facade. This does
+	  not by itself switch runtime Zenoh payloads away from JSON-v2; the
+	  runtime cutover is controlled by later protocol call-site changes.
+
+config NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE
+	int "Static LLEXT ELF staging buffer size"
+	default 0
+	help
+	  Reserves a dedicated RAM buffer for staging one LLEXT ELF before
+	  llext_load(). This avoids relying on a large contiguous malloc block
+	  after networking and Zenoh have fragmented the general system heap.
+
+config NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
+	bool "Prefer PSRAM for LLEXT ELF staging buffer"
+	depends on ESP_SPIRAM
+	default n
+	help
+	  Allocate the transient LLEXT ELF staging buffer from ESP PSRAM before
+	  falling back to the static internal-RAM buffer or malloc. This keeps the
+	  large artifact read buffer out of scarce internal DRAM while preserving
+	  the existing fallback path when PSRAM allocation is unavailable. Keep this
+	  experimental until hardware smoke proves LLEXT loading is safe from PSRAM.
+
 endmenu

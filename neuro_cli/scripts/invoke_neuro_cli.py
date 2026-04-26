@@ -5,6 +5,37 @@ import sys
 from pathlib import Path
 
 
+EXIT_COMMAND_FAILED = 2
+EXIT_NOT_IMPLEMENTED = 3
+
+
+def classify_payload(payload: object, process_returncode: int) -> tuple[int, str]:
+    if not isinstance(payload, dict):
+        return EXIT_COMMAND_FAILED, "json_payload_not_object"
+
+    status = str(payload.get("status", ""))
+    if status == "not_implemented":
+        return EXIT_NOT_IMPLEMENTED, status
+
+    if payload.get("ok") is False:
+        return EXIT_COMMAND_FAILED, status or "payload_not_ok"
+
+    if status == "error":
+        return EXIT_COMMAND_FAILED, status
+
+    for reply in payload.get("replies", []) if isinstance(payload.get("replies"), list) else []:
+        reply_payload = reply.get("payload", {}) if isinstance(reply, dict) else {}
+        if isinstance(reply_payload, dict):
+            reply_status = str(reply_payload.get("status", ""))
+            if reply_status == "error":
+                return EXIT_COMMAND_FAILED, "error_reply"
+
+    if process_returncode != 0:
+        return int(process_returncode), status or "process_failed"
+
+    return 0, status or "ok"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Invoke NeuroLink neuro_cli.py for skills")
     parser.add_argument("--python", default=sys.executable, help="python executable path")
@@ -43,18 +74,37 @@ def main() -> int:
     proc = subprocess.run(cmd, capture_output=True, text=True)
 
     stdout = proc.stdout.strip()
+    payload = None
     if stdout:
         try:
             payload = json.loads(stdout)
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         except json.JSONDecodeError:
-            print(stdout)
+            failure = {
+                "ok": False,
+                "status": "invalid_json_stdout",
+                "returncode": proc.returncode,
+                "stdout": stdout,
+            }
+            print(json.dumps(failure, ensure_ascii=False, indent=2))
+            payload = failure
+    else:
+        payload = {
+            "ok": proc.returncode == 0,
+            "status": "empty_stdout" if proc.returncode != 0 else "ok",
+            "returncode": proc.returncode,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
 
     stderr = proc.stderr.strip()
     if stderr:
         print(stderr, file=sys.stderr)
 
-    return int(proc.returncode)
+    exit_code, classification = classify_payload(payload, proc.returncode)
+    if exit_code != 0:
+        print(f"neuro_cli wrapper failure: {classification}", file=sys.stderr)
+
+    return exit_code
 
 
 if __name__ == "__main__":

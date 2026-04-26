@@ -2,6 +2,7 @@
 #include <zephyr/sys/printk.h>
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "app_runtime_cmd.h"
@@ -20,6 +21,9 @@ static int g_publish_update_event_calls;
 static int g_publish_state_event_calls;
 static int g_register_callback_calls;
 static int g_log_calls;
+static int g_download_artifact_calls;
+static int g_download_artifact_return;
+static int g_remove_calls;
 static bool g_require_lease_result;
 static char g_last_error_message[64];
 static char g_last_reply_json[256];
@@ -29,9 +33,13 @@ static char g_last_event_status[16];
 static char g_last_event_message[96];
 static char g_last_log_action[24];
 static char g_last_log_phase[24];
+static char g_last_lease_id[32];
+static char g_last_download_artifact_key[128];
+static char g_last_download_path[128];
 static uint8_t g_dummy_query_storage;
 static struct neuro_unit_reply_context g_reply_ctx;
 static size_t g_mock_artifact_size;
+static size_t g_mock_download_artifact_size;
 
 struct mock_seed_file {
 	bool exists;
@@ -233,6 +241,14 @@ static void reset_mock_seed_fs(void)
 
 static int mock_fs_mount(void) { return 0; }
 
+static int mock_fs_remove(const char *path)
+{
+	ARG_UNUSED(path);
+	g_remove_calls++;
+	g_mock_artifact_size = 0U;
+	return 0;
+}
+
 static int mock_fs_stat(const char *path, struct fs_dirent *ent)
 {
 	zassert_not_null(path, "stat path must be provided");
@@ -247,6 +263,7 @@ static int mock_fs_stat(const char *path, struct fs_dirent *ent)
 static const struct neuro_unit_port_fs_ops g_success_fs_ops = {
 	.mount = mock_fs_mount,
 	.stat = mock_fs_stat,
+	.remove = mock_fs_remove,
 };
 
 static void enable_successful_update_io(void)
@@ -281,8 +298,8 @@ static bool mock_require_resource_lease_or_reply(
 	ARG_UNUSED(reply_ctx);
 	ARG_UNUSED(request_id);
 	ARG_UNUSED(resource);
-	ARG_UNUSED(metadata);
-
+	snprintk(g_last_lease_id, sizeof(g_last_lease_id), "%s",
+		metadata != NULL ? metadata->lease_id : "");
 	return g_require_lease_result;
 }
 
@@ -318,6 +335,27 @@ static bool mock_runtime_app_is_loaded(const char *app_id)
 	return false;
 }
 
+static int mock_download_artifact(const char *app_id, const char *artifact_key,
+	size_t total_size, size_t chunk_size, const char *dst_path)
+{
+	ARG_UNUSED(app_id);
+	ARG_UNUSED(chunk_size);
+
+	g_download_artifact_calls++;
+	snprintk(g_last_download_artifact_key,
+		sizeof(g_last_download_artifact_key), "%s",
+		artifact_key != NULL ? artifact_key : "");
+	snprintk(g_last_download_path, sizeof(g_last_download_path), "%s",
+		dst_path != NULL ? dst_path : "");
+	if (g_download_artifact_return != 0) {
+		return g_download_artifact_return;
+	}
+	g_mock_artifact_size = g_mock_download_artifact_size != SIZE_MAX
+				       ? g_mock_download_artifact_size
+				       : total_size;
+	return 0;
+}
+
 static void mock_register_app_callback_command(const char *app_id)
 {
 	ARG_UNUSED(app_id);
@@ -347,6 +385,7 @@ static const struct neuro_unit_update_service_ops g_ops = {
 	.publish_update_event = mock_publish_update_event,
 	.publish_state_event = mock_publish_state_event,
 	.runtime_app_is_loaded = mock_runtime_app_is_loaded,
+	.download_artifact = mock_download_artifact,
 	.register_app_callback_command = mock_register_app_callback_command,
 	.log_transaction = mock_log_transaction,
 };
@@ -376,9 +415,16 @@ static void test_reset(void *fixture)
 	g_publish_state_event_calls = 0;
 	g_register_callback_calls = 0;
 	g_log_calls = 0;
+	g_download_artifact_calls = 0;
+	g_download_artifact_return = 0;
+	g_remove_calls = 0;
 	g_require_lease_result = true;
 	g_reply_ctx.transport_query = &g_dummy_query_storage;
+	g_reply_ctx.request_id = NULL;
+	g_reply_ctx.metadata = NULL;
+	g_reply_ctx.request_fields = NULL;
 	g_mock_artifact_size = 8192U;
+	g_mock_download_artifact_size = SIZE_MAX;
 	memset(g_last_error_message, 0, sizeof(g_last_error_message));
 	memset(g_last_reply_json, 0, sizeof(g_last_reply_json));
 	memset(g_last_event_app_id, 0, sizeof(g_last_event_app_id));
@@ -387,6 +433,10 @@ static void test_reset(void *fixture)
 	memset(g_last_event_message, 0, sizeof(g_last_event_message));
 	memset(g_last_log_action, 0, sizeof(g_last_log_action));
 	memset(g_last_log_phase, 0, sizeof(g_last_log_phase));
+	memset(g_last_lease_id, 0, sizeof(g_last_lease_id));
+	memset(g_last_download_artifact_key, 0,
+		sizeof(g_last_download_artifact_key));
+	memset(g_last_download_path, 0, sizeof(g_last_download_path));
 
 	cfg.apps_dir = "/mock/apps";
 	(void)app_runtime_cmd_set_config(&cfg);
@@ -448,6 +498,11 @@ ZTEST(neuro_unit_update_service,
 		"prepare via service should not emit reply_error");
 	zassert_equal(g_query_reply_calls, 1,
 		"prepare via service should reply once");
+	zassert_true(
+		strcmp(g_last_reply_json,
+			"{\"status\":\"ok\",\"request_id\":\"req-svc-1\",\"node_id\":\"unit-01\",\"app_id\":\"demo_app\",\"path\":\"/mock/apps/demo_app.llext\",\"transport\":\"file\"}") ==
+			0,
+		"prepare reply JSON contract changed");
 	zassert_true(strstr(g_last_reply_json, "\"status\":\"ok\"") != NULL,
 		"prepare should emit success payload");
 	zassert_true(
@@ -491,6 +546,131 @@ ZTEST(neuro_unit_update_service,
 		"repeated prepare should still return through service egress");
 }
 
+ZTEST(neuro_unit_update_service, test_prepare_prefers_context_request_fields)
+{
+	const struct neuro_artifact_meta *artifact;
+	struct neuro_unit_request_fields request_fields = { 0 };
+
+	snprintk(request_fields.transport, sizeof(request_fields.transport),
+		"contextfs");
+	request_fields.chunk_size = 2048U;
+	g_reply_ctx.request_fields = &request_fields;
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "prepare",
+		"{\"transport\":\"payloadfs\",\"chunk_size\":1024}",
+		"req-prepare-fields");
+
+	artifact = neuro_artifact_store_get(&g_artifact_store, "demo_app");
+	zassert_not_null(artifact,
+		"prepare with context fields should stage artifact metadata");
+	zassert_true(strcmp(artifact->transport, "contextfs") == 0,
+		"prepare should prefer context transport over payload JSON");
+	zassert_equal(artifact->chunk_size, 2048,
+		"prepare should prefer context chunk size over payload JSON");
+}
+
+ZTEST(neuro_unit_update_service,
+	test_zenoh_prepare_downloads_requested_artifact)
+{
+	const struct neuro_artifact_meta *artifact;
+
+	enable_successful_update_io();
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "prepare",
+		"{\"transport\":\"zenoh\",\"artifact_key\":\"neuro/artifact/unit-01/demo_app\",\"size\":20164,\"chunk_size\":1024}",
+		"req-prepare-zenoh");
+
+	artifact = neuro_artifact_store_get(&g_artifact_store, "demo_app");
+	zassert_not_null(artifact,
+		"zenoh prepare should stage downloaded artifact metadata");
+	zassert_equal(g_download_artifact_calls, 1,
+		"zenoh prepare should download the requested artifact");
+	zassert_true(strcmp(g_last_download_artifact_key,
+			     "neuro/artifact/unit-01/demo_app") == 0,
+		"zenoh prepare should use the request artifact key");
+	zassert_true(
+		strcmp(g_last_download_path, "/mock/apps/demo_app.llext") == 0,
+		"zenoh prepare should download into the runtime app path");
+	zassert_equal(artifact->size_bytes, 20164,
+		"zenoh prepare should persist the expected artifact size");
+	zassert_equal(artifact->chunk_size, 1024,
+		"zenoh prepare should persist the requested chunk size");
+	zassert_equal(g_reply_error_calls, 0,
+		"matching downloaded artifact size should not fail prepare");
+	zassert_equal(
+		neuro_update_manager_state_for(&g_update_manager, "demo_app"),
+		NEURO_UPDATE_STATE_PREPARED,
+		"matching downloaded artifact should leave app prepared");
+}
+
+ZTEST(neuro_unit_update_service, test_zenoh_prepare_rejects_truncated_artifact)
+{
+	const struct neuro_artifact_meta *artifact;
+
+	enable_successful_update_io();
+	g_mock_download_artifact_size = 5232U;
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "prepare",
+		"{\"transport\":\"zenoh\",\"artifact_key\":\"neuro/artifact/unit-01/demo_app\",\"size\":20164,\"chunk_size\":1024}",
+		"req-prepare-truncated");
+
+	artifact = neuro_artifact_store_get(&g_artifact_store, "demo_app");
+	zassert_is_null(artifact,
+		"truncated zenoh prepare must not stage artifact metadata");
+	zassert_equal(g_download_artifact_calls, 1,
+		"truncated prepare should still attempt the requested download");
+	zassert_equal(g_remove_calls, 1,
+		"truncated prepare should remove the partial artifact");
+	zassert_equal(g_reply_error_calls, 1,
+		"truncated prepare should emit a semantic error");
+	zassert_true(strcmp(g_last_error_message,
+			     "prepare artifact size mismatch") == 0,
+		"truncated prepare error message changed");
+	zassert_equal(
+		neuro_update_manager_state_for(&g_update_manager, "demo_app"),
+		NEURO_UPDATE_STATE_FAILED,
+		"truncated prepare should fail the update state");
+}
+
+ZTEST(neuro_unit_update_service, test_activate_prefers_context_metadata)
+{
+	struct neuro_request_metadata metadata;
+
+	enable_successful_update_io();
+	drive_verified_state(&g_reply_ctx);
+	neuro_request_metadata_init(&metadata);
+	snprintk(metadata.lease_id, sizeof(metadata.lease_id),
+		"lease-from-context");
+	g_reply_ctx.metadata = &metadata;
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "activate", "{\"lease_id\":\"payload-lease\"}",
+		"req-activate-context");
+
+	zassert_true(strcmp(g_last_lease_id, "lease-from-context") == 0,
+		"activate lease check should use decoded context metadata first");
+}
+
+ZTEST(neuro_unit_update_service, test_rollback_prefers_context_request_fields)
+{
+	struct neuro_unit_request_fields request_fields = { 0 };
+
+	enable_successful_update_io();
+	drive_active_state(&g_reply_ctx);
+	snprintk(request_fields.reason, sizeof(request_fields.reason),
+		"context reason");
+	g_reply_ctx.request_fields = &request_fields;
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "rollback", "{\"reason\":\"payload reason\"}",
+		"req-rollback-fields");
+
+	zassert_true(strstr(g_last_reply_json,
+			     "\"reason\":\"context reason\"") != NULL,
+		"rollback should prefer context reason over payload JSON");
+}
+
 ZTEST(neuro_unit_update_service, test_verify_action_marks_artifact_verified)
 {
 	const struct neuro_artifact_meta *artifact;
@@ -511,6 +691,11 @@ ZTEST(neuro_unit_update_service, test_verify_action_marks_artifact_verified)
 		"verify via service should not emit reply_error");
 	zassert_equal(g_query_reply_calls, 2,
 		"prepare+verify should emit two success replies");
+	zassert_true(
+		strcmp(g_last_reply_json,
+			"{\"status\":\"ok\",\"request_id\":\"req-verify\",\"node_id\":\"unit-01\",\"app_id\":\"demo_app\",\"size\":8192}") ==
+			0,
+		"verify reply JSON contract changed");
 	zassert_true(strstr(g_last_reply_json, "\"size\":8192") != NULL,
 		"verify reply should include artifact size");
 	zassert_true(strcmp(g_last_event_stage, "verify") == 0,
@@ -543,6 +728,11 @@ ZTEST(neuro_unit_update_service, test_activate_action_marks_app_active)
 		"activate via service should not emit reply_error");
 	zassert_equal(g_query_reply_calls, 3,
 		"prepare+verify+activate should emit three success replies");
+	zassert_true(
+		strcmp(g_last_reply_json,
+			"{\"status\":\"ok\",\"request_id\":\"req-activate\",\"node_id\":\"unit-01\",\"app_id\":\"demo_app\",\"path\":\"/mock/apps/demo_app.llext\"}") ==
+			0,
+		"activate reply JSON contract changed");
 	zassert_equal(g_register_callback_calls, 1,
 		"activate via service should register callback command once");
 	zassert_equal(g_publish_state_event_calls, 1,
@@ -573,6 +763,11 @@ ZTEST(neuro_unit_update_service, test_rollback_action_completes_recovery_flow)
 		"rollback via service should not emit reply_error");
 	zassert_equal(g_query_reply_calls, 4,
 		"prepare+verify+activate+rollback should emit four replies");
+	zassert_true(
+		strcmp(g_last_reply_json,
+			"{\"status\":\"ok\",\"request_id\":\"req-rollback\",\"node_id\":\"unit-01\",\"app_id\":\"demo_app\",\"reason\":\"operator\"}") ==
+			0,
+		"rollback reply JSON contract changed");
 	zassert_equal(g_publish_state_event_calls, 2,
 		"activate+rollback should publish two state events");
 	zassert_equal(g_register_callback_calls, 2,

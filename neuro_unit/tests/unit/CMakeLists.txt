@@ -50,6 +50,10 @@ target_sources(app PRIVATE
   src/runtime/test_app_runtime_cmd_capability.c
 )
 
+target_sources_ifdef(CONFIG_NEUROLINK_PROTOCOL_CBOR app PRIVATE
+  ../../src/neuro_protocol_codec_cbor.c
+)
+
 target_include_directories(app PRIVATE
   ../../include
   ../../include/runtime

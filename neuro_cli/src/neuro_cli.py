@@ -17,7 +17,7 @@ import neuro_protocol as protocol
 
 DEFAULT_CHUNK_SIZE = 1024
 DEFAULT_PRIORITY = 50
-RELEASE_TARGET = "1.1.5"
+RELEASE_TARGET = "1.1.6"
 EVENT_SUBSCRIPTION_READY_DELAY_SEC = 1.0
 EVENT_SUBSCRIPTION_PUMP_INTERVAL_SEC = 1.0
 DEFAULT_SESSION_OPEN_RETRIES = 3
@@ -27,6 +27,9 @@ DEFAULT_QUERY_RETRY_BACKOFF_MS = 250
 DEFAULT_QUERY_RETRY_BACKOFF_MAX_MS = 2000
 DEFAULT_HANDLER_TIMEOUT_SEC = 5.0
 DEFAULT_HANDLER_MAX_EVENT_BYTES = 65536
+DEFAULT_HANDLER_MAX_OUTPUT_BYTES = 16384
+PROJECT_SKILL_RELATIVE_PATH = ".github/skills/neuro-cli/SKILL.md"
+NEURO_CLI_WRAPPER_RELATIVE_PATH = "neuro_cli/scripts/invoke_neuro_cli.py"
 
 
 @dataclass(frozen=True)
@@ -275,6 +278,8 @@ def find_neurolink_root(start: Path | None = None) -> Path | None:
 def build_init_diagnostics(args: argparse.Namespace) -> dict:
     neurolink_root = find_neurolink_root(Path.cwd())
     workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
+    skill_path = neurolink_root / PROJECT_SKILL_RELATIVE_PATH if neurolink_root else Path(PROJECT_SKILL_RELATIVE_PATH)
+    wrapper_path = neurolink_root / NEURO_CLI_WRAPPER_RELATIVE_PATH if neurolink_root else Path(NEURO_CLI_WRAPPER_RELATIVE_PATH)
     scripts = {}
     script_names = [
         "setup_neurolink_env.sh",
@@ -298,7 +303,7 @@ def build_init_diagnostics(args: argparse.Namespace) -> dict:
             "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
             "supported_wire_encodings": protocol.SUPPORTED_WIRE_ENCODINGS,
             "planned_wire_encodings": protocol.PLANNED_WIRE_ENCODINGS,
-            "cbor_v2_enabled": False,
+            "cbor_v2_enabled": protocol.DEFAULT_WIRE_ENCODING == "cbor-v2",
         },
         "workspace_root": str(workspace_root),
         "neurolink_root": str(neurolink_root) if neurolink_root else "",
@@ -307,6 +312,15 @@ def build_init_diagnostics(args: argparse.Namespace) -> dict:
         "shell_setup": {
             "can_modify_parent_shell": False,
             "recommended_command": "source applocation/NeuroLink/scripts/setup_neurolink_env.sh",
+        },
+        "agent_skill": {
+            "name": "neuro-cli",
+            "project_shared_path": str(skill_path),
+            "project_shared_exists": skill_path.is_file(),
+            "wrapper": str(wrapper_path),
+            "wrapper_exists": wrapper_path.is_file(),
+            "structured_stdout": True,
+            "callback_handler_execution": "explicit_audited_runner",
         },
         "agent_workflows": [
             "system capabilities --output json",
@@ -403,6 +417,8 @@ def build_workflow_plan(args: argparse.Namespace) -> dict:
     workflow = WORKFLOW_PLANS[args.workflow]
     neurolink_root = find_neurolink_root(Path.cwd())
     workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
+    skill_path = neurolink_root / PROJECT_SKILL_RELATIVE_PATH if neurolink_root else Path(PROJECT_SKILL_RELATIVE_PATH)
+    wrapper_path = neurolink_root / NEURO_CLI_WRAPPER_RELATIVE_PATH if neurolink_root else Path(NEURO_CLI_WRAPPER_RELATIVE_PATH)
     return {
         "ok": True,
         "workflow": args.workflow,
@@ -414,10 +430,16 @@ def build_workflow_plan(args: argparse.Namespace) -> dict:
             "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
             "supported_wire_encodings": protocol.SUPPORTED_WIRE_ENCODINGS,
             "planned_wire_encodings": protocol.PLANNED_WIRE_ENCODINGS,
-            "cbor_v2_enabled": False,
+            "cbor_v2_enabled": protocol.DEFAULT_WIRE_ENCODING == "cbor-v2",
         },
         "executes_commands": False,
         "workspace_root": str(workspace_root),
+        "agent_skill": {
+            "name": "neuro-cli",
+            "project_shared_path": str(skill_path),
+            "wrapper": str(wrapper_path),
+            "structured_stdout": True,
+        },
         "commands": workflow["commands"],
         "artifacts": workflow["artifacts"],
         "next_step": "run the listed command explicitly after reviewing it",
@@ -448,10 +470,10 @@ def collect_query_result(
     payload: dict,
     timeout: float,
 ) -> dict:
-    payload_text = json.dumps(payload, ensure_ascii=False)
+    payload_bytes = protocol.encode_query_payload(keyexpr, payload)
 
     try:
-        replies = session.get(keyexpr, payload=payload_text, timeout=timeout)
+        replies = session.get(keyexpr, payload=payload_bytes, timeout=timeout)
         parsed_replies = [parse_reply(reply) for reply in replies]
     except Exception as exc:
         return {
@@ -552,6 +574,20 @@ def result_has_reply_error(result: dict) -> bool:
     return False
 
 
+def result_has_expected_app_echo(result: dict, expected_echo: str) -> bool:
+    if not expected_echo:
+        return True
+
+    for reply in result.get("replies", []):
+        payload = reply.get("payload")
+        if isinstance(payload, dict) and payload.get("echo") == expected_echo:
+            return True
+
+    result["expected_app_echo"] = expected_echo
+    result["app_echo_match"] = False
+    return False
+
+
 def send_query(
     session: zenoh.Session,
     keyexpr: str,
@@ -559,13 +595,16 @@ def send_query(
     timeout: float,
     args: argparse.Namespace,
 ) -> int:
-    payload_text = json.dumps(payload, ensure_ascii=False)
     if args.dry_run:
         dry_run_data = {
             "ok": True,
             "dry_run": True,
             "keyexpr": keyexpr,
             "payload": payload,
+            "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
+            "encoded_payload_hex": protocol.encode_query_payload(
+                keyexpr, payload
+            ).hex(),
             "timeout": timeout,
         }
         if args.output == "json":
@@ -909,20 +948,57 @@ def build_handler_argv(args: argparse.Namespace) -> list[str]:
     return []
 
 
+def bounded_text(value: str | bytes | None, max_bytes: int) -> tuple[str, bool, int]:
+    if value is None:
+        return "", False, 0
+    if isinstance(value, bytes):
+        raw = value
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = value
+        raw = value.encode("utf-8")
+
+    if len(raw) <= max_bytes:
+        return text, False, len(raw)
+
+    truncated = raw[:max(0, max_bytes)]
+    return truncated.decode("utf-8", errors="replace"), True, len(raw)
+
+
 def execute_event_handler(args: argparse.Namespace, event: dict) -> dict | None:
     argv = build_handler_argv(args)
     if not argv:
         return None
 
     event_text = json.dumps(event, ensure_ascii=False)
+    event_bytes = len(event_text.encode("utf-8"))
     max_bytes = int(
         getattr(args, "handler_max_event_bytes", DEFAULT_HANDLER_MAX_EVENT_BYTES)
     )
-    if len(event_text.encode("utf-8")) > max_bytes:
+    max_output_bytes = int(
+        getattr(args, "handler_max_output_bytes", DEFAULT_HANDLER_MAX_OUTPUT_BYTES)
+    )
+    timeout_sec = float(getattr(args, "handler_timeout", DEFAULT_HANDLER_TIMEOUT_SEC))
+    try:
+        cwd = resolve_handler_cwd(args)
+    except Exception as exc:
+        return {
+            "enabled": True,
+            "executed": False,
+            "status": "handler_error",
+            "argv": argv,
+            "cwd": "",
+            "error": str(exc),
+        }
+
+    if event_bytes > max_bytes:
         return {
             "enabled": True,
             "executed": False,
             "status": "payload_too_large",
+            "argv": argv,
+            "cwd": str(cwd),
+            "event_bytes": event_bytes,
             "max_event_bytes": max_bytes,
         }
 
@@ -933,34 +1009,60 @@ def execute_event_handler(args: argparse.Namespace, event: dict) -> dict | None:
             input=event_text,
             text=True,
             capture_output=True,
-            timeout=float(getattr(args, "handler_timeout", DEFAULT_HANDLER_TIMEOUT_SEC)),
-            cwd=str(resolve_handler_cwd(args)),
+            timeout=timeout_sec,
+            cwd=str(cwd),
             shell=False,
             check=False,
         )
         duration_ms = int((time.monotonic() - started) * 1000)
+        stdout, stdout_truncated, stdout_bytes = bounded_text(
+            completed.stdout, max_output_bytes
+        )
+        stderr, stderr_truncated, stderr_bytes = bounded_text(
+            completed.stderr, max_output_bytes
+        )
         return {
             "enabled": True,
             "executed": True,
             "status": "ok" if completed.returncode == 0 else "nonzero_exit",
             "argv": argv,
+            "cwd": str(cwd),
             "returncode": completed.returncode,
             "duration_ms": duration_ms,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
+            "event_bytes": event_bytes,
+            "max_event_bytes": max_bytes,
+            "timeout_sec": timeout_sec,
+            "stdout": stdout,
+            "stderr": stderr,
+            "stdout_bytes": stdout_bytes,
+            "stderr_bytes": stderr_bytes,
+            "stdout_truncated": stdout_truncated,
+            "stderr_truncated": stderr_truncated,
+            "max_output_bytes": max_output_bytes,
             "timeout": False,
         }
     except subprocess.TimeoutExpired as exc:
         duration_ms = int((time.monotonic() - started) * 1000)
+        stdout, stdout_truncated, stdout_bytes = bounded_text(exc.stdout, max_output_bytes)
+        stderr, stderr_truncated, stderr_bytes = bounded_text(exc.stderr, max_output_bytes)
         return {
             "enabled": True,
             "executed": True,
             "status": "timeout",
             "argv": argv,
+            "cwd": str(cwd),
             "returncode": None,
             "duration_ms": duration_ms,
-            "stdout": exc.stdout or "",
-            "stderr": exc.stderr or "",
+            "event_bytes": event_bytes,
+            "max_event_bytes": max_bytes,
+            "timeout_sec": timeout_sec,
+            "stdout": stdout,
+            "stderr": stderr,
+            "stdout_bytes": stdout_bytes,
+            "stderr_bytes": stderr_bytes,
+            "stdout_truncated": stdout_truncated,
+            "stderr_truncated": stderr_truncated,
+            "max_output_bytes": max_output_bytes,
             "timeout": True,
         }
     except Exception as exc:
@@ -970,26 +1072,50 @@ def execute_event_handler(args: argparse.Namespace, event: dict) -> dict | None:
             "executed": False,
             "status": "handler_error",
             "argv": argv,
+            "cwd": str(cwd),
             "duration_ms": duration_ms,
+            "event_bytes": event_bytes,
+            "max_event_bytes": max_bytes,
             "error": str(exc),
         }
+
+
+def build_handler_audit(event_rows: list[dict]) -> dict:
+    rows = [row.get("handler") for row in event_rows if isinstance(row.get("handler"), dict)]
+    if not rows:
+        return {"enabled": False, "executions": 0, "failures": 0, "statuses": {}}
+
+    statuses: dict[str, int] = {}
+    failures = 0
+    for row in rows:
+        status = str(row.get("status", "unknown"))
+        statuses[status] = statuses.get(status, 0) + 1
+        if status != "ok":
+            failures += 1
+
+    return {
+        "enabled": True,
+        "executions": len(rows),
+        "failures": failures,
+        "statuses": statuses,
+    }
 
 
 def append_event_row(
     event_rows: list[dict], sample: zenoh.Sample, args: argparse.Namespace, label: str
 ) -> None:
-    payload = sample.payload.to_string()
-    parsed_payload: object = payload
-    try:
-        parsed_payload = json.loads(payload)
-    except json.JSONDecodeError:
-        pass
+    parsed_payload, payload_encoding, payload_hex = protocol.parse_wire_payload(
+        sample.payload
+    )
 
     if args.output == "json":
         row = {
             "keyexpr": str(sample.key_expr),
             "payload": parsed_payload,
+            "payload_encoding": payload_encoding,
         }
+        if payload_encoding == "cbor-v2":
+            row["payload_hex"] = payload_hex
         handler = execute_event_handler(args, row)
         if handler is not None:
             row["handler"] = handler
@@ -997,12 +1123,17 @@ def append_event_row(
         return
 
     print(f"<< {label} {sample.key_expr}")
-    try:
-        print(json.dumps(json.loads(payload), indent=2, ensure_ascii=False))
-    except json.JSONDecodeError:
-        print(payload)
+    if isinstance(parsed_payload, (dict, list)):
+        print(json.dumps(parsed_payload, indent=2, ensure_ascii=False))
+    else:
+        print(parsed_payload)
     handler = execute_event_handler(
-        args, {"keyexpr": str(sample.key_expr), "payload": parsed_payload}
+        args,
+        {
+            "keyexpr": str(sample.key_expr),
+            "payload": parsed_payload,
+            "payload_encoding": payload_encoding,
+        },
     )
     if handler is not None:
         print_json({"handler": handler})
@@ -1187,12 +1318,13 @@ def declare_event_subscriber(
     event_rows: list[dict],
     args: argparse.Namespace,
     label: str,
+    prefer_callback: bool = False,
 ) -> tuple[object, bool, str]:
     handlers = getattr(zenoh, "handlers", None)
     fifo_cls = getattr(handlers, "FifoChannel", None) if handlers is not None else None
     callback_cls = getattr(handlers, "Callback", None) if handlers is not None else None
 
-    if fifo_cls is not None:
+    if not prefer_callback and fifo_cls is not None:
         try:
             return session.declare_subscriber(keyexpr, fifo_cls(64)), False, "fifo_channel"
         except TypeError:
@@ -1260,6 +1392,7 @@ def emit_event_subscription_result(
             "ok": True,
             "subscription": keyexpr,
             "listener_mode": listener_mode,
+            "handler_audit": build_handler_audit(event_rows),
             "events": event_rows,
         }
     )
@@ -1279,6 +1412,7 @@ def build_app_callback_smoke_result(
     return {
         "ok": ok,
         "subscription": subscription,
+        "handler_audit": build_handler_audit(event_rows),
         "events": event_rows,
         "steps": step_results,
     }
@@ -1363,25 +1497,18 @@ def handle_app_callback_smoke(
     lease_id = args.lease_id or f"smoke-{uuid.uuid4().hex[:8]}"
     lease_args = args_with_lease_id(args, lease_id)
     subscriber = None
+    use_callback_collection = False
     step_results: list[dict] = []
     forced_ok: bool | None = None
 
-    def listener(sample: zenoh.Sample) -> None:
-        payload = sample.payload.to_string()
-        parsed_payload: object = payload
-        try:
-            parsed_payload = json.loads(payload)
-        except json.JSONDecodeError:
-            pass
-
-        event_rows.append(
-            {
-                "keyexpr": str(sample.key_expr),
-                "payload": parsed_payload,
-            }
-        )
-
-    subscriber = session.declare_subscriber(subscription, listener)
+    subscriber, use_callback_collection, _listener_mode = declare_event_subscriber(
+        session,
+        subscription,
+        event_rows,
+        args,
+        "APP_EVT",
+        prefer_callback=True,
+    )
     try:
         time.sleep(EVENT_SUBSCRIPTION_READY_DELAY_SEC + args.settle_sec)
 
@@ -1420,15 +1547,16 @@ def handle_app_callback_smoke(
                 lease_args, enabled=True
             )
             validate_payload(config_payload, "protected")
-            if result_has_reply_error(
-                collect_app_callback_smoke_step(
-                    session,
-                    args,
-                    step_results,
-                    "app_callback_config",
-                    app_callback_invoke_key(args.node, args.app_id),
-                    config_payload,
-                )
+            config_result = collect_app_callback_smoke_step(
+                session,
+                args,
+                step_results,
+                "app_callback_config",
+                app_callback_invoke_key(args.node, args.app_id),
+                config_payload,
+            )
+            if result_has_reply_error(config_result) or not result_has_expected_app_echo(
+                config_result, getattr(args, "expected_app_echo", "")
             ):
                 forced_ok = False
 
@@ -1437,21 +1565,38 @@ def handle_app_callback_smoke(
             invoke_payload["args"] = {}
             validate_payload(invoke_payload, "protected")
             for index in range(args.invoke_count):
+                invoke_result = collect_app_callback_smoke_step(
+                    session,
+                    args,
+                    step_results,
+                    f"app_invoke_{index + 1}",
+                    app_callback_invoke_key(args.node, args.app_id),
+                    invoke_payload,
+                )
                 if result_has_reply_error(
-                    collect_app_callback_smoke_step(
-                        session,
-                        args,
-                        step_results,
-                        f"app_invoke_{index + 1}",
-                        app_callback_invoke_key(args.node, args.app_id),
-                        invoke_payload,
-                    )
+                    invoke_result
+                ) or not result_has_expected_app_echo(
+                    invoke_result, getattr(args, "expected_app_echo", "")
                 ):
                     forced_ok = False
                     break
 
         if forced_ok is None:
-            time.sleep(args.settle_sec)
+            collect_args = argparse.Namespace(**vars(args))
+            collect_args.duration = max(
+                EVENT_SUBSCRIPTION_READY_DELAY_SEC, float(args.settle_sec)
+            )
+            if use_callback_collection:
+                wait_for_callback_events(session, collect_args)
+            else:
+                collect_subscriber_events_threaded(
+                    subscriber,
+                    event_rows,
+                    collect_args,
+                    "APP_EVT",
+                    session=session,
+                    pump_session=True,
+                )
     finally:
         try:
             release_app_callback_smoke_lease(
@@ -1494,12 +1639,15 @@ def handle_capabilities(session: zenoh.Session, args: argparse.Namespace) -> int
                     "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
                     "supported_wire_encodings": protocol.SUPPORTED_WIRE_ENCODINGS,
                     "planned_wire_encodings": protocol.PLANNED_WIRE_ENCODINGS,
-                    "cbor_v2_enabled": False,
+                    "cbor_v2_enabled": protocol.DEFAULT_WIRE_ENCODING == "cbor-v2",
                 },
                 "agent_skill": {
+                    "name": "neuro-cli",
+                    "project_shared_path": PROJECT_SKILL_RELATIVE_PATH,
+                    "wrapper": NEURO_CLI_WRAPPER_RELATIVE_PATH,
                     "structured_stdout": True,
                     "init_diagnostics_command": "system init --output json",
-                    "callback_handler_execution": "opt_in_subprocess",
+                    "callback_handler_execution": "explicit_audited_runner",
                 },
                 "capabilities": capabilities,
             }
@@ -1614,6 +1762,12 @@ def add_event_handler_arguments(parser: argparse.ArgumentParser) -> None:
         help="maximum UTF-8 event JSON bytes passed to a handler",
     )
     parser.add_argument(
+        "--handler-max-output-bytes",
+        type=int,
+        default=DEFAULT_HANDLER_MAX_OUTPUT_BYTES,
+        help="maximum UTF-8 stdout/stderr bytes retained per handler stream",
+    )
+    parser.add_argument(
         "--max-events",
         type=int,
         default=0,
@@ -1716,6 +1870,8 @@ def add_legacy_commands(subparsers: argparse._SubParsersAction) -> None:
     app_callback_smoke.add_argument("--event-name", default="callback")
     app_callback_smoke.add_argument("--invoke-count", type=int, default=2)
     app_callback_smoke.add_argument("--settle-sec", type=float, default=1.0)
+    app_callback_smoke.add_argument("--expected-app-echo", default="")
+    add_event_handler_arguments(app_callback_smoke)
     app_callback_smoke.set_defaults(handler=handle_app_callback_smoke)
 
     capability = subparsers.add_parser("capabilities", help="show Unit capability map")

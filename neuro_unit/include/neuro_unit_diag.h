@@ -19,10 +19,22 @@ struct neuro_unit_diag_context {
 	int ret;
 };
 
+/** Format a bounded diagnostic context string into caller-owned storage. */
 int neuro_unit_diag_format_context(
 	char *out, size_t out_len, const struct neuro_unit_diag_context *ctx);
+/** Log a generic operation result with request/app/route/stage context. */
 void neuro_unit_diag_log_result(
 	const char *operation, const struct neuro_unit_diag_context *ctx);
+
+/** Log a bounded CBOR/protocol failure without dumping binary payload bytes. */
+void neuro_unit_diag_protocol_failure(const char *route, const char *stage,
+	const char *request_id, int ret, size_t payload_len);
+/** Log route classification or dispatch outcomes without logging payloads. */
+void neuro_unit_diag_dispatch_result(const char *family, const char *key,
+	const char *request_id, const char *result, int code);
+/** Log app callback command registration stages. */
+void neuro_unit_diag_callback_registration(const char *app_id,
+	const char *command_name, const char *stage, int ret);
 
 void neuro_unit_diag_update_transaction(const char *app_id, const char *action,
 	const char *request_id, const char *phase, int code,

@@ -45,6 +45,10 @@ target_sources(app PRIVATE
   src/port/neuro_unit_port_generic_dnesp32s3b.c
 )
 
+target_sources_ifdef(CONFIG_NEUROLINK_PROTOCOL_CBOR app PRIVATE
+  src/neuro_protocol_codec_cbor.c
+)
+
 target_include_directories(app PRIVATE
   include/port
 )
