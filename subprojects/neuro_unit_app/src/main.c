@@ -43,36 +43,36 @@ static bool str_eq(const char *lhs, const char *rhs)
 
 static bool command_updates_callback_config(const char *request_json)
 {
-	char event_name[NEURO_UNIT_APP_EVENT_NAME_LEN];
+	struct neuro_unit_app_callback_config config;
 	bool changed = false;
-	bool enabled;
-	int trigger_every;
 
 	if (request_json == NULL) {
 		return false;
 	}
 
-	enabled = neuro_json_extract_bool(
-		request_json, "callback_enabled", callback_enabled);
-	if (enabled != callback_enabled) {
-		callback_enabled = enabled;
+	if (neuro_unit_read_callback_config_json(request_json, &config) != 0) {
+		return false;
+	}
+
+	if (config.has_callback_enabled &&
+		config.callback_enabled != callback_enabled) {
+		callback_enabled = config.callback_enabled;
 		changed = true;
 	}
 
-	trigger_every = neuro_json_extract_int(
-		request_json, "trigger_every", callback_trigger_every);
-	if (trigger_every < 0) {
-		trigger_every = 0;
-	}
-	if (trigger_every != callback_trigger_every) {
-		callback_trigger_every = trigger_every;
-		changed = true;
+	if (config.has_trigger_every) {
+		if (config.trigger_every < 0) {
+			config.trigger_every = 0;
+		}
+		if (config.trigger_every != callback_trigger_every) {
+			callback_trigger_every = config.trigger_every;
+			changed = true;
+		}
 	}
 
-	if (neuro_json_extract_string(request_json, "event_name", event_name,
-		    sizeof(event_name))) {
+	if (config.has_event_name) {
 		snprintk(callback_event_name, sizeof(callback_event_name), "%s",
-			event_name);
+			config.event_name);
 		changed = true;
 	}
 

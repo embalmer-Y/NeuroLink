@@ -248,4 +248,36 @@ ZTEST(neuro_request_envelope,
 		"bool extractor must return default when key is absent");
 }
 
+ZTEST(neuro_request_envelope, test_callback_config_decode_reports_presence)
+{
+	struct neuro_unit_app_callback_config config;
+
+	zassert_equal(
+		neuro_unit_read_callback_config_json(
+			"{\"callback_enabled\":true,\"trigger_every\":3,\"event_name\":\"notify\"}",
+			&config),
+		0, "callback config decode should succeed");
+	zassert_true(config.has_callback_enabled,
+		"callback_enabled presence should be reported");
+	zassert_true(config.callback_enabled,
+		"callback_enabled value should be decoded");
+	zassert_true(config.has_trigger_every,
+		"trigger_every presence should be reported");
+	zassert_equal(config.trigger_every, 3,
+		"trigger_every value should be decoded");
+	zassert_true(config.has_event_name,
+		"event_name presence should be reported");
+	zassert_equal(strcmp(config.event_name, "notify"), 0,
+		"event_name value should be decoded");
+
+	zassert_equal(neuro_unit_read_callback_config_json("{}", &config), 0,
+		"empty callback config should decode");
+	zassert_false(config.has_callback_enabled,
+		"missing callback_enabled should be explicit");
+	zassert_false(config.has_trigger_every,
+		"missing trigger_every should be explicit");
+	zassert_false(
+		config.has_event_name, "missing event_name should be explicit");
+}
+
 ZTEST_SUITE(neuro_request_envelope, NULL, NULL, NULL, NULL, NULL);

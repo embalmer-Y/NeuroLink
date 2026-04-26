@@ -8,6 +8,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include "neuro_protocol_codec.h"
+
 #if defined(CONFIG_NEUROLINK_UNIT_DEBUG_MODE) &&                               \
 	CONFIG_NEUROLINK_UNIT_DEBUG_MODE
 #define NEURO_UNIT_RESPONSE_LOG_LEVEL LOG_LEVEL_DBG
@@ -139,63 +141,58 @@ int neuro_unit_build_error_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id, int status_code,
 	const char *message)
 {
-	int ret;
+	const struct neuro_protocol_error_reply reply = {
+		.request_id = request_id,
+		.node_id = node_id,
+		.status_code = status_code,
+		.message = message,
+	};
 
 	if (json == NULL || json_len == 0U) {
 		return -EINVAL;
 	}
 
-	ret = snprintk(json, json_len,
-		"{\"status\":\"error\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"status_code\":%d,\"message\":\"%s\"}",
-		safe_str(request_id), safe_str(node_id), status_code,
-		safe_str(message));
-	if (ret < 0 || (size_t)ret >= json_len) {
-		return -ENAMETOOLONG;
-	}
-
-	return 0;
+	return neuro_protocol_encode_error_reply_json(json, json_len, &reply);
 }
 
 int neuro_unit_build_lease_acquire_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *lease)
 {
-	int ret;
+	struct neuro_protocol_lease_reply reply;
 
 	if (json == NULL || json_len == 0U || lease == NULL) {
 		return -EINVAL;
 	}
 
-	ret = snprintk(json, json_len,
-		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"lease_id\":\"%s\",\"resource\":\"%s\",\"expires_at_ms\":%lld}",
-		safe_str(request_id), safe_str(node_id), lease->lease_id,
-		lease->resource, (long long)lease->expires_at_ms);
-	if (ret < 0 || (size_t)ret >= json_len) {
-		return -ENAMETOOLONG;
-	}
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.lease_id = lease->lease_id;
+	reply.resource = lease->resource;
+	reply.expires_at_ms = lease->expires_at_ms;
+	reply.include_expires_at_ms = true;
 
-	return 0;
+	return neuro_protocol_encode_lease_reply_json(json, json_len, &reply);
 }
 
 int neuro_unit_build_lease_release_response(char *json, size_t json_len,
 	const char *request_id, const char *node_id,
 	const struct neuro_lease_entry *lease)
 {
-	int ret;
+	struct neuro_protocol_lease_reply reply;
 
 	if (json == NULL || json_len == 0U || lease == NULL) {
 		return -EINVAL;
 	}
 
-	ret = snprintk(json, json_len,
-		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"lease_id\":\"%s\",\"resource\":\"%s\"}",
-		safe_str(request_id), safe_str(node_id), lease->lease_id,
-		lease->resource);
-	if (ret < 0 || (size_t)ret >= json_len) {
-		return -ENAMETOOLONG;
-	}
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.lease_id = lease->lease_id;
+	reply.resource = lease->resource;
+	reply.expires_at_ms = 0;
+	reply.include_expires_at_ms = false;
 
-	return 0;
+	return neuro_protocol_encode_lease_reply_json(json, json_len, &reply);
 }
 
 int neuro_unit_build_query_device_response(char *json, size_t json_len,
@@ -203,23 +200,22 @@ int neuro_unit_build_query_device_response(char *json, size_t json_len,
 	const char *zenoh_mode, bool session_ready,
 	const struct neuro_network_status *network_status)
 {
-	int ret;
+	struct neuro_protocol_query_device_reply reply;
 
 	if (json == NULL || json_len == 0U || network_status == NULL) {
 		return -EINVAL;
 	}
 
-	ret = snprintk(json, json_len,
-		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"board\":\"%s\",\"zenoh_mode\":\"%s\",\"session_ready\":%s,\"network_state\":\"%s\",\"ipv4\":\"%s\"}",
-		safe_str(request_id), safe_str(node_id), safe_str(board),
-		safe_str(zenoh_mode), session_ready ? "true" : "false",
-		network_state_to_str(network_status->state),
-		network_status->ipv4_addr);
-	if (ret < 0 || (size_t)ret >= json_len) {
-		return -ENAMETOOLONG;
-	}
+	reply.request_id = request_id;
+	reply.node_id = node_id;
+	reply.board = board;
+	reply.zenoh_mode = zenoh_mode;
+	reply.session_ready = session_ready;
+	reply.network_state = network_state_to_str(network_status->state);
+	reply.ipv4 = network_status->ipv4_addr;
 
-	return 0;
+	return neuro_protocol_encode_query_device_reply_json(
+		json, json_len, &reply);
 }
 
 int neuro_unit_build_query_apps_response(char *json, size_t json_len,

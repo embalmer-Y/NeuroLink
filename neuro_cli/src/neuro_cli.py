@@ -2,6 +2,8 @@ import argparse
 from dataclasses import dataclass
 import json
 import os
+import shlex
+import subprocess
 import sys
 import threading
 import time
@@ -10,10 +12,12 @@ from pathlib import Path
 
 import zenoh
 
+import neuro_protocol as protocol
+
 
 DEFAULT_CHUNK_SIZE = 1024
 DEFAULT_PRIORITY = 50
-RELEASE_TARGET = "1.1.4"
+RELEASE_TARGET = "1.1.5"
 EVENT_SUBSCRIPTION_READY_DELAY_SEC = 1.0
 EVENT_SUBSCRIPTION_PUMP_INTERVAL_SEC = 1.0
 DEFAULT_SESSION_OPEN_RETRIES = 3
@@ -21,6 +25,8 @@ DEFAULT_SESSION_OPEN_BACKOFF_MS = 500
 DEFAULT_QUERY_RETRIES = 3
 DEFAULT_QUERY_RETRY_BACKOFF_MS = 250
 DEFAULT_QUERY_RETRY_BACKOFF_MAX_MS = 2000
+DEFAULT_HANDLER_TIMEOUT_SEC = 5.0
+DEFAULT_HANDLER_MAX_EVENT_BYTES = 65536
 
 
 @dataclass(frozen=True)
@@ -94,71 +100,7 @@ def open_session_with_retry(args: argparse.Namespace) -> zenoh.Session:
     raise RuntimeError("failed to open zenoh session")
 
 
-CAPABILITY_MATRIX = {
-    "query_device": {
-        "resource": "neuro/<node>/query/device",
-        "implemented": True,
-    },
-    "query_apps": {
-        "resource": "neuro/<node>/query/apps",
-        "implemented": True,
-    },
-    "query_leases": {
-        "resource": "neuro/<node>/query/leases",
-        "implemented": True,
-    },
-    "cmd_lease_acquire": {
-        "resource": "neuro/<node>/cmd/lease/acquire",
-        "implemented": True,
-    },
-    "cmd_lease_release": {
-        "resource": "neuro/<node>/cmd/lease/release",
-        "implemented": True,
-    },
-    "cmd_app": {
-        "resource": "neuro/<node>/cmd/app/<app-id>/<command-name>",
-        "implemented": True,
-    },
-    "update_prepare": {
-        "resource": "neuro/<node>/update/app/<app-id>/prepare",
-        "implemented": True,
-    },
-    "update_verify": {
-        "resource": "neuro/<node>/update/app/<app-id>/verify",
-        "implemented": True,
-    },
-    "update_activate": {
-        "resource": "neuro/<node>/update/app/<app-id>/activate",
-        "implemented": True,
-    },
-    "update_rollback": {
-        "resource": "neuro/<node>/update/app/<app-id>/rollback",
-        "implemented": True,
-    },
-    "event_stream": {
-        "resource": "neuro/<node>/event/**",
-        "implemented": True,
-    },
-    "app_event_stream": {
-        "resource": "neuro/<node>/event/app/<app-id>/**",
-        "implemented": True,
-    },
-    "recovery": {
-        "resource": "recovery lifecycle",
-        "implemented": False,
-        "note": "LLD defined, Unit runtime not implemented yet",
-    },
-    "gateway": {
-        "resource": "gateway route and relay",
-        "implemented": False,
-        "note": "LLD defined, Unit runtime not implemented yet",
-    },
-    "state_registry": {
-        "resource": "state registry management",
-        "implemented": False,
-        "note": "LLD defined, Unit runtime not implemented yet",
-    },
-}
+CAPABILITY_MATRIX = protocol.CAPABILITY_MATRIX
 
 
 def print_json(data: dict) -> None:
@@ -166,11 +108,11 @@ def print_json(data: dict) -> None:
 
 
 def make_request_id() -> str:
-    return f"req-{uuid.uuid4().hex[:12]}"
+    return protocol.make_request_id()
 
 
 def make_idempotency_key() -> str:
-    return f"idem-{uuid.uuid4().hex[:12]}"
+    return protocol.make_idempotency_key()
 
 
 def dump_reply(reply) -> None:
@@ -190,27 +132,7 @@ def dump_reply(reply) -> None:
 
 
 def parse_reply(reply) -> dict:
-    try:
-        payload = reply.ok.payload.to_string()
-        try:
-            parsed_payload = json.loads(payload)
-        except json.JSONDecodeError:
-            parsed_payload = payload
-        return {
-            "ok": True,
-            "keyexpr": str(reply.ok.key_expr),
-            "payload": parsed_payload,
-        }
-    except Exception:
-        error_payload = "<unreadable error payload>"
-        try:
-            error_payload = reply.err.payload.to_string()
-        except Exception:
-            pass
-        return {
-            "ok": False,
-            "payload": error_payload,
-        }
+    return protocol.parse_reply(reply)
 
 
 def query_payload_bytes(query: zenoh.Query) -> bytes:
@@ -238,7 +160,7 @@ def query_payload_json(query: zenoh.Query) -> dict:
 
 
 def build_artifact_key(node: str, app_id: str) -> str:
-    return f"neuro/artifact/{node}/{app_id}"
+    return protocol.artifact_route(node, app_id)
 
 
 class ArtifactProvider:
@@ -334,27 +256,190 @@ def emit_placeholder(args: argparse.Namespace, capability: str, command_name: st
     return 3
 
 
-def validate_payload(payload: dict, mode: str) -> None:
-    common_fields = [
-        "request_id",
-        "source_core",
-        "source_agent",
-        "target_node",
-        "timeout_ms",
+def find_neurolink_root(start: Path | None = None) -> Path | None:
+    current = (start or Path.cwd()).resolve()
+    candidates = [current, *current.parents]
+    for candidate in candidates:
+        if (candidate / "neuro_cli" / "src" / "neuro_cli.py").is_file() and (
+            candidate / "scripts" / "setup_neurolink_env.sh"
+        ).is_file():
+            return candidate
+        nested = candidate / "applocation" / "NeuroLink"
+        if (nested / "neuro_cli" / "src" / "neuro_cli.py").is_file() and (
+            nested / "scripts" / "setup_neurolink_env.sh"
+        ).is_file():
+            return nested
+    return None
+
+
+def build_init_diagnostics(args: argparse.Namespace) -> dict:
+    neurolink_root = find_neurolink_root(Path.cwd())
+    workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
+    scripts = {}
+    script_names = [
+        "setup_neurolink_env.sh",
+        "build_neurolink.sh",
+        "preflight_neurolink_linux.sh",
+        "smoke_neurolink_linux.sh",
     ]
-    for field in common_fields:
-        if field not in payload or payload[field] in ("", None, 0):
-            raise ValueError(f"missing required common metadata: {field}")
+    for name in script_names:
+        path = neurolink_root / "scripts" / name if neurolink_root else Path(name)
+        scripts[name] = {
+            "path": str(path),
+            "exists": path.is_file(),
+        }
 
-    if mode in ("write", "protected"):
-        if payload.get("priority", None) is None:
-            raise ValueError("missing required write metadata: priority")
-        if not payload.get("idempotency_key", ""):
-            raise ValueError("missing required write metadata: idempotency_key")
+    return {
+        "ok": neurolink_root is not None,
+        "status": "ready" if neurolink_root is not None else "workspace_not_found",
+        "release_target": RELEASE_TARGET,
+        "protocol": {
+            "version": protocol.DEFAULT_PROTOCOL_VERSION,
+            "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
+            "supported_wire_encodings": protocol.SUPPORTED_WIRE_ENCODINGS,
+            "planned_wire_encodings": protocol.PLANNED_WIRE_ENCODINGS,
+            "cbor_v2_enabled": False,
+        },
+        "workspace_root": str(workspace_root),
+        "neurolink_root": str(neurolink_root) if neurolink_root else "",
+        "python": sys.executable,
+        "scripts": scripts,
+        "shell_setup": {
+            "can_modify_parent_shell": False,
+            "recommended_command": "source applocation/NeuroLink/scripts/setup_neurolink_env.sh",
+        },
+        "agent_workflows": [
+            "system capabilities --output json",
+            "system init --output json",
+            "workflow plan app-build --output json",
+            "workflow plan preflight --output json",
+            "deploy prepare --app-id <app> --file <artifact>",
+            "lease acquire --resource app/<app>/control",
+            "app invoke --app-id <app> --lease-id <lease>",
+            "monitor app-events --app-id <app> --output json",
+        ],
+        "checks": {
+            "run_unit_tests": "west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run",
+            "run_cli_tests": "/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q",
+            "build_unit_app": "bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check",
+            "preflight": "bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --auto-start-router --require-serial --install-missing-cli-deps --output text",
+        },
+    }
 
-    if mode == "protected":
-        if not payload.get("lease_id", ""):
-            raise ValueError("missing required protected metadata: lease_id")
+
+def handle_init(session: zenoh.Session | None, args: argparse.Namespace) -> int:
+    del session
+    result = build_init_diagnostics(args)
+    if args.output == "json":
+        print_json(result)
+    else:
+        print(f"NeuroLink workspace: {result['neurolink_root'] or 'not found'}")
+        print(f"status: {result['status']}")
+        print_json(result)
+    return 0 if result.get("ok", False) else 2
+
+
+WORKFLOW_PLANS = {
+    "app-build": {
+        "category": "app_development",
+        "description": "build the sample LLEXT app artifact",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check",
+        ],
+        "artifacts": ["build/neurolink_unit_app/neuro_unit_app.llext"],
+    },
+    "unit-build": {
+        "category": "board_operation",
+        "description": "build Neuro Unit firmware",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --no-c-style-check",
+        ],
+        "artifacts": ["build/neurolink_unit/zephyr/zephyr.elf"],
+    },
+    "unit-edk": {
+        "category": "app_development",
+        "description": "build the Unit EDK headers and LLEXT support output",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-edk --no-c-style-check",
+        ],
+        "artifacts": ["build/neurolink_unit/zephyr/llext-edk"],
+    },
+    "unit-tests": {
+        "category": "verification",
+        "description": "run native_sim Neuro Unit tests",
+        "commands": [
+            "west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run",
+        ],
+        "artifacts": ["build/neurolink_unit_ut_check"],
+    },
+    "cli-tests": {
+        "category": "verification",
+        "description": "run Neuro CLI regression tests",
+        "commands": [
+            "/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q",
+        ],
+        "artifacts": [],
+    },
+    "preflight": {
+        "category": "board_operation",
+        "description": "run Linux host and board preflight checks",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --auto-start-router --require-serial --install-missing-cli-deps --output text",
+        ],
+        "artifacts": [],
+    },
+    "smoke": {
+        "category": "board_operation",
+        "description": "run the Linux NeuroLink smoke path",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/smoke_neurolink_linux.sh --install-missing-cli-deps --events-duration-sec 5",
+        ],
+        "artifacts": ["applocation/NeuroLink/smoke-evidence"],
+    },
+}
+
+
+def build_workflow_plan(args: argparse.Namespace) -> dict:
+    workflow = WORKFLOW_PLANS[args.workflow]
+    neurolink_root = find_neurolink_root(Path.cwd())
+    workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
+    return {
+        "ok": True,
+        "workflow": args.workflow,
+        "category": workflow["category"],
+        "description": workflow["description"],
+        "release_target": RELEASE_TARGET,
+        "protocol": {
+            "version": protocol.DEFAULT_PROTOCOL_VERSION,
+            "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
+            "supported_wire_encodings": protocol.SUPPORTED_WIRE_ENCODINGS,
+            "planned_wire_encodings": protocol.PLANNED_WIRE_ENCODINGS,
+            "cbor_v2_enabled": False,
+        },
+        "executes_commands": False,
+        "workspace_root": str(workspace_root),
+        "commands": workflow["commands"],
+        "artifacts": workflow["artifacts"],
+        "next_step": "run the listed command explicitly after reviewing it",
+    }
+
+
+def handle_workflow_plan(
+    session: zenoh.Session | None, args: argparse.Namespace
+) -> int:
+    del session
+    result = build_workflow_plan(args)
+    if args.output == "json":
+        print_json(result)
+    else:
+        print(f"workflow: {result['workflow']} ({result['category']})")
+        for command in result["commands"]:
+            print(command)
+    return 0
+
+
+def validate_payload(payload: dict, mode: str) -> None:
+    protocol.validate_payload(payload, mode)
 
 
 def collect_query_result(
@@ -537,27 +622,15 @@ def send_query(
 
 
 def base_payload(args: argparse.Namespace) -> dict:
-    request_id = args.request_id if args.request_id else make_request_id()
-    return {
-        "request_id": request_id,
-        "source_core": args.source_core,
-        "source_agent": args.source_agent,
-        "target_node": args.node,
-        "timeout_ms": int(args.timeout * 1000),
-    }
+    return protocol.base_payload(args)
 
 
 def write_payload(args: argparse.Namespace) -> dict:
-    payload = base_payload(args)
-    payload["priority"] = args.priority
-    payload["idempotency_key"] = args.idempotency_key or make_idempotency_key()
-    return payload
+    return protocol.write_payload(args)
 
 
 def protected_write_payload(args: argparse.Namespace) -> dict:
-    payload = write_payload(args)
-    payload["lease_id"] = args.lease_id
-    return payload
+    return protocol.protected_write_payload(args)
 
 
 def handle_query(session: zenoh.Session, args: argparse.Namespace) -> int:
@@ -565,7 +638,7 @@ def handle_query(session: zenoh.Session, args: argparse.Namespace) -> int:
     validate_payload(payload, "common")
     return send_query(
         session,
-        f"neuro/{args.node}/query/{args.kind}",
+        protocol.query_route(args.node, args.kind),
         payload,
         args.timeout,
         args,
@@ -585,7 +658,7 @@ def handle_lease_acquire(session: zenoh.Session, args: argparse.Namespace) -> in
     validate_payload(payload, "write")
     return send_query(
         session,
-        f"neuro/{args.node}/cmd/lease/acquire",
+        protocol.lease_route(args.node, "acquire"),
         payload,
         args.timeout,
         args,
@@ -597,7 +670,7 @@ def handle_lease_release(session: zenoh.Session, args: argparse.Namespace) -> in
     validate_payload(payload, "protected")
     return send_query(
         session,
-        f"neuro/{args.node}/cmd/lease/release",
+        protocol.lease_route(args.node, "release"),
         payload,
         args.timeout,
         args,
@@ -612,7 +685,7 @@ def handle_app_control(session: zenoh.Session, args: argparse.Namespace) -> int:
     validate_payload(payload, "protected")
     return send_query(
         session,
-        f"neuro/{args.node}/cmd/app/{args.app_id}/{args.action}",
+        protocol.app_command_route(args.node, args.app_id, args.action),
         payload,
         args.timeout,
         args,
@@ -630,7 +703,7 @@ def handle_app_invoke(session: zenoh.Session, args: argparse.Namespace) -> int:
     validate_payload(payload, "protected")
     return send_query(
         session,
-        f"neuro/{args.node}/cmd/app/{args.app_id}/{args.command}",
+        protocol.app_command_route(args.node, args.app_id, args.command),
         payload,
         args.timeout,
         args,
@@ -653,7 +726,7 @@ def handle_app_callback_config(
 
 
 def app_callback_invoke_key(node: str, app_id: str) -> str:
-    return f"neuro/{node}/cmd/app/{app_id}/invoke"
+    return protocol.app_command_route(node, app_id, "invoke")
 
 
 def args_with_lease_id(args: argparse.Namespace, lease_id: str) -> argparse.Namespace:
@@ -722,7 +795,7 @@ def release_app_callback_smoke_lease(
         args,
         step_results,
         "lease_release",
-        f"neuro/{args.node}/cmd/lease/release",
+        protocol.lease_route(args.node, "release"),
         release_payload,
     )
 
@@ -762,14 +835,14 @@ def handle_update(session: zenoh.Session, args: argparse.Namespace) -> int:
         with provider:
             return send_query(
                 session,
-                f"neuro/{args.node}/update/app/{args.app_id}/{args.stage}",
+                protocol.update_route(args.node, args.app_id, args.stage),
                 payload,
                 args.timeout,
                 args,
             )
     return send_query(
         session,
-        f"neuro/{args.node}/update/app/{args.app_id}/{args.stage}",
+        protocol.update_route(args.node, args.app_id, args.stage),
         payload,
         args.timeout,
         args,
@@ -803,6 +876,105 @@ def write_subscription_ready(args: argparse.Namespace, keyexpr: str) -> None:
     )
 
 
+def event_limit_reached(event_rows: list[dict], args: argparse.Namespace) -> bool:
+    max_events = int(getattr(args, "max_events", 0) or 0)
+    return max_events > 0 and len(event_rows) >= max_events
+
+
+def resolve_handler_cwd(args: argparse.Namespace) -> Path:
+    neurolink_root = find_neurolink_root(Path.cwd())
+    workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
+    configured = getattr(args, "handler_cwd", "") or str(workspace_root)
+    cwd = Path(configured).expanduser()
+    if not cwd.is_absolute():
+        cwd = (workspace_root / cwd).resolve()
+    else:
+        cwd = cwd.resolve()
+
+    try:
+        cwd.relative_to(workspace_root.resolve())
+    except ValueError as exc:
+        raise ValueError("handler cwd must stay within workspace root") from exc
+
+    return cwd
+
+
+def build_handler_argv(args: argparse.Namespace) -> list[str]:
+    handler_python = getattr(args, "handler_python", "")
+    handler_command = getattr(args, "handler_command", "")
+    if handler_python:
+        return [sys.executable, handler_python]
+    if handler_command:
+        return shlex.split(handler_command)
+    return []
+
+
+def execute_event_handler(args: argparse.Namespace, event: dict) -> dict | None:
+    argv = build_handler_argv(args)
+    if not argv:
+        return None
+
+    event_text = json.dumps(event, ensure_ascii=False)
+    max_bytes = int(
+        getattr(args, "handler_max_event_bytes", DEFAULT_HANDLER_MAX_EVENT_BYTES)
+    )
+    if len(event_text.encode("utf-8")) > max_bytes:
+        return {
+            "enabled": True,
+            "executed": False,
+            "status": "payload_too_large",
+            "max_event_bytes": max_bytes,
+        }
+
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            argv,
+            input=event_text,
+            text=True,
+            capture_output=True,
+            timeout=float(getattr(args, "handler_timeout", DEFAULT_HANDLER_TIMEOUT_SEC)),
+            cwd=str(resolve_handler_cwd(args)),
+            shell=False,
+            check=False,
+        )
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "enabled": True,
+            "executed": True,
+            "status": "ok" if completed.returncode == 0 else "nonzero_exit",
+            "argv": argv,
+            "returncode": completed.returncode,
+            "duration_ms": duration_ms,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "timeout": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "enabled": True,
+            "executed": True,
+            "status": "timeout",
+            "argv": argv,
+            "returncode": None,
+            "duration_ms": duration_ms,
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or "",
+            "timeout": True,
+        }
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "enabled": True,
+            "executed": False,
+            "status": "handler_error",
+            "argv": argv,
+            "duration_ms": duration_ms,
+            "error": str(exc),
+        }
+
+
 def append_event_row(
     event_rows: list[dict], sample: zenoh.Sample, args: argparse.Namespace, label: str
 ) -> None:
@@ -814,12 +986,14 @@ def append_event_row(
         pass
 
     if args.output == "json":
-        event_rows.append(
-            {
-                "keyexpr": str(sample.key_expr),
-                "payload": parsed_payload,
-            }
-        )
+        row = {
+            "keyexpr": str(sample.key_expr),
+            "payload": parsed_payload,
+        }
+        handler = execute_event_handler(args, row)
+        if handler is not None:
+            row["handler"] = handler
+        event_rows.append(row)
         return
 
     print(f"<< {label} {sample.key_expr}")
@@ -827,6 +1001,11 @@ def append_event_row(
         print(json.dumps(json.loads(payload), indent=2, ensure_ascii=False))
     except json.JSONDecodeError:
         print(payload)
+    handler = execute_event_handler(
+        args, {"keyexpr": str(sample.key_expr), "payload": parsed_payload}
+    )
+    if handler is not None:
+        print_json({"handler": handler})
 
 
 def collect_subscriber_events(
@@ -843,6 +1022,8 @@ def collect_subscriber_events(
                 time.sleep(0.05)
                 continue
             append_event_row(event_rows, sample, args, label)
+            if event_limit_reached(event_rows, args):
+                return
         return
 
     recv = getattr(subscriber, "recv", None)
@@ -851,6 +1032,8 @@ def collect_subscriber_events(
             sample = recv()
             if sample is not None:
                 append_event_row(event_rows, sample, args, label)
+                if event_limit_reached(event_rows, args):
+                    return
             continue
 
         time.sleep(1)
@@ -889,6 +1072,9 @@ def collect_subscriber_events_threaded(
                     continue
 
                 append_event_row(event_rows, sample, args, label)
+                if event_limit_reached(event_rows, args):
+                    stop_event.set()
+                    return
         except Exception as exc:
             worker_error.append(exc)
             stop_event.set()
@@ -958,7 +1144,7 @@ def pump_event_listener_session(
         validate_payload(payload, "common")
         collect_query_result(
             session,
-            f"neuro/{args.node}/query/device",
+            protocol.query_route(args.node, "device"),
             payload,
             args.timeout,
         )
@@ -1156,14 +1342,14 @@ def subscribe_to_events(
 
 def handle_events(session: zenoh.Session, args: argparse.Namespace) -> int:
     return subscribe_to_events(
-        session, f"neuro/{args.node}/event/**", args, "EVT"
+        session, protocol.event_subscription_route(args.node), args, "EVT"
     )
 
 
 def handle_app_events(session: zenoh.Session, args: argparse.Namespace) -> int:
     return subscribe_to_events(
         session,
-        f"neuro/{args.node}/event/app/{args.app_id}/**",
+        protocol.app_event_subscription_route(args.node, args.app_id),
         args,
         "APP_EVT",
     )
@@ -1172,7 +1358,7 @@ def handle_app_events(session: zenoh.Session, args: argparse.Namespace) -> int:
 def handle_app_callback_smoke(
     session: zenoh.Session, args: argparse.Namespace
 ) -> int:
-    subscription = f"neuro/{args.node}/event/app/{args.app_id}/**"
+    subscription = protocol.app_event_subscription_route(args.node, args.app_id)
     event_rows: list[dict] = []
     lease_id = args.lease_id or f"smoke-{uuid.uuid4().hex[:8]}"
     lease_args = args_with_lease_id(args, lease_id)
@@ -1208,7 +1394,7 @@ def handle_app_callback_smoke(
                 args,
                 step_results,
                 "query_device",
-                f"neuro/{args.node}/query/device",
+                protocol.query_route(args.node, "device"),
                 query_payload,
             )
         ):
@@ -1223,7 +1409,7 @@ def handle_app_callback_smoke(
                     args,
                     step_results,
                     "lease_acquire",
-                    f"neuro/{args.node}/cmd/lease/acquire",
+                    protocol.lease_route(args.node, "acquire"),
                     lease_payload,
                 )
             ):
@@ -1303,6 +1489,18 @@ def handle_capabilities(session: zenoh.Session, args: argparse.Namespace) -> int
             {
                 "ok": True,
                 "release_target": RELEASE_TARGET,
+                "protocol": {
+                    "version": protocol.DEFAULT_PROTOCOL_VERSION,
+                    "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
+                    "supported_wire_encodings": protocol.SUPPORTED_WIRE_ENCODINGS,
+                    "planned_wire_encodings": protocol.PLANNED_WIRE_ENCODINGS,
+                    "cbor_v2_enabled": False,
+                },
+                "agent_skill": {
+                    "structured_stdout": True,
+                    "init_diagnostics_command": "system init --output json",
+                    "callback_handler_execution": "opt_in_subprocess",
+                },
                 "capabilities": capabilities,
             }
         )
@@ -1387,6 +1585,42 @@ def add_common_parser_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_event_handler_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--handler-command",
+        default="",
+        help="optional local command executed for each event; parsed without a shell",
+    )
+    parser.add_argument(
+        "--handler-python",
+        default="",
+        help="optional Python handler file executed for each event with event JSON on stdin",
+    )
+    parser.add_argument(
+        "--handler-timeout",
+        type=float,
+        default=DEFAULT_HANDLER_TIMEOUT_SEC,
+        help="handler timeout in seconds",
+    )
+    parser.add_argument(
+        "--handler-cwd",
+        default="",
+        help="handler working directory, constrained to the workspace root",
+    )
+    parser.add_argument(
+        "--handler-max-event-bytes",
+        type=int,
+        default=DEFAULT_HANDLER_MAX_EVENT_BYTES,
+        help="maximum UTF-8 event JSON bytes passed to a handler",
+    )
+    parser.add_argument(
+        "--max-events",
+        type=int,
+        default=0,
+        help="stop event collection after this many events; 0 means duration/unbounded",
+    )
+
+
 def add_legacy_commands(subparsers: argparse._SubParsersAction) -> None:
     query = subparsers.add_parser("query", help="query device/apps/leases")
     query.add_argument("kind", choices=["device", "apps", "leases"])
@@ -1444,6 +1678,7 @@ def add_legacy_commands(subparsers: argparse._SubParsersAction) -> None:
     events = subparsers.add_parser("events", help="subscribe to NeuroLink demo events")
     events.add_argument("--duration", type=int, default=30)
     events.add_argument("--ready-file", default="")
+    add_event_handler_arguments(events)
     events.set_defaults(handler=handle_events)
 
     app_invoke = subparsers.add_parser("app-invoke", help="invoke app command callback path")
@@ -1467,6 +1702,7 @@ def add_legacy_commands(subparsers: argparse._SubParsersAction) -> None:
     app_events.add_argument("--app-id", required=True)
     app_events.add_argument("--duration", type=int, default=0)
     app_events.add_argument("--ready-file", default="")
+    add_event_handler_arguments(app_events)
     app_events.set_defaults(handler=handle_app_events)
 
     app_callback_smoke = subparsers.add_parser(
@@ -1483,7 +1719,20 @@ def add_legacy_commands(subparsers: argparse._SubParsersAction) -> None:
     app_callback_smoke.set_defaults(handler=handle_app_callback_smoke)
 
     capability = subparsers.add_parser("capabilities", help="show Unit capability map")
-    capability.set_defaults(handler=handle_capabilities)
+    capability.set_defaults(handler=handle_capabilities, requires_session=False)
+
+    init = subparsers.add_parser(
+        "init", help="show Agent-facing workspace initialization diagnostics"
+    )
+    init.set_defaults(handler=handle_init, requires_session=False)
+
+    workflow = subparsers.add_parser(
+        "workflow", help="show structured app-development and board-operation plans"
+    )
+    workflow_sub = workflow.add_subparsers(dest="workflow_command", required=True)
+    workflow_plan = workflow_sub.add_parser("plan", help="print a workflow command plan")
+    workflow_plan.add_argument("workflow", choices=sorted(WORKFLOW_PLANS.keys()))
+    workflow_plan.set_defaults(handler=handle_workflow_plan, requires_session=False)
 
     recovery = subparsers.add_parser("recovery", help="recovery operation placeholder")
     recovery.set_defaults(
@@ -1514,7 +1763,27 @@ def add_grouped_alias_commands(subparsers: argparse._SubParsersAction) -> None:
     system_query.add_argument("kind", choices=["device", "apps", "leases"])
     system_query.set_defaults(handler=handle_query)
     system_cap = system_sub.add_parser("capabilities", help="show capability map")
-    system_cap.set_defaults(handler=handle_capabilities)
+    system_cap.set_defaults(handler=handle_capabilities, requires_session=False)
+    system_init = system_sub.add_parser(
+        "init", help="show Agent-facing workspace initialization diagnostics"
+    )
+    system_init.set_defaults(handler=handle_init, requires_session=False)
+
+    system_workflow = system_sub.add_parser(
+        "workflow", help="show structured workflow plans"
+    )
+    system_workflow_sub = system_workflow.add_subparsers(
+        dest="system_workflow_command", required=True
+    )
+    system_workflow_plan = system_workflow_sub.add_parser(
+        "plan", help="print a workflow command plan"
+    )
+    system_workflow_plan.add_argument(
+        "workflow", choices=sorted(WORKFLOW_PLANS.keys())
+    )
+    system_workflow_plan.set_defaults(
+        handler=handle_workflow_plan, requires_session=False
+    )
 
     lease = subparsers.add_parser("lease", help="lease management")
     lease_sub = lease.add_subparsers(dest="lease_command", required=True)
@@ -1585,6 +1854,7 @@ def add_grouped_alias_commands(subparsers: argparse._SubParsersAction) -> None:
     monitor_events = monitor_sub.add_parser("events", help="subscribe events")
     monitor_events.add_argument("--duration", type=int, default=30)
     monitor_events.add_argument("--ready-file", default="")
+    add_event_handler_arguments(monitor_events)
     monitor_events.set_defaults(handler=handle_events)
     monitor_app_events = monitor_sub.add_parser(
         "app-events", help="subscribe app callback events"
@@ -1592,6 +1862,7 @@ def add_grouped_alias_commands(subparsers: argparse._SubParsersAction) -> None:
     monitor_app_events.add_argument("--app-id", required=True)
     monitor_app_events.add_argument("--duration", type=int, default=0)
     monitor_app_events.add_argument("--ready-file", default="")
+    add_event_handler_arguments(monitor_app_events)
     monitor_app_events.set_defaults(handler=handle_app_events)
 
 
@@ -1619,6 +1890,8 @@ def main() -> int:
 
     session = None
     try:
+        if not getattr(args, "requires_session", True):
+            return int(args.handler(None, args) or 0)
         session = open_session_with_retry(args)
         return int(args.handler(session, args) or 0)
     except ValueError as exc:

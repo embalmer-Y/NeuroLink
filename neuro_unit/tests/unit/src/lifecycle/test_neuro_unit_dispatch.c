@@ -179,6 +179,20 @@ ZTEST(neuro_unit_dispatch, test_command_lease_acquire_route_dispatches)
 		"no error should be reported on a handled route");
 }
 
+ZTEST(neuro_unit_dispatch, test_command_lease_release_route_dispatches)
+{
+	struct neuro_request_metadata metadata = { 0 };
+
+	snprintk(metadata.request_id, sizeof(metadata.request_id), "req-1b");
+	neuro_unit_dispatch_command_query(NULL,
+		"neuro/unit-01/cmd/lease/release", "{}", &metadata, &g_ops);
+
+	zassert_equal(g_probe.lease_release_calls, 1,
+		"lease release route should dispatch exactly once");
+	zassert_equal(g_probe.last_status_code, 0,
+		"no error should be reported on a handled route");
+}
+
 ZTEST(neuro_unit_dispatch, test_command_app_route_extracts_app_and_action)
 {
 	struct neuro_request_metadata metadata = { 0 };
@@ -209,6 +223,62 @@ ZTEST(neuro_unit_dispatch, test_update_prepare_requires_recovery_ready)
 		"lifecycle update route should pass recovery gate");
 	zassert_equal(g_probe.update_action_calls, 1,
 		"prepared action should dispatch when recovery gate passes");
+}
+
+ZTEST(neuro_unit_dispatch, test_query_routes_dispatch_to_handlers)
+{
+	struct neuro_request_metadata metadata = { 0 };
+
+	snprintk(metadata.request_id, sizeof(metadata.request_id), "req-q1");
+	neuro_unit_dispatch_query_query(
+		NULL, "neuro/unit-01/query/device", "{}", &metadata, &g_ops);
+	neuro_unit_dispatch_query_query(
+		NULL, "neuro/unit-01/query/apps", "{}", &metadata, &g_ops);
+	neuro_unit_dispatch_query_query(
+		NULL, "neuro/unit-01/query/leases", "{}", &metadata, &g_ops);
+
+	zassert_equal(g_probe.query_device_calls, 1,
+		"device query route should dispatch once");
+	zassert_equal(g_probe.query_apps_calls, 1,
+		"apps query route should dispatch once");
+	zassert_equal(g_probe.query_leases_calls, 1,
+		"leases query route should dispatch once");
+	zassert_equal(g_probe.last_status_code, 0,
+		"handled query routes should not report an error");
+}
+
+ZTEST(neuro_unit_dispatch, test_unsupported_routes_report_status_codes)
+{
+	struct neuro_request_metadata metadata = { 0 };
+
+	snprintk(metadata.request_id, sizeof(metadata.request_id), "req-u1");
+	neuro_unit_dispatch_command_query(
+		NULL, "neuro/unit-01/cmd/unknown", "{}", &metadata, &g_ops);
+	zassert_equal(g_probe.last_status_code, 404,
+		"unsupported command route should map to 404");
+	zassert_true(strcmp(g_probe.last_error_message,
+			     "unsupported command path") == 0,
+		"unsupported command message changed");
+
+	g_probe.last_status_code = 0;
+	g_probe.last_error_message[0] = '\0';
+	neuro_unit_dispatch_query_query(
+		NULL, "neuro/unit-01/query/unknown", "{}", &metadata, &g_ops);
+	zassert_equal(g_probe.last_status_code, 404,
+		"unsupported query route should map to 404");
+	zassert_true(strcmp(g_probe.last_error_message,
+			     "unsupported query path") == 0,
+		"unsupported query message changed");
+
+	g_probe.last_status_code = 0;
+	g_probe.last_error_message[0] = '\0';
+	neuro_unit_dispatch_update_query(
+		NULL, "neuro/unit-01/update/bad", "{}", &metadata, &g_ops);
+	zassert_equal(g_probe.last_status_code, 400,
+		"invalid update route should map to 400");
+	zassert_true(
+		strcmp(g_probe.last_error_message, "invalid update path") == 0,
+		"invalid update message changed");
 }
 
 ZTEST(neuro_unit_dispatch, test_update_recover_requires_recovery_ready)

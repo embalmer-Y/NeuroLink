@@ -20,12 +20,15 @@ target_sources(app PRIVATE
   ../../src/neuro_recovery_seed_store.c
   ../../src/neuro_request_envelope.c
   ../../src/neuro_request_policy.c
+  ../../src/neuro_protocol_codec.c
   ../../src/neuro_unit_event.c
   ../../src/neuro_network_manager.c
   ../../src/runtime/app_runtime_cmd.c
   ../../src/runtime/app_runtime_exception.c
   ../../src/port/neuro_unit_port_contract.c
   ../../src/port/neuro_unit_port_generic.c
+  src/protocol/test_neuro_protocol.c
+  src/protocol/test_neuro_protocol_codec.c
   src/lifecycle/test_neuro_update_manager.c
   src/lifecycle/test_neuro_lease_manager.c
   src/lifecycle/test_neuro_unit_dispatch.c

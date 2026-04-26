@@ -1,3 +1,485 @@
+2026-04-26: Completed release-1.1.5 `EXEC-152` by mapping the Windows USB device into WSL, completing hardware gates, and promoting the canonical Neuro CLI release identity from `1.1.4` to `1.1.5`. `prepare_dnesp32s3b_wsl.sh --attach-only` attached usbipd BUSID `8-4` and exposed `/dev/ttyACM0`; the full board preparation path then brought `unit-01` to `NETWORK_READY` with IPv4 `192.168.2.69`. Serial-required preflight passed after preparation, Linux smoke passed, and evidence was written to `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260426-034446.ndjson`. Focused release identity validation passed: Python compile, CLI pytest `42/42`, and live capabilities JSON with `release_target: 1.1.5`. Release-1.1.5 is now closed against current workspace evidence. — Copilot
+
+#### EXEC-152 Release-1.1.5 Hardware Closure and Release Identity Promotion
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice promotes release identity only after USB pass-through, serial-required preflight, and smoke evidence passed; it does not change protocol routes, JSON payload shape, callback handler behavior, workflow command behavior, Unit firmware semantics, or wire encoding policy
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Hardware evidence:
+  - `bash applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh --attach-only` => PASS (`BUSID 8-4`, `/dev/ttyACM0`)
+  - initial serial-required preflight after attach => FAIL with `no_reply_board_unreachable` while router and serial were present
+  - `bash applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh --device /dev/ttyACM0 --node unit-01 --capture-duration-sec 60` => PASS (`NETWORK_READY`, IPv4 `192.168.2.69`)
+  - `bash applocation/NeuroLink/scripts/smoke_neurolink_linux.sh --install-missing-cli-deps --events-duration-sec 5` => PASS
+  - smoke evidence: `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260426-034446.ndjson`
+- Release identity implementation:
+  - promoted `RELEASE_TARGET` in `neuro_cli.py` from `1.1.4` to `1.1.5`
+  - updated CLI release identity tests to expect `1.1.5`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`42` tests)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json system capabilities` => PASS (`release_target: 1.1.5`)
+- Open risks:
+  - future CBOR-v2 remains a planned extension point and is not enabled in this release
+  - handler execution remains opt-in and subprocess-bounded; shell-free command parsing is intentional
+- Rollback notes:
+  - rollback can restore `RELEASE_TARGET = "1.1.4"` and the two test expectations if the smoke evidence is later invalidated
+- Next action:
+  - start release-1.1.6 planning from the closed 1.1.5 baseline when new scope is selected
+
+2026-04-26: Ran release-1.1.5 `EXEC-151` local closure gates. Native_sim Unit, Linux Unit script, Neuro CLI pytest, Python compile, C style, script omnibus tests, `unit-app` build, and `unit-edk` build all passed. Hardware closure was initially blocked because this Linux environment exposed no `/dev/ttyACM*` or `/dev/ttyUSB*` serial devices; that blocker was later resolved in `EXEC-152` by mapping the Windows USB device into WSL and completing smoke evidence before release identity promotion. — Copilot
+
+#### EXEC-151 Release-1.1.5 Local Closure Gates
+
+- Status: local gates completed; initial hardware blocker later resolved by `EXEC-152`
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice records local closure evidence only; it does not promote `RELEASE_TARGET`, claim hardware smoke success, change protocol payloads, alter runtime behavior, or modify script behavior
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`26` tests)
+  - `bash applocation/NeuroLink/neuro_unit/tests/unit/run_ut_linux.sh` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`42` tests)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`0` errors, existing warnings)
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`7` script tests)
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-edk --no-c-style-check` => PASS
+- Initial hardware gate status:
+  - `ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true` => no serial devices found
+  - serial-required preflight and real-board smoke were deferred until USB pass-through was available
+- Open risks:
+  - hardware evidence was completed in `EXEC-152`; future releases still need fresh hardware smoke before identity promotion
+- Rollback notes:
+  - no runtime changes are introduced by this record-only slice
+- Next action:
+  - connect or pass through a NeuroLink board serial device, rerun serial-required preflight and smoke, then perform `EXEC-152` release identity promotion only after hardware evidence passes
+
+2026-04-26: Continued release-1.1.5 with `EXEC-150`, making the wire backend decision for this release. JSON-v2 remains the only enabled wire encoding for 1.1.5, while CBOR-v2 stays as an explicit planned extension point until Unit, Python, scripts, and evidence tooling have binary payload round-trip coverage. CLI protocol metadata now reports `supported_wire_encodings: ["json-v2"]`, `planned_wire_encodings: ["cbor-v2"]`, and `cbor_v2_enabled: false` in capabilities/init/workflow outputs. Python compile, CLI pytest (`42` tests), and live capabilities JSON passed. — Copilot
+
+#### EXEC-150 Release-1.1.5 Wire Backend Decision
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice records and exposes the wire backend decision only; it does not add CBOR dependencies, change Unit/CLI wire payload encoding, change JSON field names, alter scripts, change firmware behavior, or promote `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_protocol.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - kept JSON-v2 as the only enabled 1.1.5 wire encoding
+  - kept CBOR-v2 as a planned backend extension point, not a release-1.1.5 runtime dependency
+  - exposed supported/planned wire encoding metadata in capabilities, init diagnostics, and workflow plan outputs
+  - added regression coverage for capabilities metadata showing CBOR-v2 is not enabled
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`42` tests)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json system capabilities` => PASS (`wire_encoding: json-v2`, `cbor_v2_enabled: false`)
+- Open risks:
+  - future CBOR support still needs zcbor enablement, Python dependency selection, golden-vector round trips, and script/evidence parser updates
+- Rollback notes:
+  - rollback can remove supported/planned wire metadata fields and this release-plan/progress text without changing runtime behavior
+- Next action:
+  - continue with `EXEC-151` local closure gates, then promote release identity only if closure evidence is complete
+
+2026-04-26: Continued release-1.1.5 with `EXEC-149`, adding controlled opt-in local handler execution for event monitoring. `events`, `app-events`, `monitor events`, and `monitor app-events` now accept subprocess handler options for either a command string parsed without a shell or a Python handler file. Event JSON is passed on stdin, handler cwd is constrained to the workspace, payload size is capped, timeout/nonzero/error states are captured in audit JSON, and `--max-events` can bound event collection. Capabilities now report `callback_handler_execution: opt_in_subprocess`. Python compile and CLI pytest passed (`42` tests). — Copilot
+
+#### EXEC-149 Release-1.1.5 Controlled Reactive Callback Handler Execution
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice adds opt-in local subprocess handling for monitored events only; it does not enable inline arbitrary code strings, shell execution, default handler execution, Unit firmware changes, Zenoh payload changes, script behavior changes, or `RELEASE_TARGET` promotion
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `--handler-command` for shell-free command execution via `shlex.split()` and `subprocess.run(shell=False)`
+  - added `--handler-python` for Python handler files invoked with the active Python executable
+  - passes event JSON through stdin and captures stdout, stderr, return code, duration, timeout state, and error status
+  - added `--handler-timeout`, `--handler-cwd`, `--handler-max-event-bytes`, and `--max-events` guardrails
+  - constrains handler cwd to the detected workspace root
+  - records handler audit results inside JSON event rows or prints handler audit JSON in human output
+  - expanded capabilities metadata to advertise `opt_in_subprocess` callback handler execution
+- UT added or updated:
+  - added parser coverage for handler options on app event monitoring
+  - added Python handler execution coverage with event JSON on stdin
+  - added oversized payload rejection coverage
+  - locked capabilities metadata for opt-in subprocess handler support
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`42` tests)
+- Open risks:
+  - live hardware callback-handler smoke remains pending until serial hardware is available
+  - handler command argument parsing is intentionally shell-free; users needing complex shell behavior should wrap it in an explicit script file
+- Rollback notes:
+  - rollback can remove handler parser options, execution helpers, event-row audit attachment, metadata changes, related tests, and this release-plan/progress text
+- Next action:
+  - continue with `EXEC-150` by deciding whether CBOR-v2 lands in 1.1.5 or remains a documented backend extension point
+
+2026-04-26: Continued release-1.1.5 with `EXEC-148`, adding structured Agent workflow plan commands for app-development, verification, and board-operation paths. `workflow plan <name> --output json` and `system workflow plan <name> --output json` now emit reviewed command plans for app build, Unit build, Unit EDK, native_sim Unit tests, CLI tests, preflight, and smoke without executing commands. `system init` now advertises those workflow plan commands as the recommended Agent entry points. Python compile, CLI pytest (`39` tests), live app-build workflow plan, and live preflight workflow plan passed. — Copilot
+
+#### EXEC-148 Release-1.1.5 Structured Workflow Plan Commands
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice adds Agent-readable command plans only; it does not execute build/preflight/smoke commands, change script behavior, alter Unit/CLI wire payloads, open Zenoh sessions, change firmware behavior, or promote `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added no-session `workflow plan <workflow>` and `system workflow plan <workflow>` commands
+  - added structured plans for `app-build`, `unit-build`, `unit-edk`, `unit-tests`, `cli-tests`, `preflight`, and `smoke`
+  - each plan reports category, description, release target, protocol metadata, command list, expected artifacts, workspace root, and `executes_commands: false`
+  - expanded init diagnostics to point Agents at workflow plan commands before direct build/board operations
+- UT added or updated:
+  - added parser coverage for no-session workflow plan dispatch
+  - added JSON output coverage proving workflow plans do not execute commands
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`39` tests)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json workflow plan app-build` => PASS (`ok: true`, command plan emitted)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json system workflow plan preflight` => PASS (`ok: true`, command plan emitted)
+- Open risks:
+  - the workflow surface is still plan-only; future releases may add explicit execution wrappers with timeout/log capture if needed
+  - callback handler execution remains the next sensitive Agent-facing surface and must stay opt-in and bounded
+- Rollback notes:
+  - rollback can remove `WORKFLOW_PLANS`, `handle_workflow_plan()`, parser entries, related tests, and this release-plan/progress text
+- Next action:
+  - continue with `EXEC-149` by adding controlled reactive callback handler execution for event monitoring
+
+2026-04-26: Continued release-1.1.5 with `EXEC-147`, adding Agent-facing initialization diagnostics and expanded capabilities output to Neuro CLI. `system init --output json` now reports workspace/script readiness, protocol version and wire encoding, shell setup guidance, Agent workflow commands, and verification command plans without trying to mutate the parent shell. `system capabilities --output json` now includes protocol and Agent skill metadata while keeping `release_target` at `1.1.4`. No-session handlers now bypass Zenoh session opening for capabilities/init. Python compile, CLI pytest (`37` tests), live `system init`, and live `system capabilities` passed. — Copilot
+
+#### EXEC-147 Release-1.1.5 Agent Init and Capabilities Expansion
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice adds Agent-facing CLI metadata and diagnostics only; it does not intentionally change board command routes, Unit payloads, Zenoh request behavior, firmware behavior, script implementations, callback execution behavior, update semantics, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `system init` and legacy `init` commands for Agent-facing workspace diagnostics
+  - added no-session handler support so `capabilities` and `init` do not require Zenoh availability
+  - added workspace root/script discovery for `setup_neurolink_env.sh`, build, preflight, and smoke scripts
+  - documented that CLI diagnostics cannot modify the parent shell and emits the recommended source command instead
+  - expanded capabilities JSON with protocol version, wire encoding, and Agent skill metadata
+  - preserved `release_target = 1.1.4` until final closure
+- UT added or updated:
+  - added capabilities JSON protocol/Agent metadata coverage
+  - added parser coverage for `system init` and no-session dispatch metadata
+  - added init diagnostics JSON coverage for workspace script discovery
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`37` tests)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json system init` => PASS (`ok: true`, `status: ready`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json system capabilities` => PASS (`ok: true`, protocol metadata present)
+- Open risks:
+  - structured app-development/build/preflight workflow wrappers still need CLI command surfaces in `EXEC-148`
+  - callback handler execution remains planned and should stay opt-in in `EXEC-149`
+- Rollback notes:
+  - rollback can remove `handle_init()`, no-session parser flags, capabilities metadata additions, the new tests, and this release-plan/progress text
+- Next action:
+  - continue with `EXEC-148` by adding structured app-development and board-operation workflow commands around existing scripts
+
+2026-04-26: Continued release-1.1.5 with `EXEC-146`, splitting Neuro CLI protocol definitions and helpers out of the monolithic CLI entrypoint. Added `neuro_protocol.py` as the Python-side owner for protocol version markers, wire encoding name, capability matrix, route builders, payload builders, validation policy, and reply decoding. `neuro_cli.py` now delegates protocol helpers through compatibility façade functions so existing tests/scripts can still patch the historical public helper names. Added protocol-module regression coverage for Unit-matching routes, callback config payload shape, and reply JSON decoding. Python compile and CLI pytest passed (`34` tests). — Copilot
+
+#### EXEC-146 Release-1.1.5 Neuro CLI Protocol Module Split
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice changes Python CLI organization and route construction internals only; it does not intentionally change CLI command names, stdout JSON envelopes, payload field names, route strings, retry behavior, Zenoh session behavior, app callback smoke behavior, script behavior, firmware behavior, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_protocol.py` (new)
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added Python protocol constants for protocol version `2.0` and wire encoding `json-v2`
+  - moved the capability matrix into the protocol module and kept the historical `neuro_cli.CAPABILITY_MATRIX` alias
+  - added route builders for query, lease, app command, update, framework event subscription, app event subscription, and artifact routes
+  - added protocol payload builders and validation helpers for base, write, protected-write, and app callback config payloads
+  - moved reply decoding into `neuro_protocol.parse_reply()` while preserving `neuro_cli.parse_reply()` as the public façade
+  - updated CLI handlers to use protocol route builders instead of inline route f-strings
+  - preserved compatibility patch points for `neuro_cli.write_payload()`, `protected_write_payload()`, and `build_app_callback_config_payload()`
+- UT added or updated:
+  - added CLI protocol route-builder tests matching Unit route contracts
+  - added CLI protocol callback config payload builder tests
+  - added CLI protocol reply decoder tests
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`34` tests)
+- Open risks:
+  - CLI capabilities output does not yet expose the new protocol version and wire encoding fields; that belongs to `EXEC-147`
+  - Zenoh transport/session helpers remain in `neuro_cli.py` and should split only if doing so reduces complexity without breaking operator scripts
+- Rollback notes:
+  - rollback can inline the protocol helpers back into `neuro_cli.py`, remove `neuro_protocol.py`, remove the new tests, and delete this release-plan/progress text
+- Next action:
+  - continue with `EXEC-147` by adding Agent skill initialization diagnostics and expanded capabilities output
+
+2026-04-26: Continued release-1.1.5 with `EXEC-145`, migrating request metadata and sample app callback configuration parsing onto protocol decode helpers. `neuro_protocol_codec` now owns bounded JSON-v2 decoders for request metadata and callback config DTOs, `neuro_request_metadata_parse()` delegates request metadata field spelling to that codec, and the public app API exposes `neuro_unit_read_callback_config_json()` so the sample app no longer parses callback config with scattered field-name strings. Existing metadata validation, app callback behavior, legacy public JSON extract helpers, event publishing, CLI behavior, update semantics, and `RELEASE_TARGET` remain unchanged. Native_sim Unit, C style, and `unit-app` build passed. — Copilot
+
+#### EXEC-145 Release-1.1.5 Request and Callback Config Decode Migration
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice migrates request metadata and sample app callback config parsing internals only; it does not intentionally change request JSON field names, metadata validation policy, callback event cadence, app command reply JSON, event key expressions, Zenoh transport behavior, CLI behavior, update semantics, legacy LLEXT JSON extractor availability, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/include/neuro_protocol.h`
+  - `applocation/NeuroLink/neuro_unit/include/neuro_protocol_codec.h`
+  - `applocation/NeuroLink/neuro_unit/include/neuro_unit_app_api.h`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_protocol_codec.c`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_request_envelope.c`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/request/test_neuro_request_envelope.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/protocol/test_neuro_protocol_codec.c`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added protocol field constants for `forwarded`, `callback_enabled`, `trigger_every`, and `event_name`
+  - added `neuro_protocol_request_metadata` and `neuro_protocol_callback_config` DTOs with JSON-v2 decode helpers
+  - moved `neuro_request_metadata_parse()` to `neuro_protocol_decode_request_metadata_json()` while preserving default priority and forwarded behavior
+  - added app-facing `neuro_unit_read_callback_config_json()` with explicit field-presence flags and exported it for LLEXT apps
+  - migrated the sample app callback configuration path to the public decode helper instead of direct JSON field extraction
+  - retained `neuro_json_extract_string/int/bool()` as compatibility helpers for existing Unit/app/update code
+- UT added or updated:
+  - added protocol codec golden-vector coverage for request metadata decode
+  - added protocol codec golden-vector coverage for callback config decode
+  - added request-envelope coverage for app-facing callback config presence flags
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`0` errors, existing warnings)
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check` => PASS
+- Open risks:
+  - other request payload families, including update prepare/verify/activate and app command args, still use legacy JSON extractor paths and remain later protocol decode candidates
+  - Python CLI protocol builders/decoders are still monolithic and should be split in `EXEC-146`
+- Rollback notes:
+  - rollback can restore direct metadata/app config extractor calls, remove the new DTO decode APIs and tests, and remove this release-plan/progress text; guardrail tests should continue to catch behavior drift
+- Next action:
+  - continue with `EXEC-146` by splitting Neuro CLI protocol constants, route builders, payload builders, and reply decoders into a Python protocol module
+
+2026-04-26: Continued release-1.1.5 with `EXEC-144`, migrating Neuro Unit event route and app-facing payload helpers onto the new protocol contract. `neuro_unit_event_build_key()` and `neuro_unit_event_build_app_key()` now delegate route formatting to `neuro_protocol` builders, while `neuro_unit_publish_callback_event()` and `neuro_unit_write_command_reply_json()` encode through `neuro_protocol_codec` DTOs. Existing key expressions, callback event JSON, app command reply JSON, and LLEXT-facing helper behavior are preserved by the guardrail tests from `EXEC-140`. Native_sim Unit, C style, and `unit-app` build passed. — Copilot
+
+#### EXEC-144 Release-1.1.5 Event Route and App Reply Codec Migration
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice migrates event/app-reply formatting internals only; it does not intentionally change event key expressions, callback event JSON, app command reply JSON, app runtime behavior, LLEXT helper semantics, Zenoh publish mechanics, CLI behavior, script behavior, update semantics, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/src/neuro_unit_event.c`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - moved framework event and app event key formatting in `neuro_unit_event` to `neuro_protocol` route builders
+  - moved callback event JSON payload construction to `neuro_protocol_encode_callback_event_json()`
+  - moved app command reply JSON construction to `neuro_protocol_encode_app_command_reply_json()`
+  - kept `neuro_unit_event` responsible for module configuration, contract diagnostics, publish dispatch, and LLEXT helper entry points
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`0` errors, existing warnings)
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check` => PASS before formatting; formatting touched only source layout
+- Open risks:
+  - app callback config request parsing still uses the legacy JSON extractor path in the sample app and remains a follow-on protocol decode target
+- Rollback notes:
+  - rollback can restore local `snprintk` route/payload formatting in `neuro_unit_event.c` and remove this release-plan/progress text; guardrail tests should catch any output drift
+- Next action:
+  - continue with request metadata and callback config decode work, or complete remaining response DTO coverage for query-apps/query-leases before broader CLI protocol splitting
+
+2026-04-26: Continued release-1.1.5 with `EXEC-143`, migrating the lowest-risk Unit response builders to the protocol JSON-v2 codec while preserving current payload output. Error replies, lease acquire/release replies, and query-device replies now construct protocol DTOs and delegate JSON encoding to `neuro_protocol_codec`; query-apps and query-leases remain on their existing builders until their DTO surfaces are expanded. The codec source is now included in the production Unit build. Native_sim Unit, C style, and `unit-app` build passed. — Copilot
+
+#### EXEC-143 Release-1.1.5 Response Builder Codec Migration
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice changes response-builder internals only; it does not intentionally change public JSON output, Zenoh routes, request parsing, CLI behavior, script behavior, app runtime behavior, update semantics, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/CMakeLists.txt`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_unit_response.c`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `src/neuro_protocol_codec.c` to the production Unit build
+  - migrated `neuro_unit_build_error_response()` to `neuro_protocol_encode_error_reply_json()`
+  - migrated `neuro_unit_build_lease_acquire_response()` and `neuro_unit_build_lease_release_response()` to `neuro_protocol_encode_lease_reply_json()`
+  - migrated `neuro_unit_build_query_device_response()` to `neuro_protocol_encode_query_device_reply_json()`
+  - preserved existing JSON output through the guardrail tests added in `EXEC-140`
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`0` errors, existing warnings)
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check` => PASS
+- Open risks:
+  - query-apps and query-leases still use local JSON assembly and should move once their protocol DTOs are complete
+- Rollback notes:
+  - rollback can restore local `snprintk` formatting in `neuro_unit_response.c`, remove the production CMake codec source entry if no other production module consumes it, and remove this release-plan/progress text
+- Next action:
+  - continue with `EXEC-144` by migrating event key/payload and app command reply helpers to the protocol route builders and codec
+
+2026-04-26: Continued release-1.1.5 with `EXEC-142`, adding the first protocol DTO and JSON-v2 codec entry points. The new codec layer defines typed DTOs and bounded encoders for error replies, lease replies, query-device replies, app callback event payloads, and app command reply payloads. Existing response/event/request call sites are not migrated in this slice; the intent is to create the target codec surface under golden-vector tests before redirecting production builders. Native_sim Unit passed and C style passed after formatting the new codec files. — Copilot
+
+#### EXEC-142 Release-1.1.5 Protocol JSON-v2 Codec Entry
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice adds protocol DTO and JSON-v2 codec entry points only; it does not change existing response builders, event builders, request parsing, dispatch route matching, CLI behavior, Zenoh wire payloads, script behavior, app runtime behavior, update semantics, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/include/neuro_protocol_codec.h` (new)
+  - `applocation/NeuroLink/neuro_unit/src/neuro_protocol_codec.c` (new)
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/protocol/test_neuro_protocol_codec.c` (new)
+  - `applocation/NeuroLink/neuro_unit/tests/unit/CMakeLists.txt`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added typed protocol DTOs for error replies, lease replies, query-device replies, callback events, and app command replies
+  - added bounded JSON-v2 encoders with explicit `-EINVAL` and `-ENAMETOOLONG` behavior
+  - reused `neuro_protocol.h` field/status constants for common response envelope fields
+  - added golden-vector tests for all new JSON-v2 encoder entry points and error handling
+- UT added or updated:
+  - added `test_encode_error_reply_json_contract`
+  - added `test_encode_lease_replies_json_contract`
+  - added `test_encode_query_device_reply_json_contract`
+  - added `test_encode_app_event_payloads_json_contract`
+  - added `test_encode_reports_contract_errors`
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`0` errors, existing warnings)
+- Open risks:
+  - query-apps, query-leases, update result, request decode, and callback config DTOs still need codec coverage before the full protocol surface is centralized
+  - production response/event builders still call their legacy local formatting logic until follow-on migration slices redirect them
+- Rollback notes:
+  - rollback can remove the codec header/source/tests, the Unit CMake source entries, and this release-plan/progress text without changing runtime behavior
+- Next action:
+  - continue with `EXEC-143` by migrating the lowest-risk Unit response builders to the new JSON-v2 codec while preserving current payload output
+
+2026-04-26: Continued release-1.1.5 with `EXEC-141`, introducing the first protocol-v2 contract header and focused Unit tests. `neuro_protocol.h` now defines protocol version `2.0`, wire encoding identifiers for `json-v2` and `cbor-v2`, common request/reply field-name constants, typed response status and error-code enums, query/lease/update action enums, token validation, and route/topic builders for query, lease, app command, update, framework event, and app event paths. This slice intentionally does not migrate runtime call sites yet; it establishes the shared contract that later response/event/request/CLI codec work will consume. Native_sim Unit, C style, and Neuro CLI pytest passed after formatting the touched C/H files with the project style. — Copilot
+
+#### EXEC-141 Release-1.1.5 Initial Protocol Contract Header
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice introduces protocol-v2 definitions and tests only; it does not change existing Zenoh wire payloads, JSON response builders, request parsing, dispatch route matching, CLI command behavior, script behavior, app runtime behavior, update state-machine semantics, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/include/neuro_protocol.h` (new)
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/protocol/test_neuro_protocol.c` (new)
+  - `applocation/NeuroLink/neuro_unit/tests/unit/CMakeLists.txt`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added the initial Unit-side protocol-v2 contract header as the future owner for common field names, protocol versioning, wire encoding identifiers, statuses, error classes, and route/topic construction helpers
+  - defined `json-v2` and `cbor-v2` as explicit wire encoding names so a later backend decision can be reported through capabilities instead of hidden in implementation details
+  - added typed query, lease, and update action enums with mapping helpers
+  - added route builders for query, lease, app command, update, framework event, and app event key expressions with token validation and bounded-buffer failures
+  - wired the new protocol test suite into the native_sim Unit target
+- UT added or updated:
+  - added `test_version_and_wire_encoding_contract`
+  - added `test_status_and_error_contract`
+  - added `test_route_builders_contract`
+  - added `test_event_route_builders_contract`
+  - added `test_route_builders_reject_bad_tokens`
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`0` errors, existing warnings)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`31` tests)
+- Open risks:
+  - existing response, event, dispatch, request, and CLI call sites still use local string literals until follow-on migration slices consume the new protocol contract
+  - `cbor-v2` is declared as a supported protocol concept but not implemented as a wire backend yet
+- Rollback notes:
+  - rollback can remove `neuro_protocol.h`, the new protocol test file, the CMake test source entry, and this release-plan/progress text without changing runtime behavior
+- Next action:
+  - continue with `EXEC-142` by adding protocol DTO and JSON-v2 codec entry points before migrating existing response/event/request builders
+
+2026-04-26: Continued release-1.1.5 with `EXEC-140`, adding protocol surface guardrail tests before replacing the current JSON/string implementation. The new guardrails lock current callback event payload JSON, app command reply JSON, dispatch route/status behavior, and representative Neuro CLI payload/reply contracts so future protocol-v2 migration can distinguish intentional wire-shape changes from accidental drift. Focused Neuro CLI pytest and native_sim Unit gates passed. — Copilot
+
+#### EXEC-140 Release-1.1.5 Protocol Surface Guardrails
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice adds tests around the current protocol surface only; it does not intentionally change Zenoh routes, JSON payloads, CLI output, runtime behavior, update semantics, app callback behavior, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/app/test_neuro_unit_event.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/lifecycle/test_neuro_unit_dispatch.c`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added Unit guardrails for app event route construction, callback event payload JSON, and app command reply JSON
+  - added dispatch guardrails for lease release routing, query device/apps/leases routing, unsupported command/query `404` mapping, and invalid update path `400` mapping
+  - added Neuro CLI guardrails for lease acquire payload construction, app invoke `--args-json` handling, prepare artifact payload construction, OK reply parsing, and payload-level `status=error` classification
+- UT added or updated:
+  - added `test_build_app_key_contract`
+  - added `test_publish_callback_event_contract`
+  - added `test_write_command_reply_json_contract`
+  - added `test_command_lease_release_route_dispatches`
+  - added `test_query_routes_dispatch_to_handlers`
+  - added `test_unsupported_routes_report_status_codes`
+  - added `test_handle_lease_acquire_payload_contract`
+  - added `test_handle_app_invoke_payload_contract_with_args_json`
+  - added `test_build_prepare_payload_contract`
+  - added `test_parse_reply_ok_json_contract`
+  - added `test_collect_query_result_contract_marks_payload_status_error`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`31` tests)
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+- Open risks:
+  - these tests intentionally lock the pre-v2 shapes; later protocol-v2 slices may update expected payloads deliberately when the new contract is chosen
+- Rollback notes:
+  - rollback can remove the added guardrail tests and this release-plan/progress text without changing runtime behavior
+- Next action:
+  - continue with `EXEC-141` by introducing the initial `neuro_protocol` definitions for protocol versioning, statuses, error classes, and route/topic builders
+
+2026-04-26: Started release-1.1.5 with `EXEC-139`, opening the protocol-v2 and Agent-facing Neuro CLI skill track from the closed release-1.1.4 baseline. Created the release-1.1.5 pre-research baseline with explicit scope, module classification, protocol-v2 direction, wire-encoding policy, Agent skill workstreams, callback-handler safety policy, acceptance criteria, verification gates, execution slices, risks, rollback strategy, and release identity policy. This kickoff intentionally keeps `RELEASE_TARGET = "1.1.4"` until final 1.1.5 closure evidence is complete. — Copilot
+
+#### EXEC-139 Release-1.1.5 Protocol-v2 and Agent Skill Kickoff
+
+- Status: completed
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice opens the release-1.1.5 execution baseline only; it does not change Unit runtime behavior, Zenoh wire payloads, protocol keys, JSON payload shape, CLI command behavior, shell command behavior, update state-machine semantics, app runtime semantics, callback execution behavior, or `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md` (new)
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - opened release-1.1.5 as a protocol-v2 and Agent-facing Neuro CLI skill release on top of the closed release-1.1.4 baseline
+  - documented that release-1.1.5 may intentionally break previous Unit/CLI wire compatibility, while preserving Agent-facing CLI stdout as structured JSON
+  - defined the recommended protocol sequence: typed DTO/codec abstraction first, JSON-v2 backend initially, CBOR-v2 only after Unit/CLI/script/evidence tests prove binary payload support
+  - defined Agent skill workstreams for environment initialization, app development workflows, board control, callback registration, and controlled local command/Python handler execution from MCU events
+  - preserved release identity policy: `neuro_cli.py` remains at `RELEASE_TARGET = "1.1.4"` until final release-1.1.5 closure evidence is recorded
+- UT added or updated:
+  - no source-level UT changes in this kickoff slice
+  - next slice should add protocol surface inventory and current-shape guardrail tests before replacing JSON/string construction
+- Verification evidence:
+  - release-1.1.5 baseline document created: `applocation/NeuroLink/docs/project/RELEASE_1.1.5_PRE_RESEARCH.md`
+- Open risks:
+  - protocol-v2 can break CLI/script/smoke behavior if wire-shape changes land before shared Unit and Python protocol tests
+  - CBOR-v2 is technically feasible in this workspace but should not replace readable JSON payloads until evidence parsing and CLI decode tooling are ready
+  - Agent callback handler execution must stay opt-in and subprocess-bounded so MCU-originated events cannot trigger unrestricted local code paths
+- Rollback notes:
+  - rollback can remove the new release-1.1.5 pre-research document and this ledger entry without affecting runtime behavior
+- Next action:
+  - start `EXEC-140` by adding protocol surface inventory and current-shape guardrail tests around response builders, event payloads, request metadata parsing, route construction, and Neuro CLI payload/reply parsing
+
 2026-04-25: Completed release-1.1.4 `EXEC-138` by promoting the canonical Neuro CLI release identity from `RELEASE_TARGET = "1.1.3"` to `RELEASE_TARGET = "1.1.4"` after `EXEC-137` closure evidence completed across local, build, script, preflight, and real-board smoke gates. Added a focused Neuro CLI regression test that locks the capability-map `release_target` field to `1.1.4`, and updated the release-1.1.4 plan to record the final identity promotion. Focused CLI validation passed: pytest `26/26`, `py_compile`, and live capabilities JSON output with `"release_target":"1.1.4"`. Release-1.1.4 is now closed against the current workspace state. — Copilot
 
 #### EXEC-138 Release-1.1.4 Release Identity Promotion

@@ -1,10 +1,12 @@
 #include <zephyr/llext/symbol.h>
 #include <zephyr/sys/printk.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "neuro_protocol_codec.h"
 #include "neuro_request_envelope.h"
 
 static const char *skip_json_ws(const char *ptr)
@@ -166,6 +168,9 @@ static bool neuro_request_validation_fail(
 bool neuro_request_metadata_parse(
 	const char *json, struct neuro_request_metadata *metadata)
 {
+	struct neuro_protocol_request_metadata decoded;
+	int ret;
+
 	if (metadata == NULL) {
 		return false;
 	}
@@ -175,25 +180,56 @@ bool neuro_request_metadata_parse(
 		return false;
 	}
 
-	(void)neuro_json_extract_string(json, "request_id",
-		metadata->request_id, sizeof(metadata->request_id));
-	(void)neuro_json_extract_string(json, "source_core",
-		metadata->source_core, sizeof(metadata->source_core));
-	(void)neuro_json_extract_string(json, "source_agent",
-		metadata->source_agent, sizeof(metadata->source_agent));
-	(void)neuro_json_extract_string(json, "target_node",
-		metadata->target_node, sizeof(metadata->target_node));
-	(void)neuro_json_extract_string(json, "lease_id", metadata->lease_id,
-		sizeof(metadata->lease_id));
-	(void)neuro_json_extract_string(json, "idempotency_key",
-		metadata->idempotency_key, sizeof(metadata->idempotency_key));
-	metadata->timeout_ms =
-		(uint32_t)neuro_json_extract_int(json, "timeout_ms", 0);
-	metadata->priority =
-		neuro_json_extract_int(json, "priority", metadata->priority);
-	metadata->forwarded = neuro_json_extract_bool(json, "forwarded", false);
+	ret = neuro_protocol_decode_request_metadata_json(json, &decoded);
+	if (ret != 0) {
+		return false;
+	}
+
+	snprintk(metadata->request_id, sizeof(metadata->request_id), "%s",
+		decoded.request_id);
+	snprintk(metadata->source_core, sizeof(metadata->source_core), "%s",
+		decoded.source_core);
+	snprintk(metadata->source_agent, sizeof(metadata->source_agent), "%s",
+		decoded.source_agent);
+	snprintk(metadata->target_node, sizeof(metadata->target_node), "%s",
+		decoded.target_node);
+	snprintk(metadata->lease_id, sizeof(metadata->lease_id), "%s",
+		decoded.lease_id);
+	snprintk(metadata->idempotency_key, sizeof(metadata->idempotency_key),
+		"%s", decoded.idempotency_key);
+	metadata->timeout_ms = decoded.timeout_ms;
+	metadata->priority = decoded.priority;
+	metadata->forwarded = decoded.forwarded;
 	return true;
 }
+
+int neuro_unit_read_callback_config_json(
+	const char *json, struct neuro_unit_app_callback_config *config)
+{
+	struct neuro_protocol_callback_config decoded;
+	int ret;
+
+	if (config == NULL) {
+		return -EINVAL;
+	}
+
+	memset(config, 0, sizeof(*config));
+	ret = neuro_protocol_decode_callback_config_json(json, &decoded);
+	if (ret != 0) {
+		return ret;
+	}
+
+	config->has_callback_enabled = decoded.has_callback_enabled;
+	config->callback_enabled = decoded.callback_enabled;
+	config->has_trigger_every = decoded.has_trigger_every;
+	config->trigger_every = decoded.trigger_every;
+	config->has_event_name = decoded.has_event_name;
+	snprintk(config->event_name, sizeof(config->event_name), "%s",
+		decoded.event_name);
+	return 0;
+}
+
+EXPORT_SYMBOL(neuro_unit_read_callback_config_json);
 
 bool neuro_request_metadata_validate(
 	const struct neuro_request_metadata *metadata, uint32_t required_fields,

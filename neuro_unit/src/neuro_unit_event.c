@@ -8,6 +8,8 @@
 
 #include "neuro_unit_diag.h"
 #include "neuro_unit_event.h"
+#include "neuro_protocol.h"
+#include "neuro_protocol_codec.h"
 
 #if defined(CONFIG_NEUROLINK_UNIT_DEBUG_MODE) &&                               \
 	CONFIG_NEUROLINK_UNIT_DEBUG_MODE
@@ -81,21 +83,20 @@ int neuro_unit_event_build_key(
 {
 	int ret;
 
-	if (out == NULL || out_len == 0U || !token_is_valid(node_id) ||
-		suffix == NULL || suffix[0] == '\0') {
+	ret = neuro_protocol_build_event_route(out, out_len, node_id, suffix);
+	if (ret == -EINVAL) {
 		neuro_unit_diag_contract_error(
 			"event.build_key", "out/node_id/suffix", -EINVAL);
 		return -EINVAL;
 	}
 
-	ret = snprintk(out, out_len, "neuro/%s/event/%s", node_id, suffix);
-	if (ret < 0 || (size_t)ret >= out_len) {
+	if (ret == -ENAMETOOLONG) {
 		neuro_unit_diag_contract_error(
 			"event.build_key", "out_len", -ENAMETOOLONG);
 		return -ENAMETOOLONG;
 	}
 
-	return 0;
+	return ret;
 }
 
 int neuro_unit_event_build_app_key(char *out, size_t out_len,
@@ -103,22 +104,21 @@ int neuro_unit_event_build_app_key(char *out, size_t out_len,
 {
 	int ret;
 
-	if (out == NULL || out_len == 0U || !token_is_valid(node_id) ||
-		!token_is_valid(app_id) || !token_is_valid(event_name)) {
+	ret = neuro_protocol_build_app_event_route(
+		out, out_len, node_id, app_id, event_name);
+	if (ret == -EINVAL) {
 		neuro_unit_diag_contract_error("event.build_app_key",
 			"out/node_id/app_id/event_name", -EINVAL);
 		return -EINVAL;
 	}
 
-	ret = snprintk(out, out_len, "neuro/%s/event/app/%s/%s", node_id,
-		app_id, event_name);
-	if (ret < 0 || (size_t)ret >= out_len) {
+	if (ret == -ENAMETOOLONG) {
 		neuro_unit_diag_contract_error(
 			"event.build_app_key", "out_len", -ENAMETOOLONG);
 		return -ENAMETOOLONG;
 	}
 
-	return 0;
+	return ret;
 }
 
 int neuro_unit_event_publish(const char *keyexpr, const char *payload_json)
@@ -172,6 +172,7 @@ int neuro_unit_publish_app_event(
 int neuro_unit_publish_callback_event(
 	const struct neuro_unit_app_callback_event *event)
 {
+	struct neuro_protocol_callback_event dto;
 	char payload[NEURO_UNIT_EVENT_JSON_LEN];
 	int ret;
 
@@ -182,14 +183,17 @@ int neuro_unit_publish_callback_event(
 		return -EINVAL;
 	}
 
-	ret = snprintk(payload, sizeof(payload),
-		"{\"app_id\":\"%s\",\"event_name\":\"%s\",\"invoke_count\":%u,\"start_count\":%d}",
-		event->app_id, event->event_name, event->invoke_count,
-		event->start_count);
-	if (ret < 0 || (size_t)ret >= sizeof(payload)) {
+	dto.app_id = event->app_id;
+	dto.event_name = event->event_name;
+	dto.invoke_count = event->invoke_count;
+	dto.start_count = event->start_count;
+
+	ret = neuro_protocol_encode_callback_event_json(
+		payload, sizeof(payload), &dto);
+	if (ret != 0) {
 		neuro_unit_diag_contract_error(
-			"event.publish_callback", "payload", -ENAMETOOLONG);
-		return -ENAMETOOLONG;
+			"event.publish_callback", "payload", ret);
+		return ret;
 	}
 
 	return neuro_unit_publish_app_event(
@@ -199,6 +203,7 @@ int neuro_unit_publish_callback_event(
 int neuro_unit_write_command_reply_json(char *reply_buf, size_t reply_buf_len,
 	const struct neuro_unit_app_command_reply *reply)
 {
+	struct neuro_protocol_app_command_reply dto;
 	int ret;
 
 	if (reply_buf == NULL || reply_buf_len == 0U) {
@@ -211,16 +216,21 @@ int neuro_unit_write_command_reply_json(char *reply_buf, size_t reply_buf_len,
 		return -EINVAL;
 	}
 
-	ret = snprintk(reply_buf, reply_buf_len,
-		"{\"echo\":\"%s\",\"command\":\"%s\",\"invoke_count\":%u,\"callback_enabled\":%s,\"trigger_every\":%d,\"event_name\":\"%s\",\"config_changed\":%s,\"publish_ret\":%d}",
-		reply->echo, reply->command_name, reply->invoke_count,
-		reply->callback_enabled ? "true" : "false",
-		reply->trigger_every, reply->event_name,
-		reply->config_changed ? "true" : "false", reply->publish_ret);
-	if (ret < 0 || (size_t)ret >= reply_buf_len) {
-		neuro_unit_diag_contract_error("event.write_command_reply",
-			"reply_buf_len", -ENAMETOOLONG);
-		return -ENAMETOOLONG;
+	dto.command_name = reply->command_name;
+	dto.invoke_count = reply->invoke_count;
+	dto.callback_enabled = reply->callback_enabled;
+	dto.trigger_every = reply->trigger_every;
+	dto.event_name = reply->event_name;
+	dto.config_changed = reply->config_changed;
+	dto.publish_ret = reply->publish_ret;
+	dto.echo = reply->echo;
+
+	ret = neuro_protocol_encode_app_command_reply_json(
+		reply_buf, reply_buf_len, &dto);
+	if (ret != 0) {
+		neuro_unit_diag_contract_error(
+			"event.write_command_reply", "reply_buf_len", ret);
+		return ret;
 	}
 
 	return 0;
