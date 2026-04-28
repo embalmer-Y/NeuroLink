@@ -2,7 +2,7 @@
 
 NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
 
-The project is currently closed at release `1.1.4`. The canonical host CLI advertises `RELEASE_TARGET = "1.1.4"`.
+The project is currently closed at release `1.1.7`. The canonical host CLI advertises `RELEASE_TARGET = "1.1.7"`.
 
 ## Project Layout
 

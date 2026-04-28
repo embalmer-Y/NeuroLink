@@ -24,6 +24,7 @@ static int g_log_calls;
 static int g_download_artifact_calls;
 static int g_download_artifact_return;
 static int g_remove_calls;
+static bool g_mock_runtime_app_is_loaded;
 static bool g_require_lease_result;
 static char g_last_error_message[64];
 static char g_last_reply_json[256];
@@ -40,6 +41,16 @@ static uint8_t g_dummy_query_storage;
 static struct neuro_unit_reply_context g_reply_ctx;
 static size_t g_mock_artifact_size;
 static size_t g_mock_download_artifact_size;
+
+void app_runtime_test_reset(void);
+void app_runtime_test_set_load_return(int ret);
+void app_runtime_test_set_start_return(int ret);
+int app_runtime_test_load_calls(void);
+int app_runtime_test_start_calls(void);
+int app_runtime_test_unload_calls(void);
+const char *app_runtime_test_last_load_path(void);
+const char *app_runtime_test_last_start_args(void);
+const char *app_runtime_test_sequence(void);
 
 struct mock_seed_file {
 	bool exists;
@@ -332,7 +343,7 @@ static void mock_publish_state_event(void) { g_publish_state_event_calls++; }
 static bool mock_runtime_app_is_loaded(const char *app_id)
 {
 	ARG_UNUSED(app_id);
-	return false;
+	return g_mock_runtime_app_is_loaded;
 }
 
 static int mock_download_artifact(const char *app_id, const char *artifact_key,
@@ -418,6 +429,7 @@ static void test_reset(void *fixture)
 	g_download_artifact_calls = 0;
 	g_download_artifact_return = 0;
 	g_remove_calls = 0;
+	g_mock_runtime_app_is_loaded = false;
 	g_require_lease_result = true;
 	g_reply_ctx.transport_query = &g_dummy_query_storage;
 	g_reply_ctx.request_id = NULL;
@@ -437,6 +449,7 @@ static void test_reset(void *fixture)
 	memset(g_last_download_artifact_key, 0,
 		sizeof(g_last_download_artifact_key));
 	memset(g_last_download_path, 0, sizeof(g_last_download_path));
+	app_runtime_test_reset();
 
 	cfg.apps_dir = "/mock/apps";
 	(void)app_runtime_cmd_set_config(&cfg);
@@ -650,6 +663,81 @@ ZTEST(neuro_unit_update_service, test_activate_prefers_context_metadata)
 
 	zassert_true(strcmp(g_last_lease_id, "lease-from-context") == 0,
 		"activate lease check should use decoded context metadata first");
+}
+
+ZTEST(neuro_unit_update_service,
+	test_activate_unloads_existing_app_before_replacement_load)
+{
+	g_mock_runtime_app_is_loaded = true;
+
+	enable_successful_update_io();
+	drive_active_state(&g_reply_ctx);
+
+	zassert_equal(app_runtime_test_unload_calls(), 1,
+		"activate should unload an existing runtime app first");
+	zassert_equal(app_runtime_test_load_calls(), 1,
+		"activate should load the replacement once");
+	zassert_equal(app_runtime_test_start_calls(), 1,
+		"activate should start the replacement once");
+	zassert_true(
+		strcmp(app_runtime_test_sequence(), "unload,load,start") == 0,
+		"activate runtime operation order changed");
+	zassert_true(strcmp(app_runtime_test_last_load_path(),
+			     "/mock/apps/demo_app.llext") == 0,
+		"activate should load the staged app artifact path");
+}
+
+ZTEST(neuro_unit_update_service,
+	test_activate_load_failure_skips_start_and_callback_registration)
+{
+	enable_successful_update_io();
+	drive_verified_state(&g_reply_ctx);
+	app_runtime_test_set_load_return(-ENOMEM);
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "activate", "{}", "req-activate-load-fail");
+
+	zassert_equal(app_runtime_test_load_calls(), 1,
+		"activate should attempt runtime load once");
+	zassert_equal(app_runtime_test_start_calls(), 0,
+		"activate must not start after load failure");
+	zassert_equal(g_register_callback_calls, 0,
+		"activate must not register callbacks after load failure");
+	zassert_equal(g_reply_error_calls, 1,
+		"activate load failure should emit one reply error");
+	zassert_true(
+		strstr(g_last_error_message, "activate load failed") != NULL,
+		"activate load failure message changed");
+	zassert_equal(
+		neuro_update_manager_state_for(&g_update_manager, "demo_app"),
+		NEURO_UPDATE_STATE_FAILED,
+		"activate load failure should mark update failed");
+	zassert_true(strcmp(g_last_event_stage, "activate") == 0,
+		"activate load failure should publish activate stage");
+	zassert_true(strcmp(g_last_event_status, "error") == 0,
+		"activate load failure should publish error status");
+}
+
+ZTEST(neuro_unit_update_service,
+	test_activate_start_args_prefer_context_request_fields)
+{
+	struct neuro_unit_request_fields request_fields = { 0 };
+
+	enable_successful_update_io();
+	drive_verified_state(&g_reply_ctx);
+	snprintk(request_fields.start_args, sizeof(request_fields.start_args),
+		"mode=context,level=7");
+	g_reply_ctx.request_fields = &request_fields;
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "activate", "{\"start_args\":\"mode=payload\"}",
+		"req-activate-start-args");
+
+	zassert_true(strcmp(app_runtime_test_last_start_args(),
+			     "mode=context,level=7") == 0,
+		"activate should prefer decoded context start args");
+	zassert_equal(g_reply_error_calls, 0,
+		"context start args should not fail activate");
 }
 
 ZTEST(neuro_unit_update_service, test_rollback_prefers_context_request_fields)

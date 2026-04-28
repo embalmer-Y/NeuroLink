@@ -21,6 +21,8 @@ zephyr/include/generated/
 # Generated smoke and diagnostic evidence
 smoke-evidence/*
 !smoke-evidence/.gitkeep
+memory-evidence/*
+!memory-evidence/.gitkeep
 
 # Logs and transient runtime files
 *.log

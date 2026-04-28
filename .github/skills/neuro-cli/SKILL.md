@@ -45,6 +45,7 @@ configuration, callback event monitoring, and evidence collection.
    ```bash
    python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan preflight
    python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan app-build
+   python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan memory-evidence
    ```
 
 ## Common Workflows
@@ -53,7 +54,8 @@ configuration, callback event monitoring, and evidence collection.
 
 1. Use `workflow plan unit-tests` for the native_sim Unit test command.
 2. Use `workflow plan cli-tests` for the Python CLI regression command.
-3. Run `git diff --check` in `applocation/NeuroLink` before recording evidence.
+3. Use `workflow plan memory-evidence` before changing or closing Unit memory defaults.
+4. Use `workflow plan release-closure` for the final gate sequence before promoting release identity.
 
 ### App Build And Deploy
 
@@ -75,6 +77,8 @@ configuration, callback event monitoring, and evidence collection.
    the CLI.
 3. If a local handler is used, ensure audit output captures runner, cwd,
    timeout, duration, return code, stdout, stderr, and payload size.
+4. Use `workflow plan callback-smoke` to get the wrapper command before running
+   the callback smoke path.
 
 ## References
 

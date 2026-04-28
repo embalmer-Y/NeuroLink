@@ -1,3 +1,1082 @@
+2026-04-29: Completed release-1.1.7 hardware closure and release identity promotion with `EXEC-179B`. After the user reconnected USB, `prepare_dnesp32s3b_wsl.sh --attach-only` restored BUSID `8-4` as `/dev/ttyACM0`; full board preparation restored `unit-01` to `NETWORK_READY` at `192.168.2.69`. Serial-required preflight passed, and full Linux smoke passed with fresh final LLEXT evidence `smoke-evidence/SMOKE-017B-LINUX-001-20260428-184958.ndjson`; the deployed artifact was `21520` bytes and contains `neuro_unit_app-1.1.7-cbor-v2`. The callback freshness blocker was root-caused with UART evidence: Unit published `neuro/unit-01/event/app//callback`, so the CLI subscriber on `neuro/unit-01/event/app/neuro_unit_app/**` correctly received no events. Fixed the sample LLEXT app to use a stable local `app_id` for callback events instead of `app_runtime_manifest.app_name`, rebuilt/redeployed fresh LLEXT, and verified `app-callback-smoke --expected-app-echo neuro_unit_app-1.1.7-cbor-v2 --trigger-every 1 --invoke-count 2` passed with three CBOR callback events on `neuro/unit-01/event/app/neuro_unit_app/callback`. Promoted Neuro CLI `RELEASE_TARGET` to `1.1.7`, promoted the sample app version/build id to `1.1.7`/`neuro_unit_app-1.1.7-cbor-v2`, captured final memory evidence at `memory-evidence/exec-179-release-closure.{json,summary.txt}` with `release_target=1.1.7` and `dram0=377188`, and confirmed live capabilities JSON reports `release_target: 1.1.7`. Validation passed for final LLEXT rebuild/build-id check, Python compile, focused CLI suite (`81 passed`), clean-environment script suite (`9/9`), full Linux smoke, callback freshness, smoke lease cleanup (`query leases` empty), and `git diff --check`. Release-1.1.7 is closed against the current workspace evidence. — Copilot
+
+#### EXEC-179B Release-1.1.7 Hardware Closure and Identity Promotion
+
+- Status: completed; release-1.1.7 closed
+- Owner: GitHub Copilot with user direction
+- Hardware restoration:
+  - USB/IP attach restored BUSID `8-4` as `/dev/ttyACM0`
+  - board preparation restored `unit-01` to `NETWORK_READY` with IPv4 `192.168.2.69`
+  - serial-required preflight returned `status=ready`
+- Fresh LLEXT and smoke evidence:
+  - final artifact `build/neurolink_unit/llext/neuro_unit_app.llext` is `21520` bytes
+  - final artifact contains `neuro_unit_app-1.1.7-cbor-v2`
+  - full Linux smoke PASS: `smoke-evidence/SMOKE-017B-LINUX-001-20260428-184958.ndjson`
+- Callback freshness fix:
+  - UART root cause showed callback events published under `neuro/unit-01/event/app//callback`
+  - sample LLEXT now publishes callback events with stable app id `neuro_unit_app`
+  - final callback smoke PASS on `neuro/unit-01/event/app/neuro_unit_app/**`
+  - observed three CBOR `callback_event` payloads with `app_id=neuro_unit_app`
+- Release identity:
+  - `RELEASE_TARGET` promoted from `1.1.6` to `1.1.7`
+  - sample app version promoted to `1.1.7`
+  - sample app build id promoted to `neuro_unit_app-1.1.7-cbor-v2`
+  - live capabilities JSON reports `release_target: 1.1.7`
+- Memory closure:
+  - `memory-evidence/exec-179-release-closure.json`
+  - `memory-evidence/exec-179-release-closure.summary.txt`
+  - `dram0=377188`, preserving the `15188B` internal DRAM improvement versus the release-1.1.6 clean baseline
+- Final validation:
+  - final LLEXT rebuild/build-id check PASS
+  - Python compile PASS
+  - focused CLI suite PASS (`81 passed`)
+  - clean-environment script suite PASS (`9/9`)
+  - full Linux smoke PASS
+  - callback freshness PASS
+  - smoke lease cleanup PASS (`query leases` returned `[]`)
+  - `git diff --check` PASS
+
+2026-04-29: Started `EXEC-179` hardware closure but blocked before full smoke/deploy closure by host serial enumeration loss. Serial-required preflight reported `status=serial_device_missing`, `ready=0`, `serial_present=0`, while router `7447` was listening and the existing artifact path was present. Host checks showed no `/dev/ttyACM*` or `/dev/ttyUSB*`, no `lsusb` device listing, and `dmesg` showed prior `cdc_acm ... ttyACM0` enumeration followed by `usb 1-1: USB disconnect`; this matches a host USB/IP pass-through or board USB enumeration blocker, not a CLI protocol failure. Zenoh network path still works: `query device` returned `status=ok`, `node_id=unit-01`, board `dnesp32s3b`, `session_ready=true`, `network_state=NETWORK_READY`, `ipv4=192.168.2.69`; `query apps` returned one running `neuro_unit_app` with `runtime_state=RUNNING` and `artifact_state=ACTIVE`. Linux smoke also stopped at its preflight step with the same `serial_device_missing` readiness failure, so no full hardware closure was accepted. To preserve the LLEXT freshness rule, rebuilt/copied the canonical app artifact after the blocked attempt; `build/neurolink_unit/llext/neuro_unit_app.llext` is non-empty at `21400` bytes. No Kconfig default, firmware behavior, external staging default, or release identity changed; `RELEASE_TARGET` remains `1.1.6`. Next `EXEC-179` action is to restore `/dev/ttyACM*` or `/dev/ttyUSB*` visibility, then rerun serial-required preflight, fresh-LLEXT smoke, callback freshness, deploy/query closure, and only then consider release identity promotion. — Copilot
+
+#### EXEC-179 Release-1.1.7 Hardware Closure Attempt Blocked by Serial Enumeration
+
+- Status: blocked before full hardware closure
+- Owner: GitHub Copilot with user direction
+- Blocker:
+  - serial-required preflight reports `status=serial_device_missing`
+  - no `/dev/ttyACM*` or `/dev/ttyUSB*` device is visible on the Linux host
+  - kernel log shows prior `ttyACM0` enumeration followed by `USB disconnect`
+- Confirmed still healthy:
+  - router port `7447` is listening
+  - `query device` over Zenoh returns `status=ok`, `session_ready=true`, `NETWORK_READY`, and `ipv4=192.168.2.69`
+  - `query apps` returns running `neuro_unit_app` with active artifact state
+- LLEXT freshness:
+  - rebuilt/copied canonical LLEXT after the blocked attempt
+  - `build/neurolink_unit/llext/neuro_unit_app.llext` is `21400` bytes
+  - smoke did not reach full closure because its internal preflight stopped on the serial blocker
+- Decision:
+  - do not accept hardware closure
+  - do not promote `RELEASE_TARGET`
+  - resume `EXEC-179` after serial device visibility is restored
+
+2026-04-29: Continued release-1.1.7 with `EXEC-178`, running local closure gates and memory-delta review without changing firmware defaults or release identity. Captured fresh build memory evidence at `memory-evidence/exec-178-local-closure.json` and `memory-evidence/exec-178-local-closure.summary.txt`; current default remains `release_target=1.1.6`, `CONFIG_HEAP_MEM_POOL_SIZE=53248`, `CONFIG_MAIN_STACK_SIZE=18432`, `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=5120`, `CONFIG_SHELL_STACK_SIZE=4096`, static ELF staging `24576`, and external/PSRAM ELF staging disabled. Current `dram0=377188`, matching `EXEC-175C` promoted default exactly and improving `baseline-1.1.6-clean-build` by `15188B` internal DRAM (`392376 -> 377188`); `iram0` and `ext_ram` are unchanged, `flash` is `+488B`. Re-ran local gates: Python compile PASS, focused CLI suite PASS (`81 passed`), script suite PASS (`9/9`), wrapper workflow-plan JSON checks PASS for `memory-evidence`, `callback-smoke`, and `release-closure`, native_sim Unit tests PASS (`PROJECT EXECUTION SUCCESSFUL`), and `git diff --check` PASS. First native_sim attempt failed only because `west` was not on PATH; rerunning after `source applocation/NeuroLink/scripts/setup_neurolink_env.sh --activate` passed. No hardware smoke, Kconfig default, external staging default, or release identity changed. Hardware closure and final release identity promotion remain `EXEC-179`. — Copilot
+
+#### EXEC-178 Release-1.1.7 Local Closure Gates and Memory Delta Review
+
+- Status: completed for local closure evidence
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-177` workflow/evidence plan alignment
+  - confirms current release defaults have not drifted since `EXEC-175C`
+  - preserves `RELEASE_TARGET = "1.1.6"` until hardware closure
+- Evidence files:
+  - `applocation/NeuroLink/memory-evidence/exec-178-local-closure.json`
+  - `applocation/NeuroLink/memory-evidence/exec-178-local-closure.summary.txt`
+- Memory delta:
+  - baseline `baseline-1.1.6-clean-build`: `dram0=392376`, `iram0=66216`, `flash=673292`, `ext_ram=2847776`
+  - current `exec-178-local-closure`: `dram0=377188`, `iram0=66216`, `flash=673780`, `ext_ram=2847776`
+  - delta vs baseline: `dram0=-15188`, `iram0=0`, `flash=+488`, `ext_ram=0`
+  - delta vs `EXEC-175C` promoted default: `dram0=0`, `iram0=0`, `flash=0`, `ext_ram=0`
+- Preserved defaults:
+  - `CONFIG_HEAP_MEM_POOL_SIZE=53248`
+  - `CONFIG_MAIN_STACK_SIZE=18432`
+  - `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=5120`
+  - `CONFIG_SHELL_STACK_SIZE=4096`
+  - `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`
+  - `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`
+  - `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --run-build --no-c-style-check --label exec-178-local-closure` => PASS (`section_total_dram0=377188`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile neuro_cli/src/neuro_protocol.py neuro_cli/src/neuro_cli.py neuro_cli/scripts/invoke_neuro_cli.py neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`81 passed`)
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan memory-evidence` => PASS JSON
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan callback-smoke` => PASS JSON
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan release-closure` => PASS JSON
+  - `source applocation/NeuroLink/scripts/setup_neurolink_env.sh --activate && west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`PROJECT EXECUTION SUCCESSFUL`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with `EXEC-179` hardware closure, fresh LLEXT, callback freshness, and only then release identity promotion if hardware gates pass
+
+2026-04-29: Continued release-1.1.7 with `EXEC-177`, aligning live CLI workflow plans, the project-shared `neuro-cli` skill, and release evidence guidance. Added Agent-facing `workflow plan memory-evidence`, `workflow plan callback-smoke`, and `workflow plan release-closure` entries to `neuro_cli.py`; each returns structured JSON with `executes_commands=false`, explicit commands, artifacts, protocol metadata, release target, and skill wrapper location. Updated `.github/skills/neuro-cli/SKILL.md` and `references/workflows.md` so Agents ask the CLI for supported memory evidence, callback smoke, and release closure plans rather than hand-assembling commands. During validation, confirmed `invoke_neuro_cli.py` injects `--output json` into the underlying CLI and does not accept wrapper-level `--output`; fixed the callback-smoke plan to match that contract and added a regression. Added parser/output regressions for the new plans and release gate command list. Validation passed for Python compile, focused CLI suite (`81 passed`), wrapper `workflow plan memory-evidence`, `workflow plan callback-smoke`, and `workflow plan release-closure` JSON checks, full script suite (`9/9`), and `git diff --check`. No hardware smoke, firmware config, memory defaults, external staging defaults, or release identity changed; release identity remains `1.1.6`. — Copilot
+
+#### EXEC-177 Release-1.1.7 Workflow, Skill, and Evidence Alignment
+
+- Status: completed for Agent-facing workflow/evidence plan alignment
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-176B` CLI JSON envelope closure
+  - makes memory evidence, callback smoke, and release closure plans discoverable through live CLI JSON
+  - preserves firmware behavior and `RELEASE_TARGET = "1.1.6"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/SKILL.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `workflow plan memory-evidence` returns the supported collector command and `memory-evidence` artifact path
+  - `workflow plan callback-smoke` returns the wrapper command using the wrapper's real argument contract
+  - `workflow plan release-closure` returns the non-executing final gate sequence for memory evidence, Python compile, CLI tests, script tests, whitespace check, preflight, and smoke
+  - skill references now point Agents to live workflow plans for evidence/closure instead of ad hoc command assembly
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile neuro_cli/src/neuro_protocol.py neuro_cli/src/neuro_cli.py neuro_cli/scripts/invoke_neuro_cli.py neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`81 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan memory-evidence` => PASS JSON
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan callback-smoke` => PASS JSON
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan release-closure` => PASS JSON
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - move to `EXEC-178` for final CLI/operator polish or release closure dry-run selection, keeping hardware smoke for slices that touch firmware/runtime behavior
+
+2026-04-29: Continued release-1.1.7 with `EXEC-176B`, tightening CLI dependency and handler failure JSON envelopes. `neuro_cli.main()` now catches final Zenoh session-open failures and emits `{ok:false,status:session_open_failed,error:...}` under `--output json` instead of allowing an exception/traceback to escape. Runtime handler exceptions after a session opens now emit `{ok:false,status:handler_failed,error:...}` and still close the session in `finally`. The core CLI and `invoke_neuro_cli.py` payload failure-status sets now include `session_open_failed` and `handler_failed`, so Agent/skill callers classify both as command failures. Added `main()` regressions for session-open failure JSON and handler failure JSON. Validation passed for Python compile, focused CLI suite (`77 passed`), full script suite (`9/9`), and `git diff --check`. No hardware smoke, firmware config, memory defaults, external staging defaults, or release identity changed; release identity remains `1.1.6`. — Copilot
+
+#### EXEC-176B Release-1.1.7 CLI Session and Handler Failure Envelopes
+
+- Status: completed for CLI dependency/handler JSON contract coverage
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - continues `EXEC-176` after parse-failure classification
+  - covers dependency/session-open and handler failure paths from WS-7
+  - preserves firmware behavior and `RELEASE_TARGET = "1.1.6"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - final session-open failures now return stable JSON `status=session_open_failed`
+  - handler exceptions after session open now return stable JSON `status=handler_failed`
+  - sessions are still closed through the existing `finally` path after handler failure
+  - the skill wrapper treats both statuses as command-failed exit `2`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile neuro_cli/src/neuro_protocol.py neuro_cli/src/neuro_cli.py neuro_cli/scripts/invoke_neuro_cli.py neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`77 passed`)
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue `EXEC-176` only if more CLI JSON/retry contract gaps are found; otherwise move to `EXEC-177` workflow, wrapper, skill, and evidence alignment
+
+2026-04-29: Clarified the release-1.1.7 memory optimization objective after user direction: the goal is DRAM-first pressure relief, not blindly reducing total memory. Updated `docs/project/RELEASE_1.1.7_PRE_RESEARCH.md` so accepted memory candidates can either reduce internal DRAM allocations or safely relocate suitable buffers/staging data into a proven provider-backed PSRAM/external-memory tier. The plan now explicitly treats PSRAM/external memory relocation as preferred when hardware/provider evidence proves it safe, keeps unknown providers on conservative fallback behavior, and records future tuning with DRAM/ext-RAM deltas plus provider placement evidence. No firmware, Kconfig default, CLI behavior, hardware state, or release identity changed. — Copilot
+
+2026-04-29: Continued release-1.1.7 with `EXEC-176`, starting the CLI JSON contract, parser, retry, and failure-classification polish after `EXEC-175C` memory tuning closure. Added explicit `parse_failed` classification for unreadable OK reply payloads so invalid/truncated CBOR no longer collapses into a generic reply error. `neuro_protocol.parse_reply()` now preserves the reply key expression and returns a machine-readable `{ok:false,status:parse_failed,error:...}` envelope for OK replies whose payload cannot be decoded, while still using the legacy error-payload path for actual Zenoh error replies. `neuro_cli.collect_query_result()` preserves top-level `parse_failed`, `collect_query_result_with_retry()` records `failure_status=parse_failed` without retrying non-transient parse failures, and `invoke_neuro_cli.py` treats `parse_failed` as command failure for skill/Agent callers. Added regressions for unreadable OK payload parsing, query-result `parse_failed` preservation, and wrapper classification. Validation passed for Python compile, focused CLI suite (`75 passed`), full script suite (`9/9`), and `git diff --check`. No hardware smoke, firmware config, memory defaults, external staging defaults, or release identity changed; release identity remains `1.1.6`. — Copilot
+
+#### EXEC-176 Release-1.1.7 CLI Parse-Failure JSON Contract
+
+- Status: completed for the first CLI JSON contract slice
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - begins `EXEC-176` after `EXEC-175C` closure
+  - improves CLI parser/failure classification without changing firmware behavior
+  - preserves `RELEASE_TARGET = "1.1.6"` until final closure
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_protocol.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - unreadable OK reply payloads now surface as `status=parse_failed`
+  - query retry metadata keeps `attempt`, `max_attempts`, `retried`, and `failure_status=parse_failed`
+  - parse failures are treated as non-transient command failures, not retryable `no_reply`/`query_failed` failures
+  - the skill wrapper maps top-level `parse_failed` to command-failed exit `2`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile neuro_cli/src/neuro_protocol.py neuro_cli/src/neuro_cli.py neuro_cli/scripts/invoke_neuro_cli.py neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`75 passed`)
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue `EXEC-176` with any remaining high-value CLI JSON envelope and retry reporting gaps, then move to `EXEC-177` workflow/skill evidence alignment
+
+2026-04-29: Continued release-1.1.7 with `EXEC-175C`, closing the remaining isolated workqueue-stack tuning candidate before moving on to `EXEC-176`. Added `neuro_unit/overlays/workqueue_stack_trim_candidate.conf` with only `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=5120` changed while preserving heap `53248`, main stack `18432`, shell stack `4096`, network buffers, disabled external/PSRAM ELF staging, and static ELF staging `24576`; added a `test_build_neurolink.sh` sentinel for the overlay. Build evidence `memory-evidence/exec-175c-workqueue-stack-trim-build-candidate.summary.txt` showed `dram0=377188`, down `1024B` from the `EXEC-175B` promoted default (`378212`), with `iram0_delta=0`, `flash_delta=0`, and `ext_ram_delta=0`. Built a fresh candidate LLEXT (`21556` bytes), flashed the candidate, prepared DNESP32S3B to `NETWORK_READY`, and ran candidate smoke PASS at `smoke-evidence/exec-175c-workqueue-stack-candidate/SMOKE-017B-LINUX-001-20260428-165905.summary.txt`. A second candidate smoke under UART capture also passed at `smoke-evidence/exec-175c-workqueue-stack-candidate-runtime/SMOKE-017B-LINUX-001-20260428-170039.summary.txt`; runtime log `smoke-evidence/serial-diag/exec-175c-workqueue-stack-runtime-20260428T170013Z.log` provided update heap snapshots, app-runtime heap snapshot, static staging allocation (`bytes=21556 source=static provider=esp-spiram`), and no fatal/assert/stack-overflow evidence. Collector runtime gate `memory-evidence/exec-175c-workqueue-stack-trim-hardware-candidate.summary.txt` passed. Promoted `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=5120` into `neuro_unit/prj.conf`, updated collector fixture defaults, rebuilt default evidence at `memory-evidence/exec-175c-promoted-default-build.summary.txt`, rebuilt a fresh default LLEXT (`21400` bytes), flashed the promoted default, prepared the board, and ran default smoke PASS at `smoke-evidence/exec-175c-promoted-default/SMOKE-017B-LINUX-001-20260428-170806.summary.txt`. Validation passed for full script suite (`9/9`), focused CLI suite (`72 passed`), and `git diff --check`. Defaults now keep heap `53248`, main stack `18432`, workqueue stack `5120`, shell stack `4096`, network buffer counts unchanged, external/PSRAM ELF staging disabled, static ELF staging `24576`, and release identity `1.1.6`. — Copilot
+
+#### EXEC-175C Release-1.1.7 Workqueue Stack Trim Promotion
+
+- Status: completed and promoted to default after hardware validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - closes the remaining isolated `EXEC-175` Kconfig stack candidate before `EXEC-176`
+  - preserves the LLD rule that `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE` remains explicitly sized for async prepare flow
+  - changes no heap, main stack, shell stack, network-buffer, staging, or release-identity defaults in the candidate
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/prj.conf`
+  - `applocation/NeuroLink/neuro_unit/overlays/workqueue_stack_trim_candidate.conf`
+  - `applocation/NeuroLink/tests/scripts/test_build_neurolink.sh`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Promoted candidate evidence:
+  - overlay: `applocation/NeuroLink/neuro_unit/overlays/workqueue_stack_trim_candidate.conf`
+  - build candidate: `applocation/NeuroLink/memory-evidence/exec-175c-workqueue-stack-trim-build-candidate.summary.txt`
+  - hardware candidate: `applocation/NeuroLink/memory-evidence/exec-175c-workqueue-stack-trim-hardware-candidate.summary.txt`
+  - promoted default build: `applocation/NeuroLink/memory-evidence/exec-175c-promoted-default-build.summary.txt`
+  - candidate smoke: `applocation/NeuroLink/smoke-evidence/exec-175c-workqueue-stack-candidate/SMOKE-017B-LINUX-001-20260428-165905.summary.txt`
+  - runtime candidate smoke: `applocation/NeuroLink/smoke-evidence/exec-175c-workqueue-stack-candidate-runtime/SMOKE-017B-LINUX-001-20260428-170039.summary.txt`
+  - runtime UART: `applocation/NeuroLink/smoke-evidence/serial-diag/exec-175c-workqueue-stack-runtime-20260428T170013Z.log`
+  - promoted default smoke: `applocation/NeuroLink/smoke-evidence/exec-175c-promoted-default/SMOKE-017B-LINUX-001-20260428-170806.summary.txt`
+- Result:
+  - `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE`: `6144` -> `5120`
+  - build `dram0`: `378212` -> `377188` (`-1024B` versus `EXEC-175B` promoted default)
+  - promoted build summary: `dram0_0_seg=379976B/399108B (95.21%)`
+  - runtime gate: PASS with update heap, app-runtime heap, and static staging allocation evidence
+  - candidate hardware smoke: PASS
+  - promoted default hardware smoke: PASS
+- Preserved defaults:
+  - `CONFIG_HEAP_MEM_POOL_SIZE=53248`
+  - `CONFIG_MAIN_STACK_SIZE=18432`
+  - `CONFIG_SHELL_STACK_SIZE=4096`
+  - `CONFIG_NET_PKT_RX_COUNT=20`, `CONFIG_NET_PKT_TX_COUNT=20`
+  - `CONFIG_NET_BUF_RX_COUNT=48`, `CONFIG_NET_BUF_TX_COUNT=48`
+  - `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`
+  - `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`
+  - `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py` => PASS (`72 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - proceed to `EXEC-176` CLI/release-readiness work; keep network-buffer defaults unchanged unless a future candidate proves internal DRAM benefit
+
+2026-04-29: Continued release-1.1.7 with `EXEC-175B`, completing the next isolated Kconfig tuning pass after the heap trim. First tested `neuro_unit/overlays/net_buf_trim_candidate.conf` with `CONFIG_NET_BUF_RX_COUNT=44` and `CONFIG_NET_BUF_TX_COUNT=44` while keeping `NET_PKT` counts, heap, stack, and staging defaults unchanged. The candidate built successfully and Kconfig accepted the values, but evidence `memory-evidence/exec-175b-net-buf-trim-build-candidate.summary.txt` showed `dram0_delta=0` versus the promoted default and only `ext_ram_delta=-1248`; rejected it as not worth reducing network headroom for no internal DRAM gain. Then tested `neuro_unit/overlays/main_stack_trim_candidate.conf` with only `CONFIG_MAIN_STACK_SIZE=18432` changed. Build evidence `memory-evidence/exec-175b-main-stack-trim-build-candidate.summary.txt` showed `dram0=378212`, down `10240B` from the `EXEC-175A` promoted default (`388452`), with `dram0_0_seg=381000B/399108B (95.46%)`. Built a fresh candidate LLEXT (`21528` bytes), flashed the candidate, prepared DNESP32S3B to `NETWORK_READY`, and ran two candidate smokes PASS. UART runtime evidence `smoke-evidence/serial-diag/exec-175b-main-stack-runtime-20260428T163024Z.log` captured update heap snapshots, app-runtime heap snapshot, static staging allocation (`bytes=21528 source=static provider=esp-spiram`), and no fatal exception; collector gate `memory-evidence/exec-175b-main-stack-trim-hardware-candidate.summary.txt` passed. Promoted `CONFIG_MAIN_STACK_SIZE=18432` into `neuro_unit/prj.conf`, rebuilt default evidence at `memory-evidence/exec-175b-promoted-default-build.summary.txt`, rebuilt a fresh default LLEXT (`21400` bytes), flashed the promoted default, prepared the board, and ran default smoke PASS at `smoke-evidence/exec-175b-promoted-default/SMOKE-017B-LINUX-001-20260428-163547.summary.txt`. Validation passed for full script suite (`9/9`), focused CLI suite (`72 passed`), and `git diff --check`. Defaults now keep heap `53248`, main stack `18432`, workqueue stack `6144`, shell stack `4096`, network buffer counts unchanged, external/PSRAM ELF staging disabled, static ELF staging `24576`, and release identity `1.1.6`. — Copilot
+
+#### EXEC-175B Release-1.1.7 Main Stack Trim Promotion
+
+- Status: completed and promoted to default after hardware validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - continues `EXEC-175` after heap trim promotion
+  - rejects a network-buffer candidate that did not reduce internal DRAM
+  - promotes one isolated main-stack candidate with build, runtime, and hardware proof
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/prj.conf`
+  - `applocation/NeuroLink/neuro_unit/overlays/net_buf_trim_candidate.conf`
+  - `applocation/NeuroLink/neuro_unit/overlays/main_stack_trim_candidate.conf`
+  - `applocation/NeuroLink/tests/scripts/test_build_neurolink.sh`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Rejected candidate:
+  - overlay: `applocation/NeuroLink/neuro_unit/overlays/net_buf_trim_candidate.conf`
+  - evidence: `applocation/NeuroLink/memory-evidence/exec-175b-net-buf-trim-build-candidate.summary.txt`
+  - result: `CONFIG_NET_BUF_RX_COUNT=44`, `CONFIG_NET_BUF_TX_COUNT=44`
+  - decision: reject because `dram0_delta=0` and only `ext_ram_delta=-1248`, so it reduces network headroom without internal DRAM benefit
+- Promoted candidate evidence:
+  - overlay: `applocation/NeuroLink/neuro_unit/overlays/main_stack_trim_candidate.conf`
+  - build candidate: `applocation/NeuroLink/memory-evidence/exec-175b-main-stack-trim-build-candidate.summary.txt`
+  - hardware candidate: `applocation/NeuroLink/memory-evidence/exec-175b-main-stack-trim-hardware-candidate.summary.txt`
+  - promoted default build: `applocation/NeuroLink/memory-evidence/exec-175b-promoted-default-build.summary.txt`
+  - candidate smoke: `applocation/NeuroLink/smoke-evidence/exec-175b-main-stack-candidate/SMOKE-017B-LINUX-001-20260428-162942.summary.txt`
+  - runtime candidate smoke: `applocation/NeuroLink/smoke-evidence/exec-175b-main-stack-candidate-runtime/SMOKE-017B-LINUX-001-20260428-163039.summary.txt`
+  - runtime UART: `applocation/NeuroLink/smoke-evidence/serial-diag/exec-175b-main-stack-runtime-20260428T163024Z.log`
+  - promoted default smoke: `applocation/NeuroLink/smoke-evidence/exec-175b-promoted-default/SMOKE-017B-LINUX-001-20260428-163547.summary.txt`
+- Result:
+  - `CONFIG_MAIN_STACK_SIZE`: `20480` -> `18432`
+  - build `dram0`: `388452` -> `378212` (`-10240B` versus `EXEC-175A` promoted default)
+  - promoted build summary: `dram0_0_seg=381000B/399108B (95.46%)`
+  - runtime gate: PASS with update heap, app-runtime heap, and static staging allocation evidence
+  - candidate hardware smoke: PASS
+  - promoted default hardware smoke: PASS
+- Preserved defaults:
+  - `CONFIG_HEAP_MEM_POOL_SIZE=53248`
+  - `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=6144`
+  - `CONFIG_SHELL_STACK_SIZE=4096`
+  - `CONFIG_NET_PKT_RX_COUNT=20`, `CONFIG_NET_PKT_TX_COUNT=20`
+  - `CONFIG_NET_BUF_RX_COUNT=48`, `CONFIG_NET_BUF_TX_COUNT=48`
+  - `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`
+  - `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`
+  - `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`72 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue `EXEC-175` with any remaining stack/workqueue candidate only if it has an isolated rollback path; keep network-buffer defaults unchanged unless internal DRAM evidence justifies another candidate
+
+2026-04-29: Continued release-1.1.7 with `EXEC-175A`, promoting the first conservative Kconfig memory tuning candidate after hardware proof. Added `neuro_unit/overlays/heap_trim_candidate.conf` as a reproducible candidate that changes only `CONFIG_HEAP_MEM_POOL_SIZE=53248` while preserving static internal ELF staging (`24576`) and keeping both external/PSRAM ELF staging preferences disabled. The isolated candidate build `build/neurolink_unit_heap_trim_candidate` produced `memory-evidence/exec-175a-heap-trim-build-candidate.summary.txt` with `dram0=388452`, down `4096B` from the same-session default reference `dram0=392548`, and build summary `dram0_0_seg=391240B/399108B (98.03%)`. Built a fresh candidate LLEXT (`21500` bytes), flashed the candidate firmware, prepared DNESP32S3B back to `NETWORK_READY` at `192.168.2.69`, and ran two bounded candidate smokes successfully. UART runtime evidence `smoke-evidence/serial-diag/exec-175a-heap-trim-runtime-20260428T161116Z.log` showed update heap snapshots, app-runtime heap snapshot, static staging allocation (`bytes=21500 source=static provider=esp-spiram`), and no fatal exception; collector gate `memory-evidence/exec-175a-heap-trim-hardware-candidate.summary.txt` passed with `runtime_evidence_gate.passed=True`. Promoted `CONFIG_HEAP_MEM_POOL_SIZE=53248` into `neuro_unit/prj.conf`, rebuilt the default firmware in `build/neurolink_unit`, rebuilt a fresh default LLEXT (`21400` bytes), flashed the promoted default, prepared the board, and ran default smoke PASS at `smoke-evidence/exec-175a-promoted-default/SMOKE-017B-LINUX-001-20260428-161722.summary.txt`. Validation passed for full script suite (`9/9`), focused CLI suite (`72 passed`), and `git diff --check`. External/PSRAM ELF staging remains disabled, static staging remains the release path, network buffers and stack sizes are unchanged, and release identity remains `1.1.6`. — Copilot
+
+#### EXEC-175A Release-1.1.7 Conservative Heap Trim Promotion
+
+- Status: completed and promoted to default after hardware validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - starts `EXEC-175` Kconfig tuning with one isolated heap candidate
+  - avoids stack/network-buffer changes in this slice
+  - preserves static internal LLEXT staging and disables external/PSRAM staging
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/prj.conf`
+  - `applocation/NeuroLink/neuro_unit/overlays/heap_trim_candidate.conf`
+  - `applocation/NeuroLink/tests/scripts/test_build_neurolink.sh`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Candidate evidence:
+  - candidate overlay: `applocation/NeuroLink/neuro_unit/overlays/heap_trim_candidate.conf`
+  - default reference: `applocation/NeuroLink/memory-evidence/exec-175a-default-build-reference.summary.txt`
+  - build candidate: `applocation/NeuroLink/memory-evidence/exec-175a-heap-trim-build-candidate.summary.txt`
+  - hardware candidate: `applocation/NeuroLink/memory-evidence/exec-175a-heap-trim-hardware-candidate.summary.txt`
+  - candidate smoke: `applocation/NeuroLink/smoke-evidence/exec-175a-heap-trim-candidate/SMOKE-017B-LINUX-001-20260428-161027.summary.txt`
+  - runtime candidate smoke: `applocation/NeuroLink/smoke-evidence/exec-175a-heap-trim-candidate-runtime/SMOKE-017B-LINUX-001-20260428-161142.summary.txt`
+  - runtime UART: `applocation/NeuroLink/smoke-evidence/serial-diag/exec-175a-heap-trim-runtime-20260428T161116Z.log`
+- Result:
+  - `CONFIG_HEAP_MEM_POOL_SIZE`: `57344` -> `53248`
+  - build `dram0`: `392548` -> `388452` (`-4096B`)
+  - runtime gate: PASS with update heap, app-runtime heap, and static staging allocation evidence
+  - candidate hardware smoke: PASS
+  - promoted default hardware smoke: PASS
+- Preserved defaults:
+  - `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`
+  - `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`
+  - `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`
+  - stack sizes and network buffer counts unchanged
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`72 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue `EXEC-175` with one isolated network-buffer or stack candidate at a time, using the same build/runtime/hardware gate pattern and retaining rollback notes
+
+2026-04-28: Continued release-1.1.7 memory work with `EXEC-174B`, running a bounded provider-specific external-staging hardware candidate instead of changing defaults. Added Linux `--overlay-config` support to `build_neurolink.sh` and collector `--run-build` forwarding, plus `neuro_unit/overlays/external_staging_candidate.conf`, so the candidate can be reproduced in a separate build dir without editing `prj.conf`. Built `build/neurolink_unit_ext_staging_candidate` with `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y` and `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`; build evidence confirmed external memory configured and external staging preference enabled. Hardware candidate flash and prepare succeeded on `/dev/ttyACM0`, and smoke reached query, lease, prepare, and verify successfully with the candidate LLEXT (`21508` bytes), but `deploy_activate` failed with `no_reply`. UART evidence shows the cause: after `llext_load ok`, symbol binding, and `app_runtime_load: invoking app_init`, the board hit `FATAL EXCEPTION`, `CPU 0 EXCCAUSE 2 (instr fetch error)`, `PC 0x3c0c7718 VADDR 0x3c0c7718`, then halted. Extended memory evidence parsing with `runtime_fatal_exceptions`; regenerated `memory-evidence/exec-174b-external-staging-hardware-candidate.summary.txt`, which records `fatal_count=1`, `detail=instr fetch error`, and external candidate gate `passed=False` because runtime `source=external` staging proof was not produced before the fatal. Restored conservative default firmware, prepared the board back to `NETWORK_READY`, and ran a restored-default smoke PASS at `smoke-evidence/exec-174b-restored-default/SMOKE-017B-LINUX-001-20260428-153134.summary.txt`. Conclusion: external ELF staging remains unsafe/experimental on the current DNESP32S3B evidence path; keep release defaults unchanged. Validation passed for full script suite (`9/9`), focused CLI suite (`72 passed`), and `git diff --check`. Release identity remains `1.1.6`. — Copilot
+
+#### EXEC-174B Release-1.1.7 External Staging Hardware Candidate
+
+- Status: completed as unsafe candidate; default remains conservative
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - uses `EXEC-174A` candidate gate on real hardware
+  - evaluates provider-backed external staging without promoting defaults
+  - restores and revalidates the release-default firmware after candidate failure
+- Touched files:
+  - `applocation/NeuroLink/scripts/build_neurolink.sh`
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_build_neurolink.sh`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/neuro_unit/overlays/external_staging_candidate.conf`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added Linux `--overlay-config` support to `build_neurolink.sh`
+  - added collector `--overlay-config` forwarding for `--run-build`
+  - added an external-staging candidate overlay that enables only `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y`
+  - added `runtime_fatal_exceptions` parsing for Zephyr fatal exception evidence
+- Candidate evidence:
+  - build evidence: `applocation/NeuroLink/memory-evidence/exec-174b-external-staging-build-candidate.summary.txt`
+  - hardware candidate evidence: `applocation/NeuroLink/memory-evidence/exec-174b-external-staging-hardware-candidate.summary.txt`
+  - candidate smoke summary: `applocation/NeuroLink/smoke-evidence/exec-174b-external-staging/SMOKE-017B-LINUX-001-20260428-152441.summary.txt`
+  - candidate UART log: `applocation/NeuroLink/smoke-evidence/serial-diag/exec-174b-external-staging-runtime-20260428T152424Z.log`
+- Candidate result:
+  - `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y`
+  - `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`
+  - preflight/query/lease/prepare/verify succeeded
+  - `deploy_activate` failed with `failed_step=deploy_activate`, `failure_exit_code=2`
+  - UART fatal: `EXCCAUSE 2 (instr fetch error)`, `PC 0x3c0c7718`, `VADDR 0x3c0c7718`
+  - candidate gate: `passed=False`, `missing=external_staging_allocation`
+- Recovery evidence:
+  - conservative default firmware reflashed to `/dev/ttyACM0`
+  - board prepared back to `NETWORK_READY`, IPv4 `192.168.2.69`
+  - restored-default smoke PASS: `applocation/NeuroLink/smoke-evidence/exec-174b-restored-default/SMOKE-017B-LINUX-001-20260428-153134.summary.txt`
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`72 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Decision:
+  - do not promote external/PSRAM ELF staging defaults in release-1.1.7 on current DNESP32S3B evidence
+  - keep `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, and static internal staging as the release-default path
+
+2026-04-28: Returned to release-1.1.7 memory optimization with `EXEC-174A`, adding an explicit external-staging candidate gate to the memory evidence collector. The collector now emits `external_staging_candidate_gate` and supports `--require-external-staging-evidence`, which fails unless evidence proves external memory is configured, external ELF staging is preferred by config, and runtime logs show a staging allocation with `source=external`. This keeps external/PSRAM staging opt-in while making future provider-candidate comparisons machine-checkable instead of relying on manual field reading. Added script regressions for the default static-staging baseline and a mocked external-staging candidate PASS. Generated local non-hardware evidence `memory-evidence/exec-174a-external-staging-candidate-gate.summary.txt`, confirming current defaults remain `external_elf_staging_preferred=False`, `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, and candidate gate missing `external_staging_preference,external_staging_allocation`. Validation passed for collector compile, focused collector test, full script suite (`9/9`), focused CLI suite (`72 passed`), and `git diff --check`. No hardware smoke, firmware memory default, external staging default, or release identity changed; release identity remains `1.1.6`. — Copilot
+
+#### EXEC-174A Release-1.1.7 External Staging Candidate Gate
+
+- Status: completed for memory evidence gate hardening
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - returns from `EXEC-173` CLI reliability to release-1.1.7 memory optimization
+  - keeps provider-backed external staging experimental and opt-in
+  - adds a machine-checkable candidate gate before any future default promotion is considered
+  - preserves current firmware defaults and release identity
+- Touched files:
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `external_staging_candidate_gate` to JSON and summary evidence
+  - added `--require-external-staging-evidence` to fail candidate runs without external preference and runtime `source=external` proof
+  - reports candidate providers observed in runtime staging allocations
+  - added regression coverage for default static baseline and mocked external candidate PASS
+- Evidence:
+  - `applocation/NeuroLink/memory-evidence/exec-174a-external-staging-candidate-gate.summary.txt`
+  - current default evidence: `external_elf_staging_preferred=False`, `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`
+  - current non-hardware candidate gate: `passed=False`, `missing=external_staging_preference,external_staging_allocation`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`72 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - run a bounded provider-specific external staging hardware candidate only when ready to compare against the static baseline; keep release defaults unchanged unless the candidate gate and hardware smoke both pass
+
+2026-04-28: Continued release-1.1.7 with `EXEC-173D`, tightening `neuro_cli` and wrapper handling for nested Unit failure status diagnostics. Core CLI query retry classification now preserves the concrete nested failure in `failure_status` while keeping top-level `status=error_reply` for compatibility. This makes JSON output distinguish, for example, a wrapped `not_implemented` reply from a generic error reply. The skill wrapper now inspects nested reply payload statuses before top-level `error_reply`, so a core CLI process that returns `status=error_reply` with a nested `status=not_implemented` still maps to capability-gap exit `3`. Added regressions for preserved `failure_status` and wrapper capability-gap classification through wrapped nested replies. Validation passed for Python compile, focused CLI suite (`72 passed`), full script suite (`9/9`), and `git diff --check`. No hardware smoke, firmware config, memory defaults, external staging defaults, or release identity changed; release identity remains `1.1.6`. — Copilot
+
+#### EXEC-173D Release-1.1.7 CLI Nested Failure Diagnostics
+
+- Status: completed for CLI/wrapper nested failure diagnostics
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - continues `EXEC-173` reliability work after smoke failure summaries
+  - preserves compatibility by keeping top-level `status=error_reply` while adding specific `failure_status`
+  - improves agent/operator exit classification for wrapped nested `not_implemented` replies
+  - keeps hardware state, firmware config, memory defaults, and release identity unchanged
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `result_failure_status()` for concrete nested payload failure extraction
+  - preserved nested failure status in CLI JSON output as `failure_status`
+  - kept top-level query failure status as `error_reply` for existing callers
+  - reordered wrapper classification so nested `not_implemented` remains capability-gap exit `3` even when top-level status is `error_reply`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile neuro_cli/src/neuro_cli.py neuro_cli/scripts/invoke_neuro_cli.py neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`72 passed`)
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - return to release-1.1.7 memory optimization with a bounded external staging candidate comparison, keeping external/PSRAM staging opt-in until hardware evidence supports changing defaults
+
+2026-04-28: Continued release-1.1.7 with `EXEC-173C`, improving Linux smoke operator failure summaries and aligning smoke nested reply classification with the CLI failure-status model. The smoke summary now records `failed_step` and `failure_exit_code`, so bounded smoke failures identify the first failed operator step instead of only reporting `result=FAIL`. The smoke script also treats nested reply payload statuses `error`, `not_implemented`, `invalid_input`, `query_failed`, `no_reply`, and `error_reply` as command failures, matching the `EXEC-173A` principle that transport/process success is not command success. Added lightweight script regression coverage for the smoke summary contract and nested failure-status sentinels, and wired it into the script test runner. Validation passed for smoke shell syntax, full script suite (`9/9`), and `git diff --check`. No hardware smoke, firmware config, memory defaults, external staging defaults, or release identity changed; release identity remains `1.1.6`. — Copilot
+
+#### EXEC-173C Release-1.1.7 Smoke Failure Summary
+
+- Status: completed for operator-facing smoke failure diagnostics
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - continues `EXEC-173` CLI/script reliability after command-path coverage
+  - makes smoke failures easier to triage without requiring a hardware rerun just to identify the failed step
+  - keeps `EXEC-172` closed and avoids hardware/release-marker churn
+- Touched files:
+  - `applocation/NeuroLink/scripts/smoke_neurolink_linux.sh`
+  - `applocation/NeuroLink/tests/scripts/test_smoke_neurolink_linux.sh`
+  - `applocation/NeuroLink/tests/scripts/run_all_tests.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `failed_step` and `failure_exit_code` fields to smoke summaries
+  - added `run_smoke_step()` to centralize first-failure recording
+  - expanded smoke nested reply failure classification to `error`, `not_implemented`, `invalid_input`, `query_failed`, `no_reply`, and `error_reply`
+  - added lightweight script coverage for the smoke summary contract and failure-status sentinels
+- Verification evidence:
+  - `bash -n applocation/NeuroLink/scripts/smoke_neurolink_linux.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue `EXEC-173D` with remaining CLI/operator workflow polish before returning to memory optimization and external staging candidate evaluation
+
+2026-04-28: Continued release-1.1.7 with `EXEC-173B`, expanding `neuro_cli` command-path regression coverage without changing runtime CLI behavior. Added `main()`-level grouped command tests that exercise parser-to-handler-to-query flow for `query device`, `lease acquire`, and `deploy activate`. The new tests verify that nested reply `status=error` still fails the command path, grouped lease acquire sends the expected resource/lease/TTL payload to `neuro/unit-01/cmd/lease/acquire`, and grouped deploy activate sends the expected lease/start-args payload to `neuro/unit-01/update/app/neuro_unit_app/activate`. This keeps `EXEC-173` aligned with CLI reliability while avoiding hardware or release-marker churn. Validation passed for Python compile, focused CLI suite (`70 passed`), full script suite (`8/8`), and `git diff --check`. Release identity remains `1.1.6`. — Copilot
+
+#### EXEC-173B Release-1.1.7 Neuro CLI Command-Path Tests
+
+- Status: completed for focused command-path regression coverage
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - continues `EXEC-173` CLI reliability work after `EXEC-173A` status classification
+  - validates high-frequency operator paths through `main()` instead of handler-only unit seams
+  - does not change hardware state, firmware config, smoke behavior, or release identity
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Coverage added:
+  - `query device` grouped path fails when nested reply payload reports `status=error`
+  - `lease acquire` grouped path sends expected `resource`, `lease_id`, and `ttl_ms`
+  - `deploy activate` grouped path sends expected `lease_id` and `start_args`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile neuro_cli/src/neuro_cli.py neuro_cli/scripts/invoke_neuro_cli.py neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`70 passed`)
+  - `bash tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `git diff --check` => PASS
+- Next action:
+  - continue `EXEC-173C` with CLI/script integration polish around operator-facing smoke/preflight output and failure summaries, keeping hardware smoke optional unless needed for confirmation
+
+2026-04-28: Started release-1.1.7 `EXEC-173` after closing the long `EXEC-172` evidence/tuning loop. `EXEC-173A` returns to the mainline `neuro_cli` reliability objective: command success must not be inferred from transport/process success alone. Added explicit CLI payload failure status classification for `error`, `not_implemented`, `invalid_input`, `query_failed`, `no_reply`, and `error_reply`. Core `neuro_cli.py` now treats nested reply payload failure statuses as command failures through `result_has_reply_error()`, while preserving non-failure operational statuses such as `ready`. The skill wrapper now maps nested `status=not_implemented` replies to capability-gap exit `3` and nested `status=error` replies to command failure exit `2`, even when the process return code is zero. Added focused regressions for nested reply `status=error`, nested `status=not_implemented`, and the existing `status=ready` success path. Validation passed for focused CLI tests (`67 passed`). Release identity remains `1.1.6`. — Copilot
+
+#### EXEC-173A Release-1.1.7 Neuro CLI Status Classification
+
+- Status: completed for focused CLI failure classification
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - closes the `EXEC-172` loop and starts `EXEC-173` for `neuro_cli` reliability
+  - prevents transport/process success from masking Unit-level failure payloads
+  - keeps release identity at `1.1.6`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added explicit payload failure status sets for CLI result classification
+  - tightened core reply classification so nested failure statuses fail the command
+  - preserved non-failure status values such as `ready`
+  - tightened skill wrapper classification for nested reply statuses
+  - mapped nested `status=not_implemented` to wrapper exit `3`
+  - mapped nested `status=error` to wrapper exit `2`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`67 passed`)
+- Next action:
+  - continue `EXEC-173B` with broader CLI command-path tests and script integration coverage for query/deploy/lease workflows
+
+2026-04-28: Continued release-1.1.7 with `EXEC-172J`, running one bounded hardware smoke on the debug-off Unit firmware and adding a stale-LLEXT prevention rule to the Linux smoke path. The first flash attempt failed because `/dev/ttyACM0` was not attached in WSL; `prepare_dnesp32s3b_wsl.sh --attach-only` restored BUSID `8-4` as `/dev/ttyACM0`. The next flash succeeded, but the shortened 20-second prepare capture ended before Wi-Fi reached ready, so it was treated as an invalid smoke attempt rather than a firmware failure. A final bounded pass used the normal prepare window, rebuilt and verified the default LLEXT immediately before deploy (`21400` bytes, build id `neuro_unit_app-1.1.7-dev-cbor-v2`), and hardware smoke passed with query/lease/prepare/verify/activate/event-monitor all `ok`. Evidence: `smoke-evidence/SMOKE-017B-LINUX-001-20260428-131827.{ndjson,summary.txt}` and `memory-evidence/exec-172j-debug-off-hardware-smoke.{json,summary.txt}`. The smoke script now rebuilds the default `build/neurolink_unit/llext/neuro_unit_app.llext` on every smoke run before artifact validation; custom artifact paths still require a non-empty supplied file. Validation passed for `bash -n scripts/smoke_neurolink_linux.sh`, full script suite (`8/8`), and `git diff --check`. This closes the long `EXEC-172` evidence/tuning loop; continue future release-1.1.7 work under the next execution number instead of extending 172 further. Release identity remains `1.1.6`. — Copilot
+
+#### EXEC-172J Release-1.1.7 Debug-Off Hardware Smoke and LLEXT Freshness Rule
+
+- Status: completed for bounded hardware smoke and script guardrail
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice changes smoke artifact freshness behavior and records hardware evidence only, without changing firmware memory defaults, external ELF staging default, runtime allocation policy, Zenoh protocol behavior, CBOR schema, CLI output, or release policy
+- Hardware execution:
+  - refreshed default LLEXT before smoke: source and staged artifacts were `21400` bytes
+  - verified staged artifact contains `neuro_unit_app-1.1.7-dev-cbor-v2`
+  - restored WSL serial device with `prepare_dnesp32s3b_wsl.sh --attach-only`, BUSID `8-4`, serial `/dev/ttyACM0`
+  - flashed debug-off Unit firmware successfully to DNESP32S3B
+  - prepare reached `NETWORK_READY`, IPv4 `192.168.2.69`
+  - smoke result: PASS
+- Smoke evidence:
+  - summary: `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260428-131827.summary.txt`
+  - NDJSON: `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260428-131827.ndjson`
+  - steps passed: `query_device`, `lease_acquire_activate`, `deploy_prepare`, `deploy_verify`, `deploy_activate`, `monitor_events`
+  - deployed size: `21400`
+- Memory/config evidence:
+  - JSON: `applocation/NeuroLink/memory-evidence/exec-172j-debug-off-hardware-smoke.json`
+  - summary: `applocation/NeuroLink/memory-evidence/exec-172j-debug-off-hardware-smoke.summary.txt`
+  - config confirms `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG=n` and `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG_LEVEL=0`
+  - prepare UART capture did not include activation runtime heap/staging/version lines, so this evidence records smoke PASS and config state, not a new runtime evidence gate comparison
+- Script guardrail:
+  - `smoke_neurolink_linux.sh` now rebuilds the default LLEXT artifact on every smoke run before artifact validation
+  - custom `--artifact-file` paths remain caller-supplied and must be non-empty
+- Verification evidence:
+  - `bash -n scripts/smoke_neurolink_linux.sh` => PASS
+  - `bash tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `git diff --check` => PASS
+- Loop-control note:
+  - stop extending `EXEC-172`; continue the next release-1.1.7 development slice under a new execution number
+
+2026-04-28: Continued release-1.1.7 with `EXEC-172I`, applying the first WS-3/WS-6 pressure-tuning change after `EXEC-172H` made dropped-message notices measurable. The Unit release-default path now keeps zenoh-pico low-level debug disabled: `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG` defaults to `n`, the DNESP32S3B board profile no longer forces debug level 3, and `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG_LEVEL` resolves to `0` in the rebuilt Unit `.config`. The diagnostic switch remains available for explicit transport debugging. This does not change Zenoh protocol behavior, memory defaults, external ELF staging default, LLEXT debug level, CBOR schema, CLI behavior, or release identity. Extended memory evidence config capture to include the zenoh-pico debug keys and regenerated `memory-evidence/exec-172i-zenoh-debug-default-off.{json,summary.txt}` showing provider `esp-spiram`, `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG=n`, and `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG_LEVEL=0`. Validation passed for collector compile, focused collector test, full script suite (`8/8`), Unit firmware build, editor diagnostics, and whitespace. Release identity remains `1.1.6`. — Copilot
+
+#### EXEC-172I Release-1.1.7 Zenoh-Pico Debug Default-Off
+
+- Status: completed for local build/config tuning
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice reduces default low-level diagnostic logging only and does not change Zenoh protocol behavior, memory defaults, external ELF staging default, runtime allocation policy, LLEXT debug level, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/Kconfig`
+  - `applocation/NeuroLink/neuro_unit/boards/dnesp32s3b_esp32s3_procpu.conf`
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - changed `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG` default from `y` to `n`
+  - removed DNESP32S3B board-profile forcing of zenoh-pico debug level 3
+  - kept the explicit Kconfig switch and level option available for diagnostic builds
+  - added zenoh-pico debug keys to memory evidence config capture
+  - added collector regression coverage for debug-off config values
+- Build/config evidence:
+  - rebuilt Unit `.config` has `# CONFIG_NEUROLINK_ZENOH_PICO_DEBUG is not set`
+  - rebuilt Unit `.config` has `CONFIG_NEUROLINK_ZENOH_PICO_DEBUG_LEVEL=0`
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-172i-zenoh-debug-default-off.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-172i-zenoh-debug-default-off.summary.txt`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `bash tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `bash scripts/build_neurolink.sh --preset unit --no-c-style-check` => PASS
+  - `git diff --check` => PASS
+- Next action:
+  - run hardware smoke with the debug-off firmware path and compare `runtime_drop_notices` against `EXEC-172H` before deciding whether further log-buffer or logger-mode tuning is needed
+
+2026-04-28: Continued release-1.1.7 with `EXEC-172H`, adding structured evidence for activate-time dropped-message notices without treating them as runtime evidence loss. Extended `collect_neurolink_memory_evidence.py` to strip ANSI control sequences from runtime logs, parse `--- N messages dropped ---` lines into `runtime_drop_notices`, and summarize them as `zenoh_runtime_pressure_notice_not_evidence_loss`. The runtime evidence gate remains unchanged and still requires only update heap snapshots, app-runtime heap snapshots, and staging allocation evidence. The collector regression now covers a staging allocation line with an ANSI reset suffix plus a `1571 messages dropped` notice. Regenerated hardware evidence at `memory-evidence/exec-172h-runtime-drop-notice-evidence.json` and `.summary.txt`; summary records `total_dropped_messages=1571`, clean `provider=esp-spiram`, and `runtime_evidence_gate.passed=True`. Validation passed for collector compile, focused collector test, full script suite (`8/8`), editor diagnostics, and whitespace. Release identity remains `1.1.6`; no firmware behavior, memory default, staging policy, Zenoh behavior, CBOR schema, or CLI command behavior changed. — Copilot
+
+#### EXEC-172H Release-1.1.7 Runtime Drop Notice Evidence
+
+- Status: completed for evidence tooling and terminology alignment
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice changes evidence parsing only and does not change firmware behavior, memory defaults, runtime allocation policy, Zenoh behavior, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - strips ANSI control sequences before parsing runtime log evidence fields
+  - parses `--- N messages dropped ---` lines into `runtime_drop_notices`
+  - records dropped-message notices with interpretation `zenoh_runtime_pressure_notice_not_evidence_loss`
+  - keeps `runtime_evidence_gate` semantics unchanged
+- Evidence:
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-172h-runtime-drop-notice-evidence.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-172h-runtime-drop-notice-evidence.summary.txt`
+  - summary highlights: `total_dropped_messages=1571`, `interpretation=zenoh_runtime_pressure_notice_not_evidence_loss`, staging `provider=esp-spiram`, `runtime_evidence_gate.passed=True`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `bash tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `git diff --check` => PASS
+- Next action:
+  - continue WS-3/WS-6 with evidence-backed review of activate-time Zenoh/runtime pressure signals and logging configuration, without treating dropped-message notices as missing evidence logs
+
+2026-04-28: Continued release-1.1.7 with `EXEC-172G`, turning the stale/empty staged LLEXT artifact risk found during `EXEC-172F` into a script-level guardrail. `build_neurolink.sh --preset unit-app` now fails if the source app artifact or staged `build/neurolink_unit/llext/neuro_unit_app.llext` is missing or zero bytes after build/copy. Linux preflight and smoke now require a non-empty artifact; preflight reports `artifact_invalid` for missing/empty inputs and smoke auto-rebuilds the default artifact before failing with a clearer message. Added a preflight regression for an empty custom artifact. Validation passed for focused preflight/build script tests, full script suite (`8/8`), C style wrapper, and whitespace. Release identity remains `1.1.6`; no firmware memory defaults, staging policy, Zenoh behavior, CBOR schema, or CLI release marker changed. — Copilot
+
+#### EXEC-172G Release-1.1.7 LLEXT Artifact Freshness Guard
+
+- Status: completed for local script guardrail
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice changes build/preflight/smoke validation only and does not change firmware memory defaults, external ELF staging default, runtime allocation policy, Zenoh behavior, CBOR schema, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/scripts/build_neurolink.sh`
+  - `applocation/NeuroLink/scripts/preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/scripts/smoke_neurolink_linux.sh`
+  - `applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime.c` (format-only cleanup required by style check)
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added non-empty source and staged artifact checks after `unit-app` EDK build/copy
+  - changed Linux preflight artifact readiness from existence-only to non-empty file validation
+  - changed Linux smoke startup guard to auto-rebuild the default artifact when it is missing or empty and fail clearly if it remains invalid
+  - added a regression test proving an empty custom LLEXT artifact fails preflight with `artifact_invalid`
+- Verification evidence:
+  - `bash tests/scripts/test_preflight_neurolink_linux.sh` => PASS
+  - `bash tests/scripts/test_build_neurolink.sh` => PASS
+  - `bash tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `git diff --check` => PASS
+- Next action:
+  - continue WS-3/WS-6 investigation into activate-time Zenoh/runtime drop notices and pressure signals now that stale/empty artifact deployment is guarded before smoke/deploy
+
+2026-04-28: Continued release-1.1.7 with `EXEC-172F`, running the conservative-default hardware path on DNESP32S3B and adding an explicit LLEXT app version print to rule out stale app deployment during activate/debug. After flash, the board initially reached only `ADAPTER_READY` with no IPv4; `prepare_dnesp32s3b_wsl.sh` restored `NETWORK_READY` at `192.168.2.69` and query status `ok`. A stale/staged artifact problem was found and corrected: `build/neurolink_unit/llext/neuro_unit_app.llext` had been `0` bytes while the source app artifact was `20144` bytes; rebuilding `unit-app` restored a nonzero staged artifact. The app-side marker was then bumped to `1.1.7-dev`, manifest patch `1.1.7`, and the app now prints `neuro_unit_app version stage=<init|start> version=1.1.7-dev build_id=neuro_unit_app-1.1.7-dev-cbor-v2 manifest=1.1.7`. Rebuilt source and staged LLEXT artifacts are both `21400` bytes and contain the new build id string. Hardware smoke passed with prepare/verify/activate `ok`, and UART confirmed the board loaded the new app at start. Activate-time dropped-message notices still appear with the fresh app, so stale LLEXT was ruled out; these notices are treated as Zenoh/runtime pressure signals rather than proof of missing evidence logs. The gated collector passes with update heap, app-runtime heap, and staging allocation evidence. Release identity remains `1.1.6`. — Copilot
+
+#### EXEC-172F Release-1.1.7 Hardware App Version Evidence
+
+- Status: completed for stale-app exclusion and conservative hardware deploy proof
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice changes the sample LLEXT app's development marker and adds board-visible version prints, but does not promote the CLI release marker, enable external ELF staging by default, change CBOR schema, or change memory defaults
+- Touched files:
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime.c`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Hardware/evidence summary:
+  - post-flash prepare: `applocation/NeuroLink/smoke-evidence/serial-diag/serial-capture-20260427T162833Z.log`, `NETWORK_READY`, IP `192.168.2.69`, preflight ready, query `ok`
+  - smoke: `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260427-163038.ndjson`, summary `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260427-163038.summary.txt`, result `PASS`
+  - gated smoke: `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260427-164055.ndjson`, summary `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260427-164055.summary.txt`, result `PASS`
+  - version UART: `applocation/NeuroLink/smoke-evidence/serial-diag/serial-app-version-capture-20260427T163009Z.log`
+  - runtime gate UART: `applocation/NeuroLink/smoke-evidence/serial-diag/serial-runtime-gate-capture-20260427T164013Z.log`
+  - deployed artifact: `build/neurolink_unit/llext/neuro_unit_app.llext`, size `21400`, contains `neuro_unit_app-1.1.7-dev-cbor-v2`
+  - board print observed: `neuro_unit_app version stage=start version=1.1.7-dev build_id=neuro_unit_app-1.1.7-dev-cbor-v2 manifest=1.1.7`
+  - memory evidence: `applocation/NeuroLink/memory-evidence/exec-172f-hardware-runtime-default-staging.json`, summary `applocation/NeuroLink/memory-evidence/exec-172f-hardware-runtime-default-staging.summary.txt`, `runtime_evidence_gate.passed=True`
+- Findings:
+  - stale/empty staged artifact risk was real and has an evidence trail; current staged artifact is fresh and nonzero
+  - activate-time dropped-message notices remain visible even with the fresh app, so stale LLEXT execution is not the root cause; per project debugging context, treat these as Zenoh/runtime drop notices rather than evidence-log loss
+  - the collector has stable runtime data: update heap snapshots `5`, app-runtime heap snapshot `1`, staging allocation `1`, staging `bytes=21400`, `source=static`, `provider=esp-spiram`
+- Next action:
+  - continue WS-3/WS-6 investigation into activate-time Zenoh/runtime pressure signals and evaluate whether diagnostics should be tuned after the evidence gate remains repeatable
+
+2026-04-27: Continued release-1.1.7 with `EXEC-172E`, adding an opt-in runtime evidence gate to the memory evidence collector before the next hardware smoke/deploy cycle. Added `--require-runtime-evidence`, `runtime_evidence_gate` JSON output, and `[runtime_evidence_gate]` summary output. When enabled, the collector now requires at least one `update` heap snapshot, one `app-runtime` heap snapshot, and one `app-runtime ELF staging allocation` row; missing evidence returns exit code `2` after writing evidence artifacts for inspection. Normal baseline collection remains non-failing when runtime logs are absent. Validation passed for collector compile, focused evidence test with both pass/fail gate cases, full script suite (`8/8`), and whitespace. Evidence was captured at `memory-evidence/exec-172e-runtime-evidence-gate.json` plus `.summary.txt` with `dram0=392380`, `iram0=66216`, `flash=673756`, `ext_ram=2847776`, `runtime_evidence_gate.required=False`, and missing runtime fields recorded for the no-runtime-log baseline. — Copilot
+
+#### EXEC-172E Release-1.1.7 Runtime Evidence Gate
+
+- Status: completed for opt-in runtime evidence gating
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice changes only evidence tooling and does not change firmware behavior, heap/stack/network settings, static ELF buffer size, external staging default, allocation fallback order, Zenoh behavior, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `--require-runtime-evidence` to the collector
+  - added `runtime_evidence_gate` fields to JSON and summary output
+  - gate pass requires update heap snapshot, app-runtime heap snapshot, and staging allocation evidence
+  - gate failure exits with code `2` after writing JSON/summary artifacts
+  - normal baseline collection remains non-failing when runtime logs are not supplied
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `cd applocation/NeuroLink && git diff --check` => PASS
+- Memory evidence:
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-172e-runtime-evidence-gate.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-172e-runtime-evidence-gate.summary.txt`
+  - summary highlights: `release_target=1.1.6`, `board=dnesp32s3b`, `soc=esp32s3`, `provider=esp-spiram`, `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, `external_elf_staging_preferred=False`, `dram0=392380`, `iram0=66216`, `flash=673756`, `ext_ram=2847776`, `runtime_evidence_gate.required=False`, `runtime_evidence_gate.passed=False`
+- Next action:
+  - use `--require-runtime-evidence` during hardware smoke/deploy log intake; if hardware is unavailable, proceed to the next local-safe memory/code workstream slice without changing memory defaults
+
+2026-04-27: Continued release-1.1.7 with `EXEC-172D`, adding provider-aware runtime diagnostics for LLEXT ELF staging without changing the default allocation policy. Added `app_runtime_elf_staging_provider_str()` and a stable runtime log line after staging allocation: `app-runtime ELF staging allocation path=<path> bytes=<size> source=<source> provider=<provider>`. Extended the memory evidence collector to parse these lines into `runtime_staging_allocations` and added focused fixture coverage for `source=static` plus `provider=esp-spiram`. Defaults remain unchanged: `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, static ELF staging remains the safe path, and malloc remains fallback. Validation passed for formatting, collector compile, focused evidence test, native Unit tests, ESP32-S3 Unit build, C style (`0` errors), and whitespace. Evidence was captured at `memory-evidence/exec-172d-staging-provider-diagnostics.json` plus `.summary.txt` with `dram0=392380`, `iram0=66216`, `flash=673756`, `ext_ram=2847776`; runtime staging allocations are `not_available` until a hardware/runtime log is supplied. — Copilot
+
+#### EXEC-172D Release-1.1.7 Staging Provider Runtime Diagnostics
+
+- Status: completed for runtime/evidence observability
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice adds provider-aware staging diagnostics and collector parsing, but does not change heap/stack/network settings, static ELF buffer size, external staging default, allocation fallback order, Zenoh behavior, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/include/runtime/app_runtime_elf_staging.h`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime_elf_staging.c`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_elf_staging.c`
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `app_runtime_elf_staging_provider_str()` to expose the active memory provider label to runtime diagnostics
+  - added a stable `app-runtime ELF staging allocation` log line with `path`, `bytes`, `source`, and `provider`
+  - extended memory evidence parsing and summaries with `runtime_staging_allocations`
+  - extended native staging tests for provider-label reporting and used a test-local static-buffer-size constant matching the native test config so editor analysis remains clean outside Zephyr's generated Kconfig context
+  - extended collector fixture coverage for staging allocation log parsing
+- Verification evidence:
+  - `clang-format -i` on touched C/H runtime files => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --no-c-style-check` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`errors=0`, `warnings=31`)
+  - `cd applocation/NeuroLink && git diff --check` => PASS
+- Memory evidence:
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-172d-staging-provider-diagnostics.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-172d-staging-provider-diagnostics.summary.txt`
+  - summary highlights: `release_target=1.1.6`, `board=dnesp32s3b`, `soc=esp32s3`, `provider=esp-spiram`, `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, `external_elf_staging_preferred=False`, `dram0=392380`, `iram0=66216`, `flash=673756`, `ext_ram=2847776`, `runtime_staging_allocations=not_available`
+- Next action:
+  - run hardware smoke/deploy with runtime log capture and feed the log to the collector so staging source/provider, heap snapshots, activation health, query health, and callback freshness can be evaluated together
+
+2026-04-27: Continued release-1.1.7 with `EXEC-172C`, adding the generic external-memory staging Kconfig compatibility layer required by the multi-chip plan. Introduced `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER` as the runtime policy symbol for provider-backed external LLEXT ELF staging and kept `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER` as an ESP SPIRAM compatibility alias that selects the generic symbol when enabled. Updated `app_runtime_elf_staging.c` to gate external provider allocation on the generic symbol, explicitly set the production Unit default to `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, extended memory evidence to capture both generic and legacy preference values, and updated the collector regression fixture. Defaults remain unchanged: both generic external staging and legacy PSRAM staging are `n`, static ELF staging remains the safe path, and malloc remains fallback. Validation passed for collector compile, focused evidence test, full script suite (`8/8`), native Unit tests, ESP32-S3 Unit build, C style (`0` errors), and whitespace. Evidence was captured at `memory-evidence/exec-172c-generic-external-staging-kconfig.json` plus `.summary.txt` with `dram0=392380`, `iram0=66216`, `flash=673676`, `ext_ram=2847776`, `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, and `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`. — Copilot
+
+#### EXEC-172C Release-1.1.7 Generic External Staging Kconfig
+
+- Status: completed for Kconfig compatibility layer
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice introduces a generic external-memory staging preference symbol and preserves the legacy ESP PSRAM alias, but does not change default heap/stack/network settings, static ELF buffer size, external staging default, allocation fallback order under the current default, Zenoh behavior, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/Kconfig`
+  - `applocation/NeuroLink/neuro_unit/prj.conf`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/Kconfig`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/prj.conf`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime_elf_staging.c`
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER` with default `n`
+  - kept `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER` as a legacy ESP SPIRAM alias that selects the generic external staging preference when enabled
+  - updated runtime staging to use the generic external staging symbol for provider-backed allocation
+  - extended evidence collection so both generic and legacy preference symbols are captured and `external_elf_staging_preferred` reflects either one
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --no-c-style-check` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`errors=0`, `warnings=31`)
+  - `cd applocation/NeuroLink && git diff --check` => PASS
+- Memory evidence:
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-172c-generic-external-staging-kconfig.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-172c-generic-external-staging-kconfig.summary.txt`
+  - summary highlights: `release_target=1.1.6`, `board=dnesp32s3b`, `soc=esp32s3`, `provider=esp-spiram`, `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, `external_elf_staging_preferred=False`, `dram0=392380`, `iram0=66216`, `flash=673676`, `ext_ram=2847776`
+- Next action:
+  - add provider-aware experimental external-staging candidate evidence only after hardware logs and runtime heap snapshots are ready to prove activation/query/callback safety
+
+2026-04-27: Continued release-1.1.7 with `EXEC-172B`, starting the port-layer memory provider contract needed for multi-chip memory optimization. Added `neuro_unit_port_memory.h` plus `neuro_unit_port_set_memory_ops()` / `neuro_unit_port_get_memory_ops()`, wired the generic port provider to install optional board memory ops, and moved LLEXT ELF external staging allocation out of `app_runtime_elf_staging.c` into the port contract. DNESP32S3B now exposes an `esp-spiram` memory provider backed by Zephyr shared multi-heap external memory when available. The default staging policy is unchanged: `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, static ELF staging remains the safe default, and malloc remains the fallback. Native Unit tests passed (`123/123`), ESP32-S3 Unit build passed, C style had `0` errors, whitespace check passed, and memory evidence was captured at `memory-evidence/exec-172b-port-memory-provider-contract.json` plus `.summary.txt` with `dram0=392380`, `iram0=66216`, `flash=673676`, `ext_ram=2847776`. — Copilot
+
+#### EXEC-172B Release-1.1.7 Port Memory Provider Contract
+
+- Status: completed for first memory provider contract migration
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice introduces the port memory provider contract and migrates external staging allocation behind it, but does not change heap/stack/network defaults, static ELF buffer size, external staging preference, allocation fallback order under the current default, Zenoh behavior, CBOR schema, CLI command output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/include/port/neuro_unit_port_memory.h`
+  - `applocation/NeuroLink/neuro_unit/include/port/neuro_unit_port.h`
+  - `applocation/NeuroLink/neuro_unit/include/runtime/app_runtime_elf_staging.h`
+  - `applocation/NeuroLink/neuro_unit/src/port/neuro_unit_port_contract.c`
+  - `applocation/NeuroLink/neuro_unit/src/port/neuro_unit_port_generic.c`
+  - `applocation/NeuroLink/neuro_unit/src/port/neuro_unit_port_generic_dnesp32s3b.c`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime_elf_staging.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/port/test_neuro_unit_port_fs_contract.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_elf_staging.c`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added a port memory ops table with provider label, external allocation hook, and external free hook
+  - added contract setters/getters and reset-to-empty behavior alongside existing fs/network port contracts
+  - added a generic provider weak hook for board memory ops
+  - added DNESP32S3B board memory ops backed by `shared_multi_heap_aligned_alloc(SMH_REG_ATTR_EXTERNAL, ...)` and `shared_multi_heap_free()` when `CONFIG_SHARED_MULTI_HEAP` is available
+  - changed `app_runtime_elf_staging.c` to request external staging through port memory ops when the experimental external staging preference is enabled
+  - renamed the staging source string from PSRAM-specific `psram` to generic `external`, while keeping `APP_RUNTIME_ELF_BUFFER_PSRAM` as an alias for compatibility
+- Guardrail coverage:
+  - port contract test now covers memory ops reset-to-empty behavior and callback forwarding
+  - staging test now covers the generic external source string and legacy PSRAM alias behavior
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`123/123` tests)
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --no-c-style-check` => PASS
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`errors=0`, `warnings=31`)
+  - `cd applocation/NeuroLink && git diff --check` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence --label exec-172b-port-memory-provider-contract` => PASS
+- Memory evidence:
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-172b-port-memory-provider-contract.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-172b-port-memory-provider-contract.summary.txt`
+  - summary highlights: `release_target=1.1.6`, `board=dnesp32s3b`, `soc=esp32s3`, `provider=esp-spiram`, `dram0=392380`, `iram0=66216`, `flash=673676`, `ext_ram=2847776`
+- Next action:
+  - add a provider-aware experimental external-staging candidate only after hardware logs and runtime heap snapshots can prove activation/query/callback safety for that provider
+
+2026-04-27: Continued release-1.1.7 with `EXEC-172A`, realigning the memory optimization track with NeuroLink's multi-chip goal. Updated the release plan so DNESP32S3B/ESP32-S3 is treated as the first proof provider rather than the architecture, and reframed PSRAM as one external-memory backend under a future port/provider capability model. Extended `scripts/collect_neurolink_memory_evidence.py` to record platform and memory capability evidence (`board`, `board_target`, `board_qualifiers`, `soc`, provider label, external-memory flags, external heap size, static ELF staging size, and external staging preference) plus optional `--memory-provider` override. Updated the collector script test with ESP32-S3 fixture capability data. This slice is evidence scaffolding only: no firmware behavior, memory defaults, Kconfig defaults, allocation policy, Zenoh behavior, CBOR schema, CLI output, or release identity changed. — Copilot
+
+#### EXEC-172A Release-1.1.7 Multi-Chip Memory Capability Evidence
+
+- Status: completed for plan/doc sync and evidence scaffolding
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice extends evidence and planning only and does not change firmware runtime behavior, heap/stack/network defaults, static ELF buffer size, external-memory/PSRAM staging preference, Kconfig defaults, allocation fallback order, Zenoh behavior, CBOR schema, or CLI command output
+- Touched files:
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added platform evidence fields for board, board target, board qualifiers, and SoC
+  - added memory capability evidence fields for provider label, external-memory configuration, external heap size, shared multi-heap, ESP SPIRAM, Wi-Fi/network external allocation flags, external ELF staging preference, and static ELF staging size
+  - added `--memory-provider` to label candidate memory-policy experiments without relying only on inferred Kconfig values
+  - updated the collector regression fixture so ESP32-S3 PSRAM is represented as provider evidence, not as a release-wide architecture assumption
+- Plan correction:
+  - release-1.1.7 memory work is now explicitly multi-chip; DNESP32S3B/ESP32-S3 remains the first real-board proof target, while unknown or unproven providers must retain safe fallback behavior
+- Verification evidence:
+  - focused validation already passed after adding `CONFIG_ESP_SPIRAM` capture: `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `cd applocation/NeuroLink && git diff --check` => PASS
+- Next action:
+  - continue toward a port-layer memory provider contract before changing allocation behavior
+
+2026-04-27: Continued release-1.1.7 with `EXEC-171B`, closing the experiment-data loop for runtime memory diagnostics. Extended `scripts/collect_neurolink_memory_evidence.py` with `--runtime-log` support and parsing for `update heap snapshot` plus `app-runtime heap snapshot` log lines, so hardware smoke/deploy logs can be converted into structured `runtime_heap_snapshots` evidence instead of relying on manual grep. Updated the collector regression test with representative prepare/download and LLEXT staging heap snapshot lines, and verified Python compile plus all script tests. — Copilot
+
+#### EXEC-171B Release-1.1.7 Runtime Heap Snapshot Evidence Parser
+
+- Status: completed for parser/test support
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice changes evidence tooling only and does not change firmware runtime behavior, memory defaults, Kconfig defaults, Zenoh behavior, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `--runtime-log` support, repeatable for multiple runtime logs
+  - parser now extracts `update heap snapshot stage=... free=... allocated=... max_allocated=...`
+  - parser now extracts `app-runtime heap snapshot stage=... path=... free=... allocated=... max_allocated=...`
+  - generated JSON includes `runtime_heap_snapshots`, and text summaries include a `[runtime_heap_snapshots]` section
+  - build logs are also scanned for heap snapshots when supplied through `--build-log` or generated by `--run-build`, which keeps local experiments simple
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+- Next action:
+  - during the next hardware smoke/deploy run, feed captured UART/router/smoke logs to `collect_neurolink_memory_evidence.py --runtime-log <log>` and compare prepare/download snapshots with app-runtime staging snapshots before selecting memory tuning candidates
+
+2026-04-27: Continued release-1.1.7 with `EXEC-171`, starting conservative app-runtime memory diagnostics before attempting any tuning. Added runtime heap snapshot logs around Zenoh artifact prepare/download progress and app-runtime LLEXT ELF staging allocation/read points, using existing `CONFIG_SYS_HEAP_RUNTIME_STATS=y` and `malloc_runtime_stats_get()` so future hardware smoke can correlate heap pressure with prepare chunks and activate staging. No heap, stack, PSRAM, static ELF buffer, Zenoh, CBOR, CLI, or release-identity defaults were changed. Experiment evidence `memory-evidence/exec-171-runtime-memory-diagnostics.summary.txt` preserved `dram0_0_seg=395152B/399108B (99.01%)`, `iram0_0_seg=67816B/415492B (16.32%)`, and `section_total_dram0=392376`; FLASH rose from the clean 1.1.6 baseline `808004B` to `808348B` (+344B) for the diagnostics log points. — Copilot
+
+#### EXEC-171 Release-1.1.7 Runtime Memory Diagnostics
+
+- Status: completed for first diagnostic instrumentation slice
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice adds measurement points only and does not change `CONFIG_HEAP_MEM_POOL_SIZE`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER`, stack sizes, network buffers, update semantics, Zenoh routes, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/src/neuro_unit.c`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime.c`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime_elf_staging.c` (format/warning cleanup from active file state)
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_elf_staging.c` (format cleanup from active file state)
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added `log_update_memory_snapshot()` and wired the existing Zenoh artifact download `log_memory_snapshot` callback so prepare/download progress can report heap stats during hardware smoke
+  - added `app_runtime_log_malloc_snapshot()` around LLEXT artifact staging allocation/read points in `load_file_to_ram()`
+  - each snapshot records stage plus malloc heap `free_bytes`, `allocated_bytes`, and `max_allocated_bytes` when `CONFIG_SYS_HEAP_RUNTIME_STATS` is enabled
+  - cleaned the PSRAM-disabled build warning in `app_runtime_elf_staging.c` by scoping the temporary PSRAM pointer inside the PSRAM-enabled branch
+- Experiment data:
+  - clean 1.1.6 baseline build summary: `FLASH=808004B/16776960B (4.82%)`, `iram0_0_seg=67816B/415492B (16.32%)`, `dram0_0_seg=395152B/399108B (99.01%)`
+  - EXEC-171 diagnostic build summary: `FLASH=808348B/16776960B (4.82%)`, `iram0_0_seg=67816B/415492B (16.32%)`, `dram0_0_seg=395152B/399108B (99.01%)`
+  - section totals after EXEC-171: `dram0=392376`, `iram0=66216`, `flash=673636`, `ext_ram=2847776`
+  - interpretation: diagnostics add about `344B` to reported FLASH and do not change reported DRAM/IRAM usage, making them acceptable as temporary experimental observability for the next hardware run
+- Verification evidence:
+  - `clang-format -i applocation/NeuroLink/neuro_unit/src/runtime/app_runtime_elf_staging.c applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_elf_staging.c applocation/NeuroLink/neuro_unit/src/runtime/app_runtime.c applocation/NeuroLink/neuro_unit/src/neuro_unit.c` => PASS
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --no-c-style-check` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence --build-log applocation/NeuroLink/memory-evidence/exec-171-runtime-memory-diagnostics.build.log --label exec-171-runtime-memory-diagnostics` => PASS
+- Memory evidence:
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-171-runtime-memory-diagnostics.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-171-runtime-memory-diagnostics.summary.txt`
+  - generated build log: `applocation/NeuroLink/memory-evidence/exec-171-runtime-memory-diagnostics.build.log`
+- Open risks:
+  - runtime heap snapshot values still require real-board smoke/deploy evidence; local build evidence only proves the instrumentation has negligible build-time DRAM/IRAM impact
+- Next action:
+  - run a hardware smoke/deploy pass with this diagnostic build when board access is available, then use the observed prepare/activate heap snapshots to choose or reject concrete memory tuning candidates
+
+2026-04-27: Continued release-1.1.7 with `EXEC-170B`, adding direct guardrails for the LLEXT ELF staging buffer before any memory-default optimization. Extracted the staging allocation/release/source-string logic from `app_runtime.c` into `app_runtime_elf_staging.c` plus `app_runtime_elf_staging.h`, leaving the production fallback order unchanged: PSRAM when explicitly enabled and available, then the static ELF buffer, then malloc. Added native_sim coverage for null source rejection, exact-fit static allocation/release, busy-static malloc fallback, and oversized malloc fallback. Production Unit build, native_sim, script tests, C style, whitespace, and editor diagnostics passed. Captured memory evidence at `memory-evidence/exec-170b-elf-staging-seam.json` and `.summary.txt`; defaults remain `RELEASE_TARGET=1.1.6`, `CONFIG_HEAP_MEM_POOL_SIZE=57344`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, with `section_total_dram0=392376`. — Copilot
+
+#### EXEC-170B Release-1.1.7 LLEXT ELF Staging Guardrails
+
+- Status: completed for direct staging allocation guardrails
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice extracts and tests the existing LLEXT ELF staging allocation policy without changing default heap size, static ELF buffer size, PSRAM preference, Zenoh behavior, update semantics, CBOR schema, CLI output, or hardware release policy
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/include/runtime/app_runtime_elf_staging.h`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime_elf_staging.c`
+  - `applocation/NeuroLink/neuro_unit/src/runtime/app_runtime.c`
+  - `applocation/NeuroLink/neuro_unit/CMakeLists.txt`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/Kconfig`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/prj.conf`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/CMakeLists.txt`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_elf_staging.c`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - moved the ELF staging buffer source enum, source-string helper, allocation helper, and release helper into a small runtime module that can be tested without compiling full LLEXT runtime in native_sim
+  - preserved the existing production fallback order: opt-in PSRAM first, static internal staging buffer second, malloc last
+  - added direct native_sim guardrails for exact-fit static buffer use, static release, malloc fallback while the static buffer is busy, oversized malloc fallback, and null source rejection
+  - configured the native_sim test app with a small `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=64` test buffer so the fallback behavior is deterministic and cheap to exercise
+- Verification evidence:
+  - `clang-format -i applocation/NeuroLink/neuro_unit/include/runtime/app_runtime_elf_staging.h applocation/NeuroLink/neuro_unit/src/runtime/app_runtime_elf_staging.c applocation/NeuroLink/neuro_unit/src/runtime/app_runtime.c applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_elf_staging.c` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --no-c-style-check` => PASS
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=8`, `script_tests_failed=0`)
+  - `bash applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh` => PASS (`errors=0`, `warnings=31`)
+  - `cd applocation/NeuroLink && git diff --check` => PASS
+  - editor diagnostics for touched runtime/test files => PASS
+- Memory evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --run-build --no-c-style-check --build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence --label exec-170b-elf-staging-seam` => PASS
+  - generated JSON: `applocation/NeuroLink/memory-evidence/exec-170b-elf-staging-seam.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/exec-170b-elf-staging-seam.summary.txt`
+  - summary highlights: `release_target=1.1.6`, `CONFIG_HEAP_MEM_POOL_SIZE=57344`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, `dram0=392376`, `iram0=66216`, `flash=673316`, `ext_ram=2847776`
+- Open risks:
+  - this slice protects allocation policy only; real-board deploy/query/callback evidence is still required before promoting any future PSRAM or heap/stack tuning candidate
+- Next action:
+  - continue to `EXEC-171` with conservative app-runtime memory diagnostics/optimization candidates, using the new staging guardrails and memory evidence as the baseline
+
+2026-04-27: Continued release-1.1.7 with `EXEC-170`, adding activation guardrail tests before app-runtime/LLEXT staging optimization. Reused and expanded the native_sim app-runtime test stubs so update-service tests can observe `app_runtime_load/start/unload` calls, return-code injection, last load path, last start args, and runtime operation order. Added update-service guardrails proving activate unloads an already-loaded app before replacement load/start, load failure skips start and callback registration while marking update failed, and decoded context `start_args` outrank legacy payload JSON. native_sim Unit passed after formatting. — Copilot
+
+#### EXEC-170 Release-1.1.7 App Runtime Activate Guardrails
+
+- Status: completed for activation service guardrails
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - this slice adds native_sim guardrail coverage only; it does not change firmware runtime behavior, LLEXT staging allocation, memory defaults, Kconfig defaults, Zenoh routes, CBOR schema, CLI output, or release identity
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_cmd_capability.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/lifecycle/test_neuro_unit_update_service.c`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - expanded app-runtime native_sim stubs with observable load/start/unload counters, return-code injection, last path/start-args capture, and operation sequencing
+  - added a guardrail that activate unloads an existing runtime app before loading and starting the replacement app
+  - added a guardrail that activate load failure does not proceed to start or callback registration and leaves the update manager in `NEURO_UPDATE_STATE_FAILED`
+  - added a guardrail that decoded request-field `start_args` are preferred over legacy payload JSON during activate
+- Verification evidence:
+  - `clang-format -i applocation/NeuroLink/neuro_unit/tests/unit/src/runtime/test_app_runtime_cmd_capability.c applocation/NeuroLink/neuro_unit/tests/unit/src/lifecycle/test_neuro_unit_update_service.c` => PASS
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`PROJECT EXECUTION SUCCESSFUL`)
+- Open risks:
+  - full `app_runtime.c` LLEXT buffer allocation internals are still not directly unit-tested in native_sim; this slice protects the update activation behavior around that boundary
+- Next action:
+  - continue `EXEC-170` or split `EXEC-170B` for direct app-runtime staging test seams if needed, then move to conservative staging diagnostics/optimization candidates
+
+2026-04-27: Completed the clean rebuild baseline portion of release-1.1.7 `EXEC-169`. Ran the memory evidence collector with `--run-build --pristine-always --no-c-style-check` against `build/neurolink_unit`; the command rebuilt Unit firmware and generated `memory-evidence/baseline-1.1.6-clean-build.json` plus `.summary.txt`. The clean baseline preserved `RELEASE_TARGET=1.1.6`, `CONFIG_HEAP_MEM_POOL_SIZE=57344`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`, `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, and reported `dram0_0_seg=395152B/399108B (99.01%)` from the build memory summary. Section totals from `zephyr.stat` were `dram0=392376`, `iram0=66216`, `flash=673292`, and `ext_ram=2847776`. — Copilot
+
+2026-04-27: Started release-1.1.7 implementation with `EXEC-169`, adding repeatable memory evidence collection before changing any Unit memory defaults. Added `scripts/collect_neurolink_memory_evidence.py` to parse a Unit Zephyr build directory, collect the current `RELEASE_TARGET`, key heap/stack/network/LLEXT/PSRAM config values, section totals from `zephyr.stat`, and optional build-log memory summary rows. Added a focused script regression test and wired it into `tests/scripts/run_all_tests.sh`; added `memory-evidence/` as a generated evidence directory with a committed `.gitkeep`; extended the Neuro CLI workflow reference with the baseline collection command. Focused validation passed for Python compile, the new script test, and existing-build evidence generation. Generated existing-build evidence at `memory-evidence/baseline-1.1.6-existing-build.json` and `.summary.txt` with `release_target=1.1.6` and `section_total_dram0=392376`; this is an existing-build parser baseline, not yet a clean rebuild baseline. — Copilot
+
+#### EXEC-169 Release-1.1.7 Memory Evidence Tooling
+
+- Status: completed for tooling, existing-build parser smoke, and clean rebuild baseline capture
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice adds measurement tooling and generated evidence only, not firmware behavior, memory defaults, Kconfig defaults, protocol behavior, or CLI command semantics
+- Touched files:
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/tests/scripts/run_all_tests.sh`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/.gitignore`
+  - `applocation/NeuroLink/memory-evidence/.gitkeep`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Implementation summary:
+  - added a memory evidence collector that can parse an existing Unit build directory or run `build_neurolink.sh` first with `--run-build`
+  - captured release target from the canonical Neuro CLI entrypoint so evidence records remain tied to release identity policy
+  - captured key config values for heap, main/workqueue/shell stacks, static ELF staging, PSRAM staging preference, runtime heap stats, network buffers, LLEXT heap/logging, and Zenoh threading
+  - captured `zephyr.stat` section totals for `dram0`, `iram0`, `flash`, and `ext_ram`
+  - added optional build-log parser support for both normalized memory rows and Zephyr memory table rows
+  - added generated `memory-evidence/` ignore rules and a project-shared workflow reference for baseline collection
+- Existing-build evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence --label baseline-1.1.6-existing-build` => PASS
+  - generated JSON: `applocation/NeuroLink/memory-evidence/baseline-1.1.6-existing-build.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/baseline-1.1.6-existing-build.summary.txt`
+  - summary highlights: `release_target=1.1.6`, `dram0=392376`, `iram0=66216`, `flash=673292`, `ext_ram=2847776`
+- Clean rebuild baseline evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --run-build --pristine-always --no-c-style-check --build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence --label baseline-1.1.6-clean-build` => PASS
+  - generated JSON: `applocation/NeuroLink/memory-evidence/baseline-1.1.6-clean-build.json`
+  - generated summary: `applocation/NeuroLink/memory-evidence/baseline-1.1.6-clean-build.summary.txt`
+  - build memory summary: `FLASH=808004B/16776960B (4.82%)`, `iram0_0_seg=67816B/415492B (16.32%)`, `dram0_0_seg=395152B/399108B (99.01%)`
+  - section totals: `dram0=392376`, `iram0=66216`, `flash=673292`, `ext_ram=2847776`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh` => PASS
+- Open risks:
+  - build-log memory summary and `zephyr.stat` section totals use different grouping rules; keep both in candidate evidence and compare like-for-like
+  - generated `memory-evidence/*` artifacts are ignored by git except `.gitkeep`; closure notes must name the generated paths explicitly
+- Next action:
+  - continue app-runtime and LLEXT staging guardrail tests before optimization
+
+2026-04-27: Started release-1.1.7 planning with `EXEC-168`, reading the project progress ledger and the closed release-1.1.6 baseline before creating `docs/project/RELEASE_1.1.7_PRE_RESEARCH.md`. The new release is scoped as a conservative `neuro_unit` optimization and `neuro_cli` reliability/completeness track: measure first, optimize under guardrails, keep CBOR-v2 stable, preserve the release-1.1.6 safe memory defaults until hardware evidence proves any replacement, and make CLI JSON/wrapper/workflow behavior boringly dependable for operators and Agents. The plan explicitly records that PSRAM-preferred LLEXT ELF staging remains experimental opt-in after the 1.1.6 hardware failure, and that `RELEASE_TARGET` must stay at `1.1.6` until local, memory, CLI/skill, script, preflight, smoke, deploy, post-activate query, and callback freshness evidence all pass. — Copilot
+
+#### EXEC-168 Release-1.1.7 Baseline Planning
+
+- Status: completed for planning kickoff
+- Owner: GitHub Copilot with user direction
+- Release boundary note:
+  - release identity remains `1.1.6`; this slice is a planning and baseline documentation step only, not a code, Kconfig, protocol, CLI behavior, or firmware behavior change
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.7_PRE_RESEARCH.md` (new)
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Planning summary:
+  - defined release-1.1.7 as a measured `neuro_unit` memory/code optimization release plus a `neuro_cli` reliability and workflow-completeness release
+  - recorded the release-1.1.6 conservative memory baseline: `CONFIG_HEAP_MEM_POOL_SIZE=57344`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`, and `CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`
+  - treated the failed PSRAM-preferred staging retest as a hard planning constraint: lower reported DRAM is not enough unless real-board deploy, query health, and callback freshness pass
+  - identified high-value review targets including `app_runtime.c`, `neuro_protocol_codec_cbor.c`, `neuro_unit_update_service.c`, `neuro_unit.c`, `neuro_unit_zenoh.c`, and `neuro_cli.py`
+  - planned workstreams for memory measurement, LLEXT staging, Zenoh/artifact memory behavior, CBOR buffer review, update/dispatch cleanup, Kconfig tuning, CLI JSON/failure classification, skill/workflow alignment, and hardware closure
+- Verification evidence:
+  - documentation-only kickoff; no runtime tests were required in this slice
+- Open risks:
+  - `neuro_unit` DRAM remains tight on DNESP32S3B and every accepted memory change needs hardware proof
+  - `neuro_cli` is a large single entrypoint and needs focused regression tests before parser/output/workflow cleanup
+- Next action:
+  - start `EXEC-169` by adding or running repeatable memory measurement tooling and capturing the release-1.1.6 baseline before changing memory defaults
+
+2026-04-26: Next-version direction note: prioritize `neuro_unit` memory optimization work in the next release. Keep the focus on careful internal DRAM/heap/stack pressure reduction, LLEXT staging safety, Zenoh/network memory behavior, and evidence-driven hardware validation. This is a direction marker only, not a detailed plan; avoid enabling risky memory changes by default until they pass real-board smoke. — Copilot
+
 2026-04-26: Re-tested the release-1.1.6 LLEXT ELF staging memory optimization on real DNESP32S3B hardware after the user requested extra caution around memory changes. The PSRAM-preferred staging build reduced reported DRAM usage to about `370576 B (92.85%)`, but real hardware deploy failed at activate with `status=no_reply` on `neuro/unit-01/update/app/neuro_unit_app/activate`; follow-up `query device`, `query apps`, and `query leases` also returned `no_reply`, and UART capture stayed silent. Treated this as an unsafe memory-path regression, restored the previously verified conservative default (`CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`, `CONFIG_HEAP_MEM_POOL_SIZE=57344`), rebuilt/flashed/prepared the board, and reran Linux deploy smoke successfully with evidence `smoke-evidence/SMOKE-017B-LINUX-001-20260426-120255.ndjson`; board IP was `192.168.2.69`. Same-session callback freshness was rechecked afterward and captured two callback events while `query device/apps` stayed healthy with `neuro_unit_app` in `RUNNING`. Conclusion: PSRAM ELF staging remains experimental opt-in only; static internal staging is the safe release default. — Copilot
 
 2026-04-26: Closed release-1.1.6 after final hardware and callback verification. Rebuilt/flashed Unit firmware, prepared DNESP32S3B, and ran Linux smoke successfully with evidence `smoke-evidence/SMOKE-017B-LINUX-001-20260426-110723.ndjson`; the smoke includes a full Zenoh artifact transfer through the final `offset=19456 requested=688 bytes=688` chunk and successful deploy activate. Fixed the late LLEXT closure issues by staging LLEXT ELF bytes in a static buffer, validating prepare/verify artifact sizes, preserving app command callback fields in CBOR replies, and restoring general heap to `57344` while keeping `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`. Verified fresh app installation/execution with `app-callback-smoke --expected-app-echo neuro_unit_app-1.1.6-cbor-v2`, which passed with callback handler audit execution. Promoted Neuro CLI `RELEASE_TARGET` to `1.1.6`; post-promotion Python compile, CLI pytest (`63` tests), and `git diff --check` passed. — Copilot

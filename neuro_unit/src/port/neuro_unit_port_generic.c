@@ -168,6 +168,12 @@ neuro_unit_port_generic_board_network_ops(void)
 	return NULL;
 }
 
+__attribute__((weak)) const struct neuro_unit_port_memory_ops *
+neuro_unit_port_generic_board_memory_ops(void)
+{
+	return NULL;
+}
+
 static int generic_port_init(void)
 {
 	struct app_runtime_cmd_config cfg = {
@@ -229,6 +235,9 @@ static int generic_port_init(void)
 	} else {
 		(void)neuro_unit_port_set_network_ops(NULL);
 	}
+
+	(void)neuro_unit_port_set_memory_ops(
+		neuro_unit_port_generic_board_memory_ops());
 
 	LOG_INF("generic provider enabled for board: %s", CONFIG_BOARD);
 	return 0;

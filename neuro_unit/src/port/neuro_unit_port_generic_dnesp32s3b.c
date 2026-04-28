@@ -9,6 +9,9 @@
 
 #include <zephyr/fs/fs.h>
 #include <zephyr/logging/log.h>
+#if defined(CONFIG_SHARED_MULTI_HEAP)
+#include <zephyr/multi_heap/shared_multi_heap.h>
+#endif
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/net_mgmt.h>
@@ -212,6 +215,25 @@ static int board_fs_readdir(struct fs_dir_t *dir, struct fs_dirent *entry)
 
 static int board_fs_closedir(struct fs_dir_t *dir) { return fs_closedir(dir); }
 
+#if defined(CONFIG_SHARED_MULTI_HEAP)
+static void *board_memory_alloc_external(size_t size, size_t align)
+{
+	return shared_multi_heap_aligned_alloc(
+		SMH_REG_ATTR_EXTERNAL, align, size);
+}
+
+static void board_memory_free_external(void *ptr)
+{
+	shared_multi_heap_free(ptr);
+}
+
+static const struct neuro_unit_port_memory_ops g_board_memory_ops = {
+	.provider = "esp-spiram",
+	.alloc_external = board_memory_alloc_external,
+	.free_external = board_memory_free_external,
+};
+#endif
+
 static int board_network_connect(
 	const struct neuro_unit_port_network_connect_params *params)
 {
@@ -288,6 +310,16 @@ const struct neuro_unit_port_network_ops *
 neuro_unit_port_generic_board_network_ops(void)
 {
 	return &g_board_network_ops;
+}
+
+const struct neuro_unit_port_memory_ops *
+neuro_unit_port_generic_board_memory_ops(void)
+{
+#if defined(CONFIG_SHARED_MULTI_HEAP)
+	return &g_board_memory_ops;
+#else
+	return NULL;
+#endif
 }
 
 int neuro_unit_port_generic_board_caps_apply(struct app_runtime_cmd_config *cfg)

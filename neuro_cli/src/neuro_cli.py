@@ -17,7 +17,7 @@ import neuro_protocol as protocol
 
 DEFAULT_CHUNK_SIZE = 1024
 DEFAULT_PRIORITY = 50
-RELEASE_TARGET = "1.1.6"
+RELEASE_TARGET = "1.1.7"
 EVENT_SUBSCRIPTION_READY_DELAY_SEC = 1.0
 EVENT_SUBSCRIPTION_PUMP_INTERVAL_SEC = 1.0
 DEFAULT_SESSION_OPEN_RETRIES = 3
@@ -30,6 +30,17 @@ DEFAULT_HANDLER_MAX_EVENT_BYTES = 65536
 DEFAULT_HANDLER_MAX_OUTPUT_BYTES = 16384
 PROJECT_SKILL_RELATIVE_PATH = ".github/skills/neuro-cli/SKILL.md"
 NEURO_CLI_WRAPPER_RELATIVE_PATH = "neuro_cli/scripts/invoke_neuro_cli.py"
+PAYLOAD_FAILURE_STATUSES = {
+    "error",
+    "not_implemented",
+    "invalid_input",
+    "query_failed",
+    "no_reply",
+    "error_reply",
+    "parse_failed",
+    "session_open_failed",
+    "handler_failed",
+}
 
 
 @dataclass(frozen=True)
@@ -394,6 +405,14 @@ WORKFLOW_PLANS = {
         ],
         "artifacts": [],
     },
+    "memory-evidence": {
+        "category": "verification",
+        "description": "collect build-time Neuro Unit memory evidence",
+        "commands": [
+            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --run-build --no-c-style-check --label release-1.1.7-memory-evidence",
+        ],
+        "artifacts": ["applocation/NeuroLink/memory-evidence"],
+    },
     "preflight": {
         "category": "board_operation",
         "description": "run Linux host and board preflight checks",
@@ -409,6 +428,31 @@ WORKFLOW_PLANS = {
             "bash applocation/NeuroLink/scripts/smoke_neurolink_linux.sh --install-missing-cli-deps --events-duration-sec 5",
         ],
         "artifacts": ["applocation/NeuroLink/smoke-evidence"],
+    },
+    "callback-smoke": {
+        "category": "board_operation",
+        "description": "run the app callback smoke path through the CLI wrapper",
+        "commands": [
+            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app-callback-smoke --app-id neuro_unit_app --expected-app-echo neuro_unit_app-1.1.7-cbor-v2 --trigger-every 1 --invoke-count 2",
+        ],
+        "artifacts": [],
+    },
+    "release-closure": {
+        "category": "verification",
+        "description": "review the release closure gate sequence without executing it",
+        "commands": [
+            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --run-build --no-c-style-check --label release-1.1.7-closure",
+            "/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py",
+            "/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q",
+            "bash applocation/NeuroLink/tests/scripts/run_all_tests.sh",
+            "git -C applocation/NeuroLink diff --check",
+            "bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --auto-start-router --require-serial --install-missing-cli-deps --output text",
+            "bash applocation/NeuroLink/scripts/smoke_neurolink_linux.sh --install-missing-cli-deps --events-duration-sec 5",
+        ],
+        "artifacts": [
+            "applocation/NeuroLink/memory-evidence",
+            "applocation/NeuroLink/smoke-evidence",
+        ],
     },
 }
 
@@ -499,7 +543,10 @@ def collect_query_result(
         "replies": parsed_replies,
     }
     if not result["ok"]:
-        result["status"] = "error_reply"
+        if any(item.get("status") == "parse_failed" for item in parsed_replies):
+            result["status"] = "parse_failed"
+        else:
+            result["status"] = "error_reply"
     return result
 
 
@@ -521,12 +568,15 @@ def collect_query_result_with_retry(
         result["max_attempts"] = attempts
         last_result = result
 
-        if result_has_reply_error(result) and result.get("status") not in (
+        failure_status = result_failure_status(result)
+        if failure_status is not None and result.get("status") not in (
             "no_reply",
             "query_failed",
+            "parse_failed",
         ):
             result["ok"] = False
             result["status"] = "error_reply"
+            result["failure_status"] = failure_status
             result["retried"] = attempt > 0
             return result
 
@@ -537,6 +587,8 @@ def collect_query_result_with_retry(
         status = result.get("status", "")
         retryable = status in ("no_reply", "query_failed")
         if not retryable or attempt + 1 >= attempts:
+            if failure_status is not None:
+                result["failure_status"] = failure_status
             result["retried"] = attempt > 0
             return result
 
@@ -563,15 +615,33 @@ def collect_query_result_with_retry(
 
 
 def result_has_reply_error(result: dict) -> bool:
+    return result_failure_status(result) is not None
+
+
+def result_failure_status(result: dict) -> str | None:
     if not result.get("ok", False):
-        return True
+        status = result.get("status")
+        if payload_status_is_failure(status):
+            return str(status)
+        return "payload_not_ok"
 
     for reply in result.get("replies", []):
+        if not reply.get("ok", True):
+            return "error_reply"
         payload = reply.get("payload")
-        if isinstance(payload, dict) and payload.get("status") == "error":
-            return True
+        if isinstance(payload, dict):
+            status = payload.get("status")
+            if payload_status_is_failure(status):
+                return str(status)
 
-    return False
+    return None
+
+
+def payload_status_is_failure(status: object) -> bool:
+    if status is None:
+        return False
+
+    return str(status) in PAYLOAD_FAILURE_STATUSES
 
 
 def result_has_expected_app_echo(result: dict, expected_echo: str) -> bool:
@@ -2056,6 +2126,14 @@ def main() -> int:
             print_json({"ok": False, "status": "invalid_input", "error": str(exc)})
         else:
             print(f"invalid input: {exc}")
+        return 2
+    except Exception as exc:
+        output_mode = getattr(args, "output", "human")
+        status = "handler_failed" if session is not None else "session_open_failed"
+        if output_mode == "json":
+            print_json({"ok": False, "status": status, "error": str(exc)})
+        else:
+            print(f"{status}: {exc}")
         return 2
     finally:
         if session is not None:

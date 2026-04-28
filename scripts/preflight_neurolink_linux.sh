@@ -153,6 +153,10 @@ build_artifact_with_edk_external_app() {
   bash "${BUILD_SCRIPT}" --preset unit-app --no-c-style-check
 }
 
+artifact_is_nonempty_file() {
+  [[ -f "$1" ]] && [[ -s "$1" ]]
+}
+
 collect_serial_devices() {
   local devices=()
   local candidate
@@ -267,7 +271,7 @@ query_status="not_run"
 query_output=""
 mapfile -t serial_devices < <(collect_serial_devices)
 
-if [[ -f "${ARTIFACT_FILE}" ]]; then
+if artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
   artifact_present=1
 fi
 
@@ -291,18 +295,18 @@ if [[ ${artifact_present} -eq 0 ]]; then
     build_rc=$?
     set -e
 
-    if [[ ${build_rc} -eq 0 ]] && [[ -f "${ARTIFACT_FILE}" ]]; then
+    if [[ ${build_rc} -eq 0 ]] && artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
       artifact_present=1
     fi
   fi
 
   if [[ ${artifact_present} -eq 0 ]]; then
-    artifact_hint="build failed or artifact still missing"
+    artifact_hint="build failed or artifact is missing or empty"
     if [[ "${ARTIFACT_FILE}" != "${DEFAULT_ARTIFACT_FILE}" ]]; then
-      artifact_hint="artifact missing at custom path"
+      artifact_hint="artifact missing or empty at custom path"
     fi
 
-    emit_result "artifact_missing" 0 \
+    emit_result "artifact_invalid" 0 \
       "${artifact_hint}; build default artifact with build_neurolink.sh --preset unit-app (EDK external app) or provide --artifact-file" \
       "${router_listening}" "${serial_present}" "${artifact_present}" \
       "${query_rc}" "${query_status}" "${router_started}" \

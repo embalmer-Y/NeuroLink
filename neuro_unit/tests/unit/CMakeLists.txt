@@ -25,6 +25,7 @@ target_sources(app PRIVATE
   ../../src/neuro_network_manager.c
   ../../src/runtime/app_runtime_cmd.c
   ../../src/runtime/app_runtime_exception.c
+  ../../src/runtime/app_runtime_elf_staging.c
   ../../src/port/neuro_unit_port_contract.c
   ../../src/port/neuro_unit_port_generic.c
   src/protocol/test_neuro_protocol.c
@@ -48,6 +49,7 @@ target_sources(app PRIVATE
   src/port/test_neuro_unit_port_fs_contract.c
   src/port/test_neuro_network_manager_port.c
   src/runtime/test_app_runtime_cmd_capability.c
+  src/runtime/test_app_runtime_elf_staging.c
 )
 
 target_sources_ifdef(CONFIG_NEUROLINK_PROTOCOL_CBOR app PRIVATE

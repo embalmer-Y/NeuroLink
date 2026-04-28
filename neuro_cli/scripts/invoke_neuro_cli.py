@@ -7,6 +7,24 @@ from pathlib import Path
 
 EXIT_COMMAND_FAILED = 2
 EXIT_NOT_IMPLEMENTED = 3
+PAYLOAD_FAILURE_STATUSES = {
+    "error",
+    "not_implemented",
+    "invalid_input",
+    "query_failed",
+    "no_reply",
+    "error_reply",
+    "parse_failed",
+    "session_open_failed",
+    "handler_failed",
+}
+
+
+def payload_status_is_failure(status: object) -> bool:
+    if status is None:
+        return False
+
+    return str(status) in PAYLOAD_FAILURE_STATUSES
 
 
 def classify_payload(payload: object, process_returncode: int) -> tuple[int, str]:
@@ -17,18 +35,20 @@ def classify_payload(payload: object, process_returncode: int) -> tuple[int, str
     if status == "not_implemented":
         return EXIT_NOT_IMPLEMENTED, status
 
-    if payload.get("ok") is False:
-        return EXIT_COMMAND_FAILED, status or "payload_not_ok"
-
-    if status == "error":
-        return EXIT_COMMAND_FAILED, status
-
     for reply in payload.get("replies", []) if isinstance(payload.get("replies"), list) else []:
         reply_payload = reply.get("payload", {}) if isinstance(reply, dict) else {}
         if isinstance(reply_payload, dict):
             reply_status = str(reply_payload.get("status", ""))
-            if reply_status == "error":
-                return EXIT_COMMAND_FAILED, "error_reply"
+            if reply_status == "not_implemented":
+                return EXIT_NOT_IMPLEMENTED, reply_status
+            if payload_status_is_failure(reply_status):
+                return EXIT_COMMAND_FAILED, f"reply_status_{reply_status}"
+
+    if payload.get("ok") is False:
+        return EXIT_COMMAND_FAILED, status or "payload_not_ok"
+
+    if payload_status_is_failure(status):
+        return EXIT_COMMAND_FAILED, status
 
     if process_returncode != 0:
         return int(process_returncode), status or "process_failed"

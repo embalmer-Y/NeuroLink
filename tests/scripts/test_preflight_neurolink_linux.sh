@@ -9,7 +9,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 mock_bin="${TMP_DIR}/bin"
 router_helper="${TMP_DIR}/router-helper.sh"
 mkdir -p "${mock_bin}" "${ROOT_DIR}/build/neurolink_unit/llext"
-touch "${ROOT_DIR}/build/neurolink_unit/llext/neuro_unit_app.llext"
+printf 'fake llext\n' >"${ROOT_DIR}/build/neurolink_unit/llext/neuro_unit_app.llext"
 
 cat >"${mock_bin}/ss" <<'EOF'
 #!/usr/bin/env bash
@@ -58,6 +58,26 @@ fi
 
 if [[ "${output}" != *'"status": "router_failed_to_start"'* ]]; then
   echo "missing router_failed_to_start status" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+
+empty_artifact="${TMP_DIR}/empty.llext"
+touch "${empty_artifact}"
+
+set +e
+output="$(PATH="${mock_bin}:${PATH}" bash "${SCRIPT}" --artifact-file "${empty_artifact}" --output json 2>&1)"
+rc=$?
+set -e
+
+if [[ ${rc} -eq 0 ]]; then
+  echo "expected preflight to fail for an empty custom artifact" >&2
+  printf '%s\n' "${output}" >&2
+  exit 1
+fi
+
+if [[ "${output}" != *'"status": "artifact_invalid"'* ]]; then
+  echo "missing artifact_invalid status" >&2
   printf '%s\n' "${output}" >&2
   exit 1
 fi

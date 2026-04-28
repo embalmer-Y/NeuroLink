@@ -22,7 +22,17 @@ static char callback_event_name[NEURO_UNIT_APP_EVENT_NAME_LEN] = "callback";
 
 /* Sample app command exposed through the Unit app-command registry contract. */
 static const char app_command_name[] = "invoke";
-static const char app_build_id[] = "neuro_unit_app-1.1.6-cbor-v2";
+static const char app_id[] = "neuro_unit_app";
+static const char app_version[] = "1.1.7";
+static const char app_build_id[] = "neuro_unit_app-1.1.7-cbor-v2";
+
+static void print_app_version(const char *stage)
+{
+  printk("neuro_unit_app version stage=%s version=%s build_id=%s "
+    "manifest=%u.%u.%u\n",
+    stage, app_version, app_build_id, app_runtime_manifest.version.major,
+    app_runtime_manifest.version.minor, app_runtime_manifest.version.patch);
+}
 
 static bool str_eq(const char *lhs, const char *rhs)
 {
@@ -83,7 +93,7 @@ static bool command_updates_callback_config(const char *request_json)
 static int maybe_publish_callback_event(void)
 {
   const struct neuro_unit_app_callback_event event = {
-    .app_id = app_runtime_manifest.app_name,
+    .app_id = app_id,
     .event_name = callback_event_name,
     .invoke_count = invoke_count,
     .start_count = start_count,
@@ -130,7 +140,7 @@ const struct app_runtime_manifest app_runtime_manifest = {
   .version = {
     .major = 1,
     .minor = 1,
-    .patch = 6,
+    .patch = 7,
   },
   .capability_flags = APP_RT_CAP_STORAGE,
   .resource = {
@@ -150,6 +160,7 @@ int app_init(void)
   invoke_count = 0U;
   snprintk(callback_event_name, sizeof(callback_event_name), "%s",
     "callback");
+  print_app_version("init");
   return 0;
 }
 
@@ -161,6 +172,7 @@ int app_start(const char *args)
 
   app_running = true;
   start_count++;
+  print_app_version("start");
   (void)args;
   return 0;
 }

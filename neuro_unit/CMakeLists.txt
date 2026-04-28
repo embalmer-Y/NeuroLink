@@ -33,6 +33,7 @@ target_sources(app PRIVATE
   src/zenoh/neuro_unit_zenoh.c
   src/neuro_unit_llext_exports.c
   src/runtime/app_runtime_exception.c
+  src/runtime/app_runtime_elf_staging.c
   src/runtime/app_runtime.c
   src/runtime/app_runtime_cmd.c
   src/shell/neuro_unit_shell.c

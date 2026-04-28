@@ -470,14 +470,7 @@ def build_app_callback_config_payload(
 def parse_reply(reply) -> dict:
     try:
         payload_obj = reply.ok.payload
-        parsed_payload, payload_encoding, payload_hex = parse_wire_payload(payload_obj)
-        return {
-            "ok": True,
-            "keyexpr": str(reply.ok.key_expr),
-            "payload": parsed_payload,
-            "payload_encoding": payload_encoding,
-            "payload_hex": payload_hex if payload_encoding == "cbor-v2" else "",
-        }
+        keyexpr = str(reply.ok.key_expr)
     except Exception:
         error_payload = "<unreadable error payload>"
         try:
@@ -487,4 +480,22 @@ def parse_reply(reply) -> dict:
         return {
             "ok": False,
             "payload": error_payload,
+        }
+
+    try:
+        parsed_payload, payload_encoding, payload_hex = parse_wire_payload(payload_obj)
+        return {
+            "ok": True,
+            "keyexpr": keyexpr,
+            "payload": parsed_payload,
+            "payload_encoding": payload_encoding,
+            "payload_hex": payload_hex if payload_encoding == "cbor-v2" else "",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "parse_failed",
+            "keyexpr": keyexpr,
+            "payload": "<unreadable ok payload>",
+            "error": str(exc),
         }

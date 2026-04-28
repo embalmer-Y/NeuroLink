@@ -2,6 +2,7 @@
 #define NEURO_UNIT_PORT_H
 
 #include "neuro_unit_port_fs.h"
+#include "neuro_unit_port_memory.h"
 #include "neuro_unit_port_network.h"
 
 #ifdef __cplusplus
@@ -22,6 +23,10 @@ const struct neuro_unit_port_fs_ops *neuro_unit_port_get_fs_ops(void);
 int neuro_unit_port_set_network_ops(
 	const struct neuro_unit_port_network_ops *ops);
 const struct neuro_unit_port_network_ops *neuro_unit_port_get_network_ops(void);
+
+int neuro_unit_port_set_memory_ops(
+	const struct neuro_unit_port_memory_ops *ops);
+const struct neuro_unit_port_memory_ops *neuro_unit_port_get_memory_ops(void);
 
 int neuro_unit_port_set_paths(const char *apps_dir, const char *seed_path);
 const char *neuro_unit_port_apps_dir(void);

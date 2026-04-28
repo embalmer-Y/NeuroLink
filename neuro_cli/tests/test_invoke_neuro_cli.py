@@ -73,6 +73,79 @@ class TestInvokeNeuroCliWrapper(unittest.TestCase):
 
         self.assertEqual(code, wrapper.EXIT_NOT_IMPLEMENTED)
 
+    def test_nested_not_implemented_maps_to_skill_capability_gap_exit(self) -> None:
+        wrapper = load_wrapper()
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "replies": [
+                        {"ok": True, "payload": {"status": "not_implemented"}}
+                    ],
+                }
+            ),
+            stderr="",
+        )
+
+        with mock.patch.object(sys, "argv", ["invoke_neuro_cli.py", "gateway"]), \
+            mock.patch.object(subprocess, "run", return_value=completed):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = wrapper.main()
+
+        self.assertEqual(code, wrapper.EXIT_NOT_IMPLEMENTED)
+
+    def test_error_reply_wrapping_nested_not_implemented_maps_to_capability_gap(self) -> None:
+        wrapper = load_wrapper()
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=2,
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "status": "error_reply",
+                    "failure_status": "not_implemented",
+                    "replies": [
+                        {"ok": True, "payload": {"status": "not_implemented"}}
+                    ],
+                }
+            ),
+            stderr="",
+        )
+
+        with mock.patch.object(sys, "argv", ["invoke_neuro_cli.py", "query", "device"]), \
+            mock.patch.object(subprocess, "run", return_value=completed):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = wrapper.main()
+
+        self.assertEqual(code, wrapper.EXIT_NOT_IMPLEMENTED)
+
+    def test_nested_error_status_fails_even_with_zero_process_exit(self) -> None:
+        wrapper = load_wrapper()
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "replies": [
+                        {"ok": True, "payload": {"status": "error", "status_code": 409}}
+                    ],
+                }
+            ),
+            stderr="",
+        )
+
+        with mock.patch.object(sys, "argv", ["invoke_neuro_cli.py", "query", "device"]), \
+            mock.patch.object(subprocess, "run", return_value=completed):
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = wrapper.main()
+
+        self.assertEqual(code, wrapper.EXIT_COMMAND_FAILED)
+        self.assertIn("reply_status_error", err.getvalue())
+
     def test_invalid_json_stdout_becomes_machine_readable_failure(self) -> None:
         wrapper = load_wrapper()
         completed = subprocess.CompletedProcess(
@@ -88,6 +161,21 @@ class TestInvokeNeuroCliWrapper(unittest.TestCase):
         self.assertEqual(code, wrapper.EXIT_COMMAND_FAILED)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["status"], "invalid_json_stdout")
+
+    def test_parse_failed_status_fails_even_with_zero_process_exit(self) -> None:
+        wrapper = load_wrapper()
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='{"ok": false, "status": "parse_failed"}', stderr=""
+        )
+
+        with mock.patch.object(sys, "argv", ["invoke_neuro_cli.py", "query", "device"]), \
+            mock.patch.object(subprocess, "run", return_value=completed):
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = wrapper.main()
+
+        self.assertEqual(code, wrapper.EXIT_COMMAND_FAILED)
+        self.assertIn("parse_failed", err.getvalue())
 
 
 class TestProjectSharedNeuroCliSkill(unittest.TestCase):

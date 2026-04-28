@@ -7,9 +7,12 @@
 #define NEURO_UNIT_PORT_DEFAULT_SEED_PATH "/recovery.seed"
 
 static const struct neuro_unit_port_fs_ops g_empty_fs_ops;
+static const struct neuro_unit_port_memory_ops g_empty_memory_ops;
 static const struct neuro_unit_port_network_ops g_empty_network_ops;
 
 static const struct neuro_unit_port_fs_ops *g_fs_ops = &g_empty_fs_ops;
+static const struct neuro_unit_port_memory_ops *g_memory_ops =
+	&g_empty_memory_ops;
 static const struct neuro_unit_port_network_ops *g_network_ops =
 	&g_empty_network_ops;
 static const char *g_apps_dir = NEURO_UNIT_PORT_DEFAULT_APPS_DIR;
@@ -36,6 +39,17 @@ int neuro_unit_port_set_network_ops(
 const struct neuro_unit_port_network_ops *neuro_unit_port_get_network_ops(void)
 {
 	return g_network_ops;
+}
+
+int neuro_unit_port_set_memory_ops(const struct neuro_unit_port_memory_ops *ops)
+{
+	g_memory_ops = (ops != NULL) ? ops : &g_empty_memory_ops;
+	return 0;
+}
+
+const struct neuro_unit_port_memory_ops *neuro_unit_port_get_memory_ops(void)
+{
+	return g_memory_ops;
 }
 
 int neuro_unit_port_set_paths(const char *apps_dir, const char *seed_path)

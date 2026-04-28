@@ -10,4 +10,20 @@ config NEUROLINK_PROTOCOL_CBOR
 	help
 	  Builds the zcbor-backed NeuroLink CBOR-v2 codec facade for unit tests.
 
+config NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE
+	int "Static LLEXT ELF staging buffer size for tests"
+	default 0
+	help
+	  Reserves a small static buffer in native_sim tests so app-runtime LLEXT
+	  staging fallback behavior can be covered without pulling in full LLEXT.
+
+config NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER
+	bool "Prefer external memory for LLEXT ELF staging buffer in tests"
+	default n
+
+config NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
+	bool "Legacy alias: prefer PSRAM for LLEXT ELF staging buffer in tests"
+	select NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER
+	default n
+
 endmenu

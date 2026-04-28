@@ -309,6 +309,28 @@ class TestNeuroProtocolModule(unittest.TestCase):
         )
         self.assertEqual(parsed["payload"], {"status": "error", "status_code": 409})
 
+    def test_parse_reply_classifies_unreadable_ok_payload(self) -> None:
+        class _Payload:
+            def to_bytes(self) -> bytes:
+                return b"\xa1\x01"
+
+            def to_string(self) -> str:
+                raise AssertionError("CBOR payload should not fall back to text")
+
+        class _Ok:
+            key_expr = "neuro/unit-01/query/device"
+            payload = _Payload()
+
+        class _Reply:
+            ok = _Ok()
+
+        parsed = neuro_protocol.parse_reply(_Reply())
+
+        self.assertFalse(parsed["ok"])
+        self.assertEqual(parsed["status"], "parse_failed")
+        self.assertEqual(parsed["keyexpr"], "neuro/unit-01/query/device")
+        self.assertIn("truncated", parsed["error"])
+
 
 class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
     def test_parser_parses_grouped_prepare_path(self) -> None:
@@ -378,7 +400,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.1.6")
+        self.assertEqual(payload["release_target"], "1.1.7")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -428,6 +450,242 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertFalse(args.requires_session)
         self.assertEqual(args.workflow, "app-build")
 
+    def test_parser_accepts_agent_evidence_workflow_plans(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        for workflow in ("memory-evidence", "callback-smoke", "release-closure"):
+            args = parser.parse_args(["--output", "json", "workflow", "plan", workflow])
+            self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
+            self.assertFalse(args.requires_session)
+            self.assertEqual(args.workflow, workflow)
+
+
+class TestNeuroCliResultClassification(unittest.TestCase):
+    def _reply(self, payload: dict):
+        class _Payload:
+            def to_string(self) -> str:
+                return json.dumps(payload)
+
+        class _Ok:
+            key_expr = "neuro/unit-01/query/device"
+            payload = _Payload()
+
+        class _Reply:
+            ok = _Ok()
+
+        return _Reply()
+
+    def test_collect_query_result_with_retry_fails_nested_error_status(self) -> None:
+        class _Session:
+            calls = 0
+
+            def get(self, *args, **kwargs):
+                del args, kwargs
+                self.calls += 1
+                return [self_reply]
+
+        self_reply = self._reply(
+            {"status": "error", "status_code": 409, "message": "lease conflict"}
+        )
+        session = _Session()
+        args = Namespace(output="json")
+
+        result = neuro_cli.collect_query_result_with_retry(
+            session,
+            "neuro/unit-01/query/device",
+            {"request_id": "req-1"},
+            1.0,
+            neuro_cli.RetryPolicy(max_attempts=3, initial_backoff_sec=0, max_backoff_sec=0),
+            args,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "error_reply")
+        self.assertEqual(result["failure_status"], "error")
+        self.assertEqual(result["attempt"], 1)
+        self.assertEqual(session.calls, 1)
+
+    def test_result_has_reply_error_treats_non_ok_status_as_failure(self) -> None:
+        result = {
+            "ok": True,
+            "replies": [
+                {"ok": True, "payload": {"status": "not_implemented"}},
+            ],
+        }
+
+        self.assertTrue(neuro_cli.result_has_reply_error(result))
+
+    def test_main_query_device_preserves_nested_not_implemented_failure_status(self) -> None:
+        code, payload, collect = self._run_main_with_collect_result(
+            ["--output", "json", "--query-retries", "1", "query", "device"],
+            {
+                "ok": True,
+                "keyexpr": "neuro/unit-01/query/device",
+                "payload": {"request_id": "req-1"},
+                "replies": [
+                    {
+                        "ok": True,
+                        "keyexpr": "neuro/unit-01/query/device",
+                        "payload": {"status": "not_implemented", "status_code": 501},
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "error_reply")
+        self.assertEqual(payload["failure_status"], "not_implemented")
+        self.assertEqual(collect.call_args[0][1], "neuro/unit-01/query/device")
+
+    def _run_main_with_collect_result(
+        self, cli_args: list[str], collect_result: dict
+    ) -> tuple[int, dict, mock.Mock]:
+        session = mock.Mock()
+        session.close = mock.Mock()
+        collect = mock.Mock(return_value=collect_result)
+
+        with mock.patch.object(sys, "argv", ["neuro_cli.py", *cli_args]), \
+            mock.patch.object(neuro_cli, "open_session_with_retry", return_value=session), \
+            mock.patch.object(neuro_cli, "collect_query_result", collect):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.main()
+
+        payload = json.loads(out.getvalue())
+        return code, payload, collect
+
+    def test_main_query_device_reports_session_open_failure_json(self) -> None:
+        with mock.patch.object(
+            sys,
+            "argv",
+            ["neuro_cli.py", "--output", "json", "query", "device"],
+        ), mock.patch.object(
+            neuro_cli,
+            "open_session_with_retry",
+            side_effect=RuntimeError("router unavailable"),
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.main()
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "session_open_failed")
+        self.assertIn("router unavailable", payload["error"])
+
+    def test_main_query_device_reports_handler_failure_json(self) -> None:
+        session = mock.Mock()
+        session.close = mock.Mock()
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            ["neuro_cli.py", "--output", "json", "query", "device"],
+        ), mock.patch.object(
+            neuro_cli, "open_session_with_retry", return_value=session
+        ), mock.patch.object(
+            neuro_cli, "handle_query", side_effect=RuntimeError("handler boom")
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.main()
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "handler_failed")
+        self.assertIn("handler boom", payload["error"])
+        session.close.assert_called_once()
+
+    def test_main_query_device_fails_nested_error_reply(self) -> None:
+        code, payload, collect = self._run_main_with_collect_result(
+            ["--output", "json", "--query-retries", "1", "query", "device"],
+            {
+                "ok": True,
+                "keyexpr": "neuro/unit-01/query/device",
+                "payload": {"request_id": "req-1"},
+                "replies": [
+                    {
+                        "ok": True,
+                        "keyexpr": "neuro/unit-01/query/device",
+                        "payload": {"status": "error", "status_code": 409},
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "error_reply")
+        self.assertEqual(collect.call_args[0][1], "neuro/unit-01/query/device")
+
+    def test_main_grouped_lease_acquire_payload_path(self) -> None:
+        code, payload, collect = self._run_main_with_collect_result(
+            [
+                "--output",
+                "json",
+                "lease",
+                "acquire",
+                "--resource",
+                "update/app/neuro_unit_app/activate",
+                "--lease-id",
+                "lease-1",
+                "--ttl-ms",
+                "120000",
+            ],
+            {
+                "ok": True,
+                "keyexpr": "neuro/unit-01/cmd/lease/acquire",
+                "payload": {"request_id": "req-1"},
+                "replies": [
+                    {"ok": True, "payload": {"status": "ok", "lease_id": "lease-1"}}
+                ],
+            },
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        keyexpr = collect.call_args[0][1]
+        sent_payload = collect.call_args[0][2]
+        self.assertEqual(keyexpr, "neuro/unit-01/cmd/lease/acquire")
+        self.assertEqual(sent_payload["resource"], "update/app/neuro_unit_app/activate")
+        self.assertEqual(sent_payload["lease_id"], "lease-1")
+        self.assertEqual(sent_payload["ttl_ms"], 120000)
+
+    def test_main_grouped_deploy_activate_payload_path(self) -> None:
+        code, payload, collect = self._run_main_with_collect_result(
+            [
+                "--output",
+                "json",
+                "deploy",
+                "activate",
+                "--app-id",
+                "neuro_unit_app",
+                "--lease-id",
+                "lease-1",
+                "--start-args",
+                "mode=demo,profile=release",
+            ],
+            {
+                "ok": True,
+                "keyexpr": "neuro/unit-01/update/app/neuro_unit_app/activate",
+                "payload": {"request_id": "req-1"},
+                "replies": [
+                    {"ok": True, "payload": {"status": "ok", "app_id": "neuro_unit_app"}}
+                ],
+            },
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        keyexpr = collect.call_args[0][1]
+        sent_payload = collect.call_args[0][2]
+        self.assertEqual(keyexpr, "neuro/unit-01/update/app/neuro_unit_app/activate")
+        self.assertEqual(sent_payload["lease_id"], "lease-1")
+        self.assertEqual(sent_payload["start_args"], "mode=demo,profile=release")
+
     def test_workflow_plan_outputs_command_plan_without_execution(self) -> None:
         args = Namespace(output="json", workflow="preflight")
 
@@ -443,6 +701,60 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(payload["agent_skill"]["name"], "neuro-cli")
         self.assertIn("invoke_neuro_cli.py", payload["agent_skill"]["wrapper"])
         self.assertIn("preflight_neurolink_linux.sh", payload["commands"][0])
+
+    def test_memory_evidence_workflow_plan_outputs_collector_command(self) -> None:
+        args = Namespace(output="json", workflow="memory-evidence")
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = neuro_cli.handle_workflow_plan(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["workflow"], "memory-evidence")
+        self.assertFalse(payload["executes_commands"])
+        self.assertIn("collect_neurolink_memory_evidence.py", payload["commands"][0])
+        self.assertIn("--run-build", payload["commands"][0])
+        self.assertIn("applocation/NeuroLink/memory-evidence", payload["artifacts"])
+
+    def test_release_closure_workflow_plan_lists_gates_without_execution(self) -> None:
+        args = Namespace(output="json", workflow="release-closure")
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = neuro_cli.handle_workflow_plan(None, args)
+
+        payload = json.loads(out.getvalue())
+        commands = "\n".join(payload["commands"])
+
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["workflow"], "release-closure")
+        self.assertFalse(payload["executes_commands"])
+        self.assertIn("collect_neurolink_memory_evidence.py", commands)
+        self.assertIn("pytest", commands)
+        self.assertIn("run_all_tests.sh", commands)
+        self.assertIn("diff --check", commands)
+        self.assertIn("preflight_neurolink_linux.sh", commands)
+        self.assertIn("smoke_neurolink_linux.sh", commands)
+
+    def test_callback_smoke_workflow_plan_uses_wrapper_contract(self) -> None:
+        args = Namespace(output="json", workflow="callback-smoke")
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = neuro_cli.handle_workflow_plan(None, args)
+
+        payload = json.loads(out.getvalue())
+        command = payload["commands"][0]
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertIn("invoke_neuro_cli.py app-callback-smoke", command)
+        self.assertNotIn("invoke_neuro_cli.py --output", command)
+        self.assertIn("--app-id neuro_unit_app", command)
+        self.assertIn("--expected-app-echo neuro_unit_app-1.1.7-cbor-v2", command)
+        self.assertIn("--trigger-every 1", command)
 
     def test_monitor_app_events_accepts_handler_options(self) -> None:
         parser = neuro_cli.build_parser()
@@ -1305,6 +1617,36 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertEqual(result["status"], "error_reply")
         self.assertEqual(result["replies"][0]["payload"]["status_code"], 409)
 
+    def test_collect_query_result_contract_preserves_parse_failed_status(self) -> None:
+        session = mock.Mock()
+        payload = {"request_id": "req-parse"}
+
+        with mock.patch.object(
+            neuro_cli,
+            "parse_reply",
+            return_value={
+                "ok": False,
+                "status": "parse_failed",
+                "keyexpr": "neuro/unit-01/query/device",
+                "payload": "<unreadable ok payload>",
+                "error": "truncated CBOR value",
+            },
+        ):
+            session.get.return_value = [object()]
+            result = neuro_cli.collect_query_result_with_retry(
+                session,
+                "neuro/unit-01/query/device",
+                payload,
+                10.0,
+                neuro_cli.RetryPolicy(3, 0.0, 0.0),
+                Namespace(output="json"),
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "parse_failed")
+        self.assertEqual(result["failure_status"], "parse_failed")
+        self.assertEqual(result["attempt"], 1)
+
     def test_collect_query_result_sends_cbor_payload_bytes(self) -> None:
         session = mock.Mock()
         session.get.return_value = []
@@ -1501,7 +1843,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.1.6")
+        self.assertEqual(payload["release_target"], "1.1.7")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

@@ -15,6 +15,7 @@ ESP_DEVICE=""
 CHECK_C_STYLE=1
 EXTRA_WEST_ARGS=()
 EXTRA_CMAKE_ARGS=()
+OVERLAY_CONFIGS=()
 ZENOH_PICO_MODULE_FILE="${ROOT_DIR}/modules/lib/zenoh-pico/zephyr/CMakeLists.txt"
 
 usage() {
@@ -26,9 +27,48 @@ Usage: bash applocation/NeuroLink/scripts/build_neurolink.sh [options]
   --pristine-always
   --esp-device <device>
   --no-c-style-check
+  --overlay-config <path>
   --extra-west-arg <arg>
   --extra-cmake-arg <arg>
 EOF
+}
+
+join_by_semicolon() {
+  local IFS=';'
+  printf '%s' "$*"
+}
+
+append_overlay_cmake_arg() {
+  local resolved=()
+  local candidate
+  local normalized
+  local path
+
+  [[ ${#OVERLAY_CONFIGS[@]} -gt 0 ]] || return 0
+
+  for candidate in "${OVERLAY_CONFIGS[@]}"; do
+    normalized="$(printf '%s' "${candidate}" | tr '\\' '/' | sed 's/[[:space:]]*$//')"
+    [[ -n "${normalized}" ]] || {
+      echo "overlay config path is empty" >&2
+      exit 2
+    }
+    [[ ! "${normalized}" =~ \.\. ]] || {
+      echo "invalid overlay config '${candidate}': parent traversal is not allowed" >&2
+      exit 2
+    }
+    if [[ "${normalized}" = /* ]]; then
+      path="${normalized}"
+    else
+      path="${ROOT_DIR}/${normalized}"
+    fi
+    [[ -f "${path}" ]] || {
+      echo "overlay config not found: ${candidate}" >&2
+      exit 2
+    }
+    resolved+=("${path}")
+  done
+
+  EXTRA_CMAKE_ARGS+=("-DEXTRA_CONF_FILE=$(join_by_semicolon "${resolved[@]}")")
 }
 
 assert_build_dir() {
@@ -125,6 +165,7 @@ build_unit_app_external() {
   local edk_install_dir
   local staged_artifact_dir="${BUILD_DIR}/llext"
   local staged_artifact_file="${staged_artifact_dir}/${UNIT_APP_NAME}.llext"
+  local source_artifact_file
 
   app_build_dir="$(get_unit_app_build_dir)"
   assert_build_dir "${app_build_dir}"
@@ -145,8 +186,18 @@ build_unit_app_external() {
     -DLLEXT_EDK_INSTALL_DIR="${edk_install_dir}"
   cmake --build "${app_build_dir}"
 
+  source_artifact_file="${app_build_dir}/${UNIT_APP_NAME}.llext"
+  [[ -s "${source_artifact_file}" ]] || {
+    echo "unit app build produced missing or empty artifact: ${source_artifact_file}" >&2
+    exit 2
+  }
+
   mkdir -p "${staged_artifact_dir}"
-  cp "${app_build_dir}/${UNIT_APP_NAME}.llext" "${staged_artifact_file}"
+  cp "${source_artifact_file}" "${staged_artifact_file}"
+  [[ -s "${staged_artifact_file}" ]] || {
+    echo "failed to stage non-empty unit app artifact: ${staged_artifact_file}" >&2
+    exit 2
+  }
 }
 
 while [[ $# -gt 0 ]]; do
@@ -174,6 +225,10 @@ while [[ $# -gt 0 ]]; do
     --no-c-style-check)
       CHECK_C_STYLE=0
       shift
+      ;;
+    --overlay-config)
+      OVERLAY_CONFIGS+=("$2")
+      shift 2
       ;;
     --extra-west-arg)
       EXTRA_WEST_ARGS+=("$2")
@@ -228,6 +283,7 @@ if [[ -z "${BUILD_DIR}" ]]; then
 fi
 
 assert_build_dir "${BUILD_DIR}"
+append_overlay_cmake_arg
 
 case "${PRESET}" in
   unit|unit-edk|unit-app|unit-ext)

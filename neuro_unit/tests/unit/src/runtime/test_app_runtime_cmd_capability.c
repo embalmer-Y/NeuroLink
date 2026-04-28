@@ -12,6 +12,89 @@ static int g_network_connect_calls;
 static int g_network_disconnect_calls;
 static int g_storage_mount_calls;
 static int g_storage_unmount_calls;
+static int g_app_runtime_load_calls;
+static int g_app_runtime_start_calls;
+static int g_app_runtime_stop_calls;
+static int g_app_runtime_unload_calls;
+static int g_app_runtime_load_return;
+static int g_app_runtime_start_return;
+static int g_app_runtime_unload_return;
+static char g_app_runtime_last_load_name[32];
+static char g_app_runtime_last_load_path[128];
+static char g_app_runtime_last_start_name[32];
+static char g_app_runtime_last_start_args[128];
+static char g_app_runtime_last_unload_name[32];
+static char g_app_runtime_sequence[96];
+
+static void append_app_runtime_sequence(const char *op)
+{
+	size_t used = strlen(g_app_runtime_sequence);
+
+	if (used > 0U && used < sizeof(g_app_runtime_sequence) - 1U) {
+		g_app_runtime_sequence[used++] = ',';
+		g_app_runtime_sequence[used] = '\0';
+	}
+
+	if (used < sizeof(g_app_runtime_sequence) - 1U) {
+		snprintk(&g_app_runtime_sequence[used],
+			sizeof(g_app_runtime_sequence) - used, "%s", op);
+	}
+}
+
+void app_runtime_test_reset(void)
+{
+	g_app_runtime_load_calls = 0;
+	g_app_runtime_start_calls = 0;
+	g_app_runtime_stop_calls = 0;
+	g_app_runtime_unload_calls = 0;
+	g_app_runtime_load_return = 0;
+	g_app_runtime_start_return = 0;
+	g_app_runtime_unload_return = 0;
+	memset(g_app_runtime_last_load_name, 0,
+		sizeof(g_app_runtime_last_load_name));
+	memset(g_app_runtime_last_load_path, 0,
+		sizeof(g_app_runtime_last_load_path));
+	memset(g_app_runtime_last_start_name, 0,
+		sizeof(g_app_runtime_last_start_name));
+	memset(g_app_runtime_last_start_args, 0,
+		sizeof(g_app_runtime_last_start_args));
+	memset(g_app_runtime_last_unload_name, 0,
+		sizeof(g_app_runtime_last_unload_name));
+	memset(g_app_runtime_sequence, 0, sizeof(g_app_runtime_sequence));
+}
+
+void app_runtime_test_set_load_return(int ret)
+{
+	g_app_runtime_load_return = ret;
+}
+
+void app_runtime_test_set_start_return(int ret)
+{
+	g_app_runtime_start_return = ret;
+}
+
+void app_runtime_test_set_unload_return(int ret)
+{
+	g_app_runtime_unload_return = ret;
+}
+
+int app_runtime_test_load_calls(void) { return g_app_runtime_load_calls; }
+
+int app_runtime_test_start_calls(void) { return g_app_runtime_start_calls; }
+
+int app_runtime_test_unload_calls(void) { return g_app_runtime_unload_calls; }
+
+const char *app_runtime_test_last_load_path(void)
+{
+	return g_app_runtime_last_load_path;
+}
+
+const char *app_runtime_test_last_start_args(void)
+{
+	return g_app_runtime_last_start_args;
+}
+
+const char *app_runtime_test_sequence(void) { return g_app_runtime_sequence; }
 
 static int mock_storage_mount(void)
 {
@@ -59,16 +142,28 @@ void app_runtime_get_policy(struct app_runtime_policy *policy)
 
 int app_runtime_load(const char *name, const char *path)
 {
-	ARG_UNUSED(name);
-	ARG_UNUSED(path);
-	return 0;
+	g_app_runtime_load_calls++;
+	append_app_runtime_sequence("load");
+	snprintk(g_app_runtime_last_load_name,
+		sizeof(g_app_runtime_last_load_name), "%s",
+		name != NULL ? name : "");
+	snprintk(g_app_runtime_last_load_path,
+		sizeof(g_app_runtime_last_load_path), "%s",
+		path != NULL ? path : "");
+	return g_app_runtime_load_return;
 }
 
 int app_runtime_start(const char *name, const char *start_args)
 {
-	ARG_UNUSED(name);
-	ARG_UNUSED(start_args);
-	return 0;
+	g_app_runtime_start_calls++;
+	append_app_runtime_sequence("start");
+	snprintk(g_app_runtime_last_start_name,
+		sizeof(g_app_runtime_last_start_name), "%s",
+		name != NULL ? name : "");
+	snprintk(g_app_runtime_last_start_args,
+		sizeof(g_app_runtime_last_start_args), "%s",
+		start_args != NULL ? start_args : "");
+	return g_app_runtime_start_return;
 }
 
 int app_runtime_suspend(const char *name)
@@ -86,13 +181,19 @@ int app_runtime_resume(const char *name)
 int app_runtime_stop(const char *name)
 {
 	ARG_UNUSED(name);
+	g_app_runtime_stop_calls++;
+	append_app_runtime_sequence("stop");
 	return 0;
 }
 
 int app_runtime_unload(const char *name)
 {
-	ARG_UNUSED(name);
-	return 0;
+	g_app_runtime_unload_calls++;
+	append_app_runtime_sequence("unload");
+	snprintk(g_app_runtime_last_unload_name,
+		sizeof(g_app_runtime_last_unload_name), "%s",
+		name != NULL ? name : "");
+	return g_app_runtime_unload_return;
 }
 
 bool app_runtime_supports_command_callback(const char *name)
@@ -115,6 +216,7 @@ static void test_reset(void *fixture)
 	g_network_disconnect_calls = 0;
 	g_storage_mount_calls = 0;
 	g_storage_unmount_calls = 0;
+	app_runtime_test_reset();
 	app_rt_clear_last_exception();
 	(void)app_runtime_cmd_set_config(NULL);
 	(void)neuro_unit_port_set_fs_ops(NULL);

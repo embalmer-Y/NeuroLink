@@ -22,6 +22,8 @@ SKIP_PREFLIGHT=0
 PREFLIGHT_REQUIRE_SERIAL=1
 ROUTER_DEBUG=0
 ROUTER_RUST_LOG=""
+FAILED_STEP="-"
+FAILURE_EXIT_CODE=0
 
 usage() {
   cat <<'EOF'
@@ -79,6 +81,10 @@ build_artifact_with_edk_external_app() {
   bash "${BUILD_SCRIPT}" --preset unit-app --no-c-style-check
 }
 
+artifact_is_nonempty_file() {
+  [[ -f "$1" ]] && [[ -s "$1" ]]
+}
+
 output_has_error_reply() {
   local output_text="$1"
 
@@ -106,8 +112,17 @@ for reply in payload.get("replies", []):
   if not reply.get("ok", True):
     raise SystemExit(1)
   reply_payload = reply.get("payload")
-  if isinstance(reply_payload, dict) and reply_payload.get("status") == "error":
-    raise SystemExit(1)
+  if isinstance(reply_payload, dict):
+    reply_status = str(reply_payload.get("status", ""))
+    if reply_status in {
+      "error",
+      "not_implemented",
+      "invalid_input",
+      "query_failed",
+      "no_reply",
+      "error_reply",
+    }:
+      raise SystemExit(1)
 
 raise SystemExit(0)
 PY
@@ -137,6 +152,26 @@ invoke_step() {
   append_evidence "${step}" "${rc}" "${command_line}" "${output}"
   printf '%s\n' "${output}"
   return "${rc}"
+}
+
+run_smoke_step() {
+  local step="$1"
+  local rc
+  shift
+
+  set +e
+  invoke_step "${step}" "$@"
+  rc=$?
+  set -e
+
+  if [[ ${rc} -eq 0 ]]; then
+    return 0
+  fi
+
+  FAILURE_EXIT_CODE=${rc}
+  FAILED_STEP="${step}"
+  RESULT="FAIL"
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -234,18 +269,16 @@ fi
 
 cd "${ROOT_DIR}"
 
-if [[ ! -f "${ARTIFACT_FILE}" ]]; then
+if [[ "${ARTIFACT_FILE}" == "${DEFAULT_ARTIFACT_FILE}" ]]; then
   build_rc=1
   build_output=""
-  if [[ "${ARTIFACT_FILE}" == "${DEFAULT_ARTIFACT_FILE}" ]]; then
-    set +e
-    build_output="$(build_artifact_with_edk_external_app 2>&1)"
-    build_rc=$?
-    set -e
-  fi
+  set +e
+  build_output="$(build_artifact_with_edk_external_app 2>&1)"
+  build_rc=$?
+  set -e
 
-  if [[ ${build_rc} -ne 0 ]] || [[ ! -f "${ARTIFACT_FILE}" ]]; then
-    echo "artifact file not found: ${ARTIFACT_FILE}" >&2
+  if [[ ${build_rc} -ne 0 ]] || ! artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
+    echo "artifact file missing or empty: ${ARTIFACT_FILE}" >&2
     if [[ -n "${build_output}" ]]; then
       echo "auto-build output:" >&2
       printf '%s\n' "${build_output}" >&2
@@ -254,6 +287,11 @@ if [[ ! -f "${ARTIFACT_FILE}" ]]; then
     echo "or provide --artifact-file pointing to an existing llext" >&2
     exit 2
   fi
+elif ! artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
+  echo "artifact file missing or empty: ${ARTIFACT_FILE}" >&2
+  echo "build default artifact with EDK external app flow: bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check" >&2
+  echo "or provide --artifact-file pointing to an existing llext" >&2
+  exit 2
 fi
 
 python3 -c 'import zenoh' >/dev/null 2>&1 || {
@@ -312,48 +350,48 @@ SUMMARY_FILE="${OUTPUT_DIR}/SMOKE-017B-LINUX-001-${TIMESTAMP}.summary.txt"
 
 RESULT="PASS"
 
-if ! invoke_step "query_device" query device; then
-  RESULT="FAIL"
+if ! run_smoke_step "query_device" query device; then
+  :
 fi
 
-if [[ "${RESULT}" == "PASS" ]] && ! invoke_step \
+if [[ "${RESULT}" == "PASS" ]] && ! run_smoke_step \
   "lease_acquire_activate" \
   lease acquire \
   --resource "${ACTIVATE_LEASE_RESOURCE}" \
   --lease-id "${ACTIVATE_LEASE_ID}" \
   --ttl-ms "${LEASE_TTL_MS}"; then
-  RESULT="FAIL"
+  :
 fi
 
-if [[ "${RESULT}" == "PASS" ]] && ! invoke_step \
+if [[ "${RESULT}" == "PASS" ]] && ! run_smoke_step \
   "deploy_prepare" \
   deploy prepare \
   --app-id "${APP_ID}" \
   --file "${ARTIFACT_FILE}"; then
-  RESULT="FAIL"
+  :
 fi
 
-if [[ "${RESULT}" == "PASS" ]] && ! invoke_step \
+if [[ "${RESULT}" == "PASS" ]] && ! run_smoke_step \
   "deploy_verify" \
   deploy verify \
   --app-id "${APP_ID}"; then
-  RESULT="FAIL"
+  :
 fi
 
-if [[ "${RESULT}" == "PASS" ]] && ! invoke_step \
+if [[ "${RESULT}" == "PASS" ]] && ! run_smoke_step \
   "deploy_activate" \
   deploy activate \
   --app-id "${APP_ID}" \
   --lease-id "${ACTIVATE_LEASE_ID}" \
   --start-args "mode=demo,profile=release"; then
-  RESULT="FAIL"
+  :
 fi
 
-if [[ "${RESULT}" == "PASS" ]] && ! invoke_step \
+if [[ "${RESULT}" == "PASS" ]] && ! run_smoke_step \
   "monitor_events" \
   monitor events \
   --duration "${EVENTS_DURATION_SEC}"; then
-  RESULT="FAIL"
+  :
 fi
 
 {
@@ -362,6 +400,8 @@ fi
   echo "app_id=${APP_ID}"
   echo "artifact_file=${ARTIFACT_FILE}"
   echo "lease_id=${ACTIVATE_LEASE_ID}"
+  echo "failed_step=${FAILED_STEP}"
+  echo "failure_exit_code=${FAILURE_EXIT_CODE}"
   echo "evidence_file=${EVIDENCE_FILE}"
 } >"${SUMMARY_FILE}"
 

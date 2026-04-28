@@ -1,7 +1,10 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/mem_stats.h>
 #include <zephyr/sys/util.h>
+
+#include <sys_malloc.h>
 
 #include <errno.h>
 #include <stdbool.h>
@@ -83,6 +86,7 @@ static bool runtime_app_is_loaded(const char *app_id);
 static int neuro_download_update_artifact(const char *app_id,
 	const char *artifact_key, size_t total_size, size_t chunk_size,
 	const char *dst_path);
+static void log_update_memory_snapshot(const char *stage);
 static void neuro_register_app_callback_command(const char *app_id);
 static void log_update_transaction(const char *app_id, const char *action,
 	const char *request_id, const char *phase, int code,
@@ -399,10 +403,32 @@ static int neuro_download_update_artifact(const char *app_id,
 	}
 
 	ret = neuro_unit_zenoh_download_artifact(&aux_session, app_id,
-		artifact_key, total_size, chunk_size, dst_path, NULL);
+		artifact_key, total_size, chunk_size, dst_path,
+		log_update_memory_snapshot);
 	(void)z_close(z_loan_mut(aux_session), NULL);
 	z_drop(z_move(aux_session));
 	return ret;
+}
+
+static void log_update_memory_snapshot(const char *stage)
+{
+#if defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
+	struct sys_memory_stats stats;
+	int ret;
+
+	ret = malloc_runtime_stats_get(&stats);
+	if (ret != 0) {
+		LOG_WRN("update heap snapshot failed stage=%s ret=%d",
+			stage != NULL ? stage : "-", ret);
+		return;
+	}
+
+	LOG_INF("update heap snapshot stage=%s free=%zu allocated=%zu max_allocated=%zu",
+		stage != NULL ? stage : "-", stats.free_bytes,
+		stats.allocated_bytes, stats.max_allocated_bytes);
+#else
+	ARG_UNUSED(stage);
+#endif
 }
 
 static void log_transport_health_snapshot(

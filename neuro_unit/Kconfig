@@ -22,10 +22,12 @@ config NEUROLINK_ZENOH_CONNECT
 
 config NEUROLINK_ZENOH_PICO_DEBUG
 	bool "Enable zenoh-pico debug logs"
-	default y
+	default n
 	help
 	  Enable low-level zenoh-pico transport/session debug logs through
-	  compile-time debug macros.
+	  compile-time debug macros. Keep this disabled for the release default
+	  path to avoid flooding the system logger during activate/update flows;
+	  enable it explicitly for transport diagnostics.
 
 config NEUROLINK_ZENOH_PICO_DEBUG_LEVEL
 	int "zenoh-pico debug verbosity"
@@ -77,15 +79,24 @@ config NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE
 	  llext_load(). This avoids relying on a large contiguous malloc block
 	  after networking and Zenoh have fragmented the general system heap.
 
-config NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
-	bool "Prefer PSRAM for LLEXT ELF staging buffer"
-	depends on ESP_SPIRAM
+config NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER
+	bool "Prefer external memory for LLEXT ELF staging buffer"
 	default n
 	help
-	  Allocate the transient LLEXT ELF staging buffer from ESP PSRAM before
-	  falling back to the static internal-RAM buffer or malloc. This keeps the
-	  large artifact read buffer out of scarce internal DRAM while preserving
-	  the existing fallback path when PSRAM allocation is unavailable. Keep this
-	  experimental until hardware smoke proves LLEXT loading is safe from PSRAM.
+	  Allocate the transient LLEXT ELF staging buffer from the active Unit
+	  port memory provider before falling back to the static internal-RAM
+	  buffer or malloc. Keep this experimental until provider-specific
+	  hardware smoke proves LLEXT loading is safe from external memory.
+
+config NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
+	bool "Legacy alias: prefer PSRAM for LLEXT ELF staging buffer"
+	depends on ESP_SPIRAM
+	select NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER
+	default n
+	help
+	  Compatibility symbol for existing ESP32-S3 experiments. New code should
+	  use NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER so external staging is
+	  expressed through the port memory provider contract rather than through
+	  an ESP-specific runtime policy name.
 
 endmenu

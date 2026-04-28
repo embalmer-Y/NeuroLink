@@ -2,12 +2,10 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/llext/llext.h>
 #include <zephyr/llext/buf_loader.h>
+#include <zephyr/sys/mem_stats.h>
 #include <zephyr/sys/slist.h>
 
-#if defined(CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER) &&                   \
-	CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
-#include <zephyr/multi_heap/shared_multi_heap.h>
-#endif
+#include <sys_malloc.h>
 
 #include <errno.h>
 #include <stdint.h>
@@ -16,6 +14,7 @@
 
 #include "app_runtime.h"
 #include "app_runtime_arch.h"
+#include "app_runtime_elf_staging.h"
 #include "neuro_unit_port.h"
 
 LOG_MODULE_REGISTER(app_runtime, LOG_LEVEL_INF);
@@ -24,6 +23,7 @@ LOG_MODULE_REGISTER(app_runtime, LOG_LEVEL_INF);
 #define APP_PATH_MAX_LEN 127
 #define APP_START_ARGS_RAW_MAX_LEN 255
 #define APP_RT_DEFAULT_PRIORITY 128U
+#define APP_RT_STAGING_PROVIDER_MAX_LEN 31
 
 typedef int (*app_init_fn_t)(void);
 typedef int (*app_start_legacy_fn_t)(const char *args);
@@ -34,12 +34,6 @@ typedef int (*app_stop_fn_t)(void);
 typedef int (*app_deinit_fn_t)(void);
 typedef int (*app_on_command_fn_t)(const char *command_name,
 	const char *request_json, char *reply_buf, size_t reply_buf_len);
-
-enum app_runtime_elf_buffer_source {
-	APP_RUNTIME_ELF_BUFFER_MALLOC = 0,
-	APP_RUNTIME_ELF_BUFFER_STATIC,
-	APP_RUNTIME_ELF_BUFFER_PSRAM,
-};
 
 struct app_runtime_app {
 	sys_snode_t node;
@@ -71,16 +65,16 @@ struct app_runtime_ctx {
 	sys_slist_t apps;
 };
 
-static struct app_runtime_ctx g_ctx;
+struct app_runtime_staging_snapshot {
+	bool valid;
+	char path[APP_PATH_MAX_LEN + 1];
+	size_t size;
+	enum app_runtime_elf_buffer_source source;
+	char provider[APP_RT_STAGING_PROVIDER_MAX_LEN + 1];
+};
 
-#if defined(CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE) &&                    \
-	CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE > 0
-static bool g_static_elf_buf_in_use;
-static union {
-	uint32_t align;
-	uint8_t bytes[CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE];
-} g_static_elf_buf;
-#endif
+static struct app_runtime_ctx g_ctx;
+static struct app_runtime_staging_snapshot g_last_staging_snapshot;
 
 static int app_runtime_fail(
 	const char *op, enum app_rt_exception_code code, int cause);
@@ -131,78 +125,53 @@ static int app_runtime_fail_errno(const char *op, int errno_value)
 	return err;
 }
 
-static const char *app_runtime_elf_buffer_source_str(
+static void app_runtime_log_malloc_snapshot(const char *stage, const char *path)
+{
+#if defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
+	struct sys_memory_stats stats;
+	int ret;
+
+	ret = malloc_runtime_stats_get(&stats);
+	if (ret != 0) {
+		LOG_WRN("app-runtime heap snapshot failed stage=%s path=%s ret=%d",
+			stage, path != NULL ? path : "-", ret);
+		return;
+	}
+
+	LOG_INF("app-runtime heap snapshot stage=%s path=%s free=%zu allocated=%zu max_allocated=%zu",
+		stage, path != NULL ? path : "-", stats.free_bytes,
+		stats.allocated_bytes, stats.max_allocated_bytes);
+#else
+	ARG_UNUSED(stage);
+	ARG_UNUSED(path);
+#endif
+}
+
+static void app_runtime_remember_staging_snapshot(const char *path, size_t size,
 	enum app_runtime_elf_buffer_source source)
 {
-	switch (source) {
-	case APP_RUNTIME_ELF_BUFFER_PSRAM:
-		return "psram";
-	case APP_RUNTIME_ELF_BUFFER_STATIC:
-		return "static";
-	case APP_RUNTIME_ELF_BUFFER_MALLOC:
-	default:
-		return "malloc";
-	}
+	g_last_staging_snapshot.valid = true;
+	snprintk(g_last_staging_snapshot.path,
+		sizeof(g_last_staging_snapshot.path), "%s",
+		path != NULL ? path : "-");
+	g_last_staging_snapshot.size = size;
+	g_last_staging_snapshot.source = source;
+	snprintk(g_last_staging_snapshot.provider,
+		sizeof(g_last_staging_snapshot.provider), "%s",
+		app_runtime_elf_staging_provider_str());
 }
 
-static uint8_t *app_runtime_alloc_elf_buffer(
-	size_t size, enum app_runtime_elf_buffer_source *source)
+static void app_runtime_log_staging_snapshot(void)
 {
-	uint8_t *buf;
-
-	if (source == NULL) {
-		return NULL;
-	}
-
-	*source = APP_RUNTIME_ELF_BUFFER_MALLOC;
-#if defined(CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER) &&                   \
-	CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
-	buf = shared_multi_heap_aligned_alloc(SMH_REG_ATTR_EXTERNAL, 32, size);
-	if (buf != NULL) {
-		*source = APP_RUNTIME_ELF_BUFFER_PSRAM;
-		return buf;
-	}
-	LOG_WRN("LLEXT ELF PSRAM staging alloc failed: bytes=%zu", size);
-#endif
-#if defined(CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE) &&                    \
-	CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE > 0
-	if (!g_static_elf_buf_in_use &&
-		size <= sizeof(g_static_elf_buf.bytes)) {
-		g_static_elf_buf_in_use = true;
-		*source = APP_RUNTIME_ELF_BUFFER_STATIC;
-		return g_static_elf_buf.bytes;
-	}
-#endif
-
-	return malloc(size);
-}
-
-static void app_runtime_release_elf_buffer(
-	uint8_t *buf, enum app_runtime_elf_buffer_source source)
-{
-	if (buf == NULL) {
+	if (!g_last_staging_snapshot.valid) {
 		return;
 	}
 
-	if (source == APP_RUNTIME_ELF_BUFFER_PSRAM) {
-#if defined(CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER) &&                   \
-	CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
-		shared_multi_heap_free(buf);
-#endif
-		return;
-	}
-
-	if (source == APP_RUNTIME_ELF_BUFFER_STATIC) {
-#if defined(CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE) &&                    \
-	CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE > 0
-		if (buf == g_static_elf_buf.bytes) {
-			g_static_elf_buf_in_use = false;
-		}
-#endif
-		return;
-	}
-
-	free(buf);
+	LOG_INF("app-runtime ELF staging allocation path=%s bytes=%zu source=%s provider=%s",
+		g_last_staging_snapshot.path, g_last_staging_snapshot.size,
+		app_runtime_elf_buffer_source_str(
+			g_last_staging_snapshot.source),
+		g_last_staging_snapshot.provider);
 }
 
 static int load_file_to_ram(const char *path, uint8_t **out_buf,
@@ -237,15 +206,21 @@ static int load_file_to_ram(const char *path, uint8_t **out_buf,
 		return -EINVAL;
 	}
 
-	buf = app_runtime_alloc_elf_buffer(ent.size, out_source);
+	app_runtime_log_malloc_snapshot("load_file:before_alloc", path);
+	buf = app_runtime_elf_staging_alloc(ent.size, out_source);
 	if (buf == NULL) {
 		return -ENOMEM;
 	}
+	app_runtime_log_malloc_snapshot("load_file:after_alloc", path);
+	app_runtime_remember_staging_snapshot(path, ent.size, *out_source);
+	LOG_INF("app-runtime ELF staging allocation path=%s bytes=%zu source=%s provider=%s",
+		path, ent.size, app_runtime_elf_buffer_source_str(*out_source),
+		app_runtime_elf_staging_provider_str());
 
 	fs_file_t_init(&file);
 	ret = fs_ops->open(&file, path, FS_O_READ);
 	if (ret) {
-		app_runtime_release_elf_buffer(buf, *out_source);
+		app_runtime_elf_staging_release(buf, *out_source);
 		return ret;
 	}
 
@@ -254,17 +229,18 @@ static int load_file_to_ram(const char *path, uint8_t **out_buf,
 	rd = fs_ops->read(&file, buf, ent.size);
 	(void)fs_ops->close(&file);
 	if (rd < 0) {
-		app_runtime_release_elf_buffer(buf, *out_source);
+		app_runtime_elf_staging_release(buf, *out_source);
 		return (int)rd;
 	}
 
 	if ((size_t)rd != ent.size) {
-		app_runtime_release_elf_buffer(buf, *out_source);
+		app_runtime_elf_staging_release(buf, *out_source);
 		return -EIO;
 	}
 
 	LOG_INF("%s: fs_read ok path=%s bytes=%zu source=%s", __func__, path,
 		ent.size, app_runtime_elf_buffer_source_str(*out_source));
+	app_runtime_log_malloc_snapshot("load_file:after_read", path);
 
 	*out_buf = buf;
 	*out_size = ent.size;
@@ -649,7 +625,7 @@ static void app_runtime_cleanup_app(struct app_runtime_app *app)
 	}
 
 	if (app->elf_buf != NULL) {
-		app_runtime_release_elf_buffer(
+		app_runtime_elf_staging_release(
 			app->elf_buf, app->elf_buf_source);
 	}
 
@@ -838,6 +814,8 @@ int app_runtime_load(const char *name, const char *path)
 	}
 
 	LOG_INF("%s: app_init ok name=%s", __func__, name);
+	app_runtime_log_malloc_snapshot("load:post_init", path);
+	app_runtime_log_staging_snapshot();
 
 	app->state = APP_RT_INITIALIZED;
 	sys_slist_append(&g_ctx.apps, &app->node);
@@ -916,6 +894,8 @@ int app_runtime_start(const char *name, const char *start_args)
 
 	app->state = APP_RT_RUNNING;
 	app->auto_suspended = false;
+	app_runtime_log_malloc_snapshot("start:post_app_start", app->path);
+	app_runtime_log_staging_snapshot();
 	k_mutex_unlock(&g_ctx.lock);
 	app_rt_clear_last_exception();
 	LOG_INF("%s: app running name=%s", __func__, name);
