@@ -1,6 +1,8 @@
 import io
 import json
 from pathlib import Path
+import re
+import shlex
 import tempfile
 import sys
 import types
@@ -51,6 +53,22 @@ import neuro_protocol
 
 
 FIXTURES_DIR = THIS_DIR / "fixtures"
+
+
+def extract_wrapper_cli_args(markdown_text: str) -> list[list[str]]:
+    commands: list[list[str]] = []
+    pattern = re.compile(
+        r"^python\s+applocation/NeuroLink/neuro_cli/scripts/"
+        r"invoke_neuro_cli\.py\s+(.+)$",
+        re.MULTILINE,
+    )
+    for match in pattern.finditer(markdown_text):
+        commands.append(shlex.split(match.group(1)))
+    return commands
+
+
+def extract_workflow_plan_names(markdown_text: str) -> set[str]:
+    return set(re.findall(r"workflow plan ([a-z0-9-]+)", markdown_text))
 
 
 class TestNeuroCliPayloadPolicy(unittest.TestCase):
@@ -400,7 +418,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.1.7")
+        self.assertEqual(payload["release_target"], "1.1.8")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -408,15 +426,51 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertTrue(payload["protocol"]["cbor_v2_enabled"])
         self.assertTrue(payload["agent_skill"]["structured_stdout"])
         self.assertEqual(payload["agent_skill"]["name"], "neuro-cli")
+        self.assertTrue(payload["agent_skill"]["canonical_exists"])
+        self.assertTrue(payload["agent_skill"]["project_shared_exists"])
+        self.assertTrue(payload["agent_skill"]["wrapper_exists"])
         self.assertEqual(
-            payload["agent_skill"]["project_shared_path"],
+            Path(payload["agent_skill"]["canonical_path"]).as_posix().split(
+                "applocation/NeuroLink/", 1
+            )[-1],
+            "neuro_cli/skill/SKILL.md",
+        )
+        self.assertEqual(
+            Path(payload["agent_skill"]["project_shared_path"]).as_posix().split(
+                "applocation/NeuroLink/", 1
+            )[-1],
             ".github/skills/neuro-cli/SKILL.md",
         )
+        self.assertEqual(
+            Path(payload["agent_skill"]["discovery_adapter_path"]).as_posix().split(
+                "applocation/NeuroLink/", 1
+            )[-1],
+            ".github/skills/neuro-cli/SKILL.md",
+        )
+        self.assertEqual(payload["agent_skill"]["source_of_truth"], "canonical")
         self.assertEqual(
             payload["agent_skill"]["callback_handler_execution"],
             "explicit_audited_runner",
         )
         self.assertIn("capabilities", payload)
+        workflow_surface = payload["workflow_surface"]
+        self.assertEqual(
+            workflow_surface["schema_version"],
+            neuro_cli.WORKFLOW_PLAN_SCHEMA_VERSION,
+        )
+        self.assertEqual(workflow_surface["plan_command"], "workflow plan <name>")
+        workflow_names = {item["workflow"] for item in workflow_surface["plans"]}
+        self.assertEqual(workflow_names, set(neuro_cli.WORKFLOW_PLANS.keys()))
+        self.assertIn("setup", workflow_surface["categories"])
+        self.assertIn("discovery", workflow_surface["categories"])
+        self.assertIn("control", workflow_surface["categories"])
+        destructive = {
+            item["workflow"]
+            for item in workflow_surface["plans"]
+            if item["destructive"]
+        }
+        self.assertIn("control-deploy", destructive)
+        self.assertIn("control-callback", destructive)
 
     def test_parser_parses_system_init_without_session(self) -> None:
         parser = neuro_cli.build_parser()
@@ -438,8 +492,17 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertFalse(payload["shell_setup"]["can_modify_parent_shell"])
         self.assertEqual(payload["agent_skill"]["name"], "neuro-cli")
+        self.assertTrue(payload["agent_skill"]["canonical_exists"])
         self.assertTrue(payload["agent_skill"]["project_shared_exists"])
         self.assertTrue(payload["agent_skill"]["wrapper_exists"])
+        self.assertIn(
+            "neuro_cli/skill/SKILL.md",
+            payload["agent_skill"]["canonical_path"],
+        )
+        self.assertIn(
+            ".github/skills/neuro-cli/SKILL.md",
+            payload["agent_skill"]["project_shared_path"],
+        )
         self.assertTrue(payload["scripts"]["setup_neurolink_env.sh"]["exists"])
 
     def test_parser_parses_workflow_plan_without_session(self) -> None:
@@ -449,6 +512,54 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
         self.assertFalse(args.requires_session)
         self.assertEqual(args.workflow, "app-build")
+
+    def test_parser_accepts_setup_linux_workflow_plan(self) -> None:
+        parser = neuro_cli.build_parser()
+        args = parser.parse_args(["--output", "json", "workflow", "plan", "setup-linux"])
+
+        self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
+        self.assertFalse(args.requires_session)
+        self.assertEqual(args.workflow, "setup-linux")
+
+    def test_parser_accepts_setup_windows_workflow_plan(self) -> None:
+        parser = neuro_cli.build_parser()
+        args = parser.parse_args(["--output", "json", "workflow", "plan", "setup-windows"])
+
+        self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
+        self.assertFalse(args.requires_session)
+        self.assertEqual(args.workflow, "setup-windows")
+
+    def test_parser_accepts_discovery_workflow_plans(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        for workflow in (
+            "discover-host",
+            "discover-router",
+            "discover-serial",
+            "discover-device",
+            "discover-apps",
+            "discover-leases",
+        ):
+            args = parser.parse_args(["--output", "json", "workflow", "plan", workflow])
+            self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
+            self.assertFalse(args.requires_session)
+            self.assertEqual(args.workflow, workflow)
+
+    def test_parser_accepts_control_workflow_plans(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        for workflow in (
+            "control-health",
+            "control-deploy",
+            "control-app-invoke",
+            "control-callback",
+            "control-monitor",
+            "control-cleanup",
+        ):
+            args = parser.parse_args(["--output", "json", "workflow", "plan", workflow])
+            self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
+            self.assertFalse(args.requires_session)
+            self.assertEqual(args.workflow, workflow)
 
     def test_parser_accepts_agent_evidence_workflow_plans(self) -> None:
         parser = neuro_cli.build_parser()
@@ -702,6 +813,278 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertIn("invoke_neuro_cli.py", payload["agent_skill"]["wrapper"])
         self.assertIn("preflight_neurolink_linux.sh", payload["commands"][0])
 
+    def test_workflow_plans_include_low_parameter_agent_metadata(self) -> None:
+        required_fields = {
+            "schema_version",
+            "host_support",
+            "requires_hardware",
+            "requires_serial",
+            "requires_router",
+            "requires_network",
+            "destructive",
+            "preconditions",
+            "expected_success",
+            "failure_statuses",
+            "cleanup",
+        }
+
+        for workflow in neuro_cli.WORKFLOW_PLANS:
+            args = Namespace(output="json", workflow=workflow)
+            payload = neuro_cli.build_workflow_plan(args)
+
+            self.assertEqual(
+                payload["schema_version"],
+                neuro_cli.WORKFLOW_PLAN_SCHEMA_VERSION,
+                workflow,
+            )
+            self.assertTrue(required_fields.issubset(payload), workflow)
+            self.assertIsInstance(payload["host_support"], list, workflow)
+            self.assertIsInstance(payload["preconditions"], list, workflow)
+            self.assertIsInstance(payload["expected_success"], list, workflow)
+            self.assertIsInstance(payload["failure_statuses"], list, workflow)
+            self.assertIsInstance(payload["cleanup"], list, workflow)
+            self.assertTrue(payload["host_support"], workflow)
+            self.assertTrue(payload["preconditions"], workflow)
+            self.assertTrue(payload["expected_success"], workflow)
+
+    def test_workflow_plan_metadata_marks_hardware_and_destructive_paths(self) -> None:
+        preflight = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="preflight")
+        )
+        callback_smoke = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="callback-smoke")
+        )
+        cli_tests = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="cli-tests")
+        )
+
+        self.assertTrue(preflight["requires_hardware"])
+        self.assertTrue(preflight["requires_serial"])
+        self.assertTrue(preflight["requires_router"])
+        self.assertFalse(preflight["destructive"])
+        self.assertIn("serial_device_missing", str(preflight["failure_statuses"]))
+
+        self.assertTrue(callback_smoke["requires_hardware"])
+        self.assertTrue(callback_smoke["requires_router"])
+        self.assertTrue(callback_smoke["destructive"])
+        self.assertIn("release callback smoke lease", " ".join(callback_smoke["cleanup"]))
+
+        self.assertFalse(cli_tests["requires_hardware"])
+        self.assertFalse(cli_tests["requires_router"])
+        self.assertIn("windows", cli_tests["host_support"])
+        self.assertFalse(cli_tests["requires_network"])
+
+    def test_setup_linux_workflow_plan_documents_zero_host_bootstrap(self) -> None:
+        payload = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="setup-linux")
+        )
+        commands = "\n".join(payload["commands"])
+
+        self.assertEqual(payload["category"], "setup")
+        self.assertEqual(payload["host_support"], ["linux"])
+        self.assertFalse(payload["requires_hardware"])
+        self.assertFalse(payload["requires_serial"])
+        self.assertFalse(payload["requires_router"])
+        self.assertTrue(payload["requires_network"])
+        self.assertFalse(payload["destructive"])
+        self.assertIn("sudo apt-get install", commands)
+        self.assertIn("python3 -m venv .venv", commands)
+        self.assertIn("west update", commands)
+        self.assertIn("cat zephyr/SDK_VERSION", commands)
+        self.assertIn("ZEPHYR_SDK_INSTALL_DIR", commands)
+        self.assertIn("setup_neurolink_env.sh --activate --strict", commands)
+        self.assertIn("workflow plan preflight", commands)
+        self.assertIn("operator approves sudo", " ".join(payload["preconditions"]))
+        self.assertIn("zephyr_sdk_missing", str(payload["failure_statuses"]))
+
+    def test_setup_windows_workflow_plan_documents_zero_host_bootstrap(self) -> None:
+        payload = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="setup-windows")
+        )
+        commands = "\n".join(payload["commands"])
+
+        self.assertEqual(payload["category"], "setup")
+        self.assertEqual(payload["host_support"], ["windows", "wsl"])
+        self.assertFalse(payload["requires_hardware"])
+        self.assertFalse(payload["requires_serial"])
+        self.assertFalse(payload["requires_router"])
+        self.assertTrue(payload["requires_network"])
+        self.assertFalse(payload["destructive"])
+        self.assertIn("winget install", commands)
+        self.assertIn("py -3 -m venv .venv", commands)
+        self.assertIn("Activate.ps1", commands)
+        self.assertIn("west update", commands)
+        self.assertIn("Get-Content zephyr/SDK_VERSION", commands)
+        self.assertIn("setup_neurolink_env.ps1 -Strict", commands)
+        self.assertIn("workflow plan preflight", commands)
+        self.assertIn("operator approves winget", " ".join(payload["preconditions"]))
+        self.assertIn("execution_policy_blocked", str(payload["failure_statuses"]))
+        self.assertIn("wsl_usb_required", str(payload["failure_statuses"]))
+
+    def test_discovery_workflow_plans_document_json_contracts(self) -> None:
+        expected = {
+            "discover-host": {
+                "command": "system init",
+                "status": "workspace_not_found",
+                "hardware": False,
+                "router": False,
+            },
+            "discover-router": {
+                "command": "preflight_neurolink_linux.sh",
+                "status": "router_not_listening",
+                "hardware": False,
+                "router": True,
+            },
+            "discover-serial": {
+                "command": "--require-serial",
+                "status": "serial_device_missing",
+                "hardware": True,
+                "router": False,
+            },
+            "discover-device": {
+                "command": "query device",
+                "status": "no_reply",
+                "hardware": True,
+                "router": True,
+            },
+            "discover-apps": {
+                "command": "query apps",
+                "status": "app_not_running",
+                "hardware": True,
+                "router": True,
+            },
+            "discover-leases": {
+                "command": "query leases",
+                "status": "lease_conflict",
+                "hardware": True,
+                "router": True,
+            },
+        }
+
+        for workflow, checks in expected.items():
+            payload = neuro_cli.build_workflow_plan(
+                Namespace(output="json", workflow=workflow)
+            )
+            commands = "\n".join(payload["commands"])
+
+            self.assertEqual(payload["category"], "discovery", workflow)
+            self.assertFalse(payload["destructive"], workflow)
+            self.assertFalse(payload["executes_commands"], workflow)
+            self.assertEqual(payload["requires_hardware"], checks["hardware"], workflow)
+            self.assertEqual(payload["requires_router"], checks["router"], workflow)
+            self.assertIn(checks["command"], commands, workflow)
+            self.assertIn(checks["status"], str(payload["failure_statuses"]), workflow)
+            self.assertIn(checks["status"], str(payload["json_contract"]), workflow)
+
+    def test_discovery_workflow_plans_use_linux_wrapper_or_json_commands(self) -> None:
+        for workflow in (
+            "discover-host",
+            "discover-router",
+            "discover-serial",
+            "discover-device",
+            "discover-apps",
+            "discover-leases",
+        ):
+            payload = neuro_cli.build_workflow_plan(
+                Namespace(output="json", workflow=workflow)
+            )
+            commands = "\n".join(payload["commands"])
+
+            self.assertNotIn("winget", commands, workflow)
+            self.assertNotIn("Activate.ps1", commands, workflow)
+            self.assertTrue(
+                "invoke_neuro_cli.py" in commands or "--output json" in commands,
+                workflow,
+            )
+
+    def test_control_workflow_plans_document_safety_and_cleanup(self) -> None:
+        expected = {
+            "control-health": {
+                "command": "query device",
+                "status": "no_reply",
+                "destructive": False,
+                "cleanup": "",
+            },
+            "control-deploy": {
+                "command": "deploy activate",
+                "status": "lease_conflict",
+                "destructive": True,
+                "cleanup": "deploy",
+            },
+            "control-app-invoke": {
+                "command": "app invoke",
+                "status": "app_not_running",
+                "destructive": True,
+                "cleanup": "app-control",
+            },
+            "control-callback": {
+                "command": "app callback-config",
+                "status": "callback_timeout",
+                "destructive": True,
+                "cleanup": "callback",
+            },
+            "control-monitor": {
+                "command": "monitor app-events",
+                "status": "handler_failed",
+                "destructive": False,
+                "cleanup": "undeclare subscriber",
+            },
+            "control-cleanup": {
+                "command": "lease release",
+                "status": "lease_not_found",
+                "destructive": False,
+                "cleanup": "query leases",
+            },
+        }
+
+        for workflow, checks in expected.items():
+            payload = neuro_cli.build_workflow_plan(
+                Namespace(output="json", workflow=workflow)
+            )
+            commands = "\n".join(payload["commands"])
+
+            self.assertEqual(payload["category"], "control", workflow)
+            self.assertFalse(payload["executes_commands"], workflow)
+            self.assertEqual(payload["destructive"], checks["destructive"], workflow)
+            self.assertTrue(payload["requires_hardware"], workflow)
+            self.assertTrue(payload["requires_router"], workflow)
+            self.assertIn(checks["command"], commands, workflow)
+            self.assertIn(checks["status"], str(payload["failure_statuses"]), workflow)
+            self.assertIn(checks["status"], str(payload["json_contract"]), workflow)
+            if checks["cleanup"]:
+                self.assertIn(checks["cleanup"], "\n".join(payload["cleanup"] + payload["commands"]), workflow)
+
+    def test_control_workflow_plans_keep_lease_and_handler_boundaries_explicit(self) -> None:
+        deploy = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="control-deploy")
+        )
+        app_invoke = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="control-app-invoke")
+        )
+        callback = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="control-callback")
+        )
+        monitor = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="control-monitor")
+        )
+
+        deploy_commands = "\n".join(deploy["commands"])
+        app_commands = "\n".join(app_invoke["commands"])
+        callback_commands = "\n".join(callback["commands"])
+        monitor_commands = "\n".join(monitor["commands"])
+
+        self.assertIn("update/app/neuro_unit_app/activate", deploy_commands)
+        self.assertIn("lease release --lease-id", deploy_commands)
+        self.assertIn("query leases", deploy_commands)
+        self.assertIn("app/neuro_unit_app/control", app_commands)
+        self.assertIn("lease release --lease-id", app_commands)
+        self.assertIn("--mode on", callback_commands)
+        self.assertIn("--mode off", callback_commands)
+        self.assertIn("workflow plan callback-smoke", callback_commands)
+        self.assertIn("--handler-python", monitor_commands)
+        self.assertIn("callback_handler.py", monitor_commands)
+        self.assertIn("handler audit", " ".join(monitor["expected_success"]))
+
     def test_memory_evidence_workflow_plan_outputs_collector_command(self) -> None:
         args = Namespace(output="json", workflow="memory-evidence")
 
@@ -716,6 +1099,10 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertFalse(payload["executes_commands"])
         self.assertIn("collect_neurolink_memory_evidence.py", payload["commands"][0])
         self.assertIn("--run-build", payload["commands"][0])
+        self.assertIn(
+            f"--label release-{neuro_cli.RELEASE_TARGET}-memory-evidence",
+            payload["commands"][0],
+        )
         self.assertIn("applocation/NeuroLink/memory-evidence", payload["artifacts"])
 
     def test_release_closure_workflow_plan_lists_gates_without_execution(self) -> None:
@@ -733,6 +1120,7 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertEqual(payload["workflow"], "release-closure")
         self.assertFalse(payload["executes_commands"])
         self.assertIn("collect_neurolink_memory_evidence.py", commands)
+        self.assertIn(f"--label release-{neuro_cli.RELEASE_TARGET}-closure", commands)
         self.assertIn("pytest", commands)
         self.assertIn("run_all_tests.sh", commands)
         self.assertIn("diff --check", commands)
@@ -753,8 +1141,223 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertIn("invoke_neuro_cli.py app-callback-smoke", command)
         self.assertNotIn("invoke_neuro_cli.py --output", command)
         self.assertIn("--app-id neuro_unit_app", command)
-        self.assertIn("--expected-app-echo neuro_unit_app-1.1.7-cbor-v2", command)
+        self.assertIn(
+            f"--expected-app-echo neuro_unit_app-{neuro_cli.RELEASE_TARGET}-cbor-v2",
+            command,
+        )
         self.assertIn("--trigger-every 1", command)
+
+    def test_workflow_plan_agent_skill_metadata_reports_canonical_and_adapter_paths(self) -> None:
+        payload = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="app-build")
+        )
+        agent_skill = payload["agent_skill"]
+
+        self.assertEqual(agent_skill["name"], "neuro-cli")
+        self.assertTrue(agent_skill["canonical_exists"])
+        self.assertTrue(agent_skill["project_shared_exists"])
+        self.assertEqual(agent_skill["source_of_truth"], "canonical")
+        self.assertIn("neuro_cli/skill/SKILL.md", agent_skill["canonical_path"])
+        self.assertIn(
+            ".github/skills/neuro-cli/SKILL.md",
+            agent_skill["project_shared_path"],
+        )
+        self.assertIn(
+            ".github/skills/neuro-cli/SKILL.md",
+            agent_skill["discovery_adapter_path"],
+        )
+
+    def test_workflow_commands_do_not_embed_release_target_literals(self) -> None:
+        commands = "\n".join(
+            command
+            for workflow in neuro_cli.WORKFLOW_PLANS.values()
+            for command in workflow["commands"]
+        )
+        source_text = Path(neuro_cli.__file__).read_text(encoding="utf-8")
+
+        self.assertIn(
+            f"release-{neuro_cli.RELEASE_TARGET}-memory-evidence",
+            commands,
+        )
+        self.assertIn(f"release-{neuro_cli.RELEASE_TARGET}-closure", commands)
+        self.assertIn(f"neuro_unit_app-{neuro_cli.RELEASE_TARGET}-cbor-v2", commands)
+        self.assertNotIn("release-1.1.7-memory-evidence", source_text)
+        self.assertNotIn("release-1.1.7-closure", source_text)
+        self.assertNotIn("neuro_unit_app-1.1.7-cbor-v2", source_text)
+
+    def test_canonical_skill_package_contains_required_resources(self) -> None:
+        project_root = NEURO_CLI_DIR.parent
+        canonical_skill_dir = NEURO_CLI_DIR / "skill"
+        shared_skill_dir = project_root / ".github" / "skills" / "neuro-cli"
+
+        required_paths = [
+            canonical_skill_dir / "SKILL.md",
+            canonical_skill_dir / "references" / "workflows.md",
+            canonical_skill_dir / "references" / "setup-linux.md",
+            canonical_skill_dir / "references" / "setup-windows.md",
+            canonical_skill_dir / "references" / "discovery-and-control.md",
+            canonical_skill_dir / "assets" / "neuro_unit_app_template.c",
+            canonical_skill_dir / "assets" / "callback_handler.py",
+            shared_skill_dir / "SKILL.md",
+        ]
+        for path in required_paths:
+            self.assertTrue(path.is_file(), str(path))
+
+        canonical_skill = (canonical_skill_dir / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        shared_skill = (shared_skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("name: neuro-cli", canonical_skill)
+        self.assertIn("canonical Neuro CLI skill contract", canonical_skill)
+        self.assertIn("../../../neuro_cli/skill/SKILL.md", shared_skill)
+
+    def test_linux_setup_reference_contains_zero_host_steps(self) -> None:
+        setup_linux = (
+            NEURO_CLI_DIR / "skill" / "references" / "setup-linux.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("workflow plan setup-linux", setup_linux)
+        self.assertIn("sudo apt-get install", setup_linux)
+        self.assertIn("python3 -m venv .venv", setup_linux)
+        self.assertIn("west update", setup_linux)
+        self.assertIn("cat zephyr/SDK_VERSION", setup_linux)
+        self.assertIn("ZEPHYR_SDK_INSTALL_DIR", setup_linux)
+        self.assertIn("serial_device_missing", setup_linux)
+
+    def test_windows_setup_reference_contains_zero_host_steps(self) -> None:
+        setup_windows = (
+            NEURO_CLI_DIR / "skill" / "references" / "setup-windows.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("workflow plan setup-windows", setup_windows)
+        self.assertIn("winget install", setup_windows)
+        self.assertIn("py -3 -m venv .venv", setup_windows)
+        self.assertIn("Set-ExecutionPolicy -Scope Process", setup_windows)
+        self.assertIn("Get-Content zephyr/SDK_VERSION", setup_windows)
+        self.assertIn("ZEPHYR_SDK_INSTALL_DIR", setup_windows)
+        self.assertIn("WSL", setup_windows)
+        self.assertIn("perl-or-wsl", setup_windows)
+
+    def test_discovery_reference_contains_workflows_and_json_contracts(self) -> None:
+        reference = (
+            NEURO_CLI_DIR / "skill" / "references" / "discovery-and-control.md"
+        ).read_text(encoding="utf-8")
+        workflows = (
+            NEURO_CLI_DIR / "skill" / "references" / "workflows.md"
+        ).read_text(encoding="utf-8")
+
+        for workflow in (
+            "discover-host",
+            "discover-router",
+            "discover-serial",
+            "discover-device",
+            "discover-apps",
+            "discover-leases",
+        ):
+            self.assertIn(f"workflow plan {workflow}", reference)
+            self.assertIn(f"workflow plan {workflow}", workflows)
+
+        self.assertIn("JSON Contracts", reference)
+        self.assertIn("router_not_listening", reference)
+        self.assertIn("serial_device_missing", reference)
+        self.assertIn("no_reply_board_unreachable", reference)
+        self.assertIn("app_not_running", reference)
+        self.assertIn("`leases` list", reference)
+
+    def test_control_reference_contains_workflows_and_safety_contracts(self) -> None:
+        reference = (
+            NEURO_CLI_DIR / "skill" / "references" / "discovery-and-control.md"
+        ).read_text(encoding="utf-8")
+        workflows = (
+            NEURO_CLI_DIR / "skill" / "references" / "workflows.md"
+        ).read_text(encoding="utf-8")
+
+        for workflow in (
+            "control-health",
+            "control-deploy",
+            "control-app-invoke",
+            "control-callback",
+            "control-monitor",
+            "control-cleanup",
+        ):
+            self.assertIn(f"workflow plan {workflow}", reference)
+            self.assertIn(f"workflow plan {workflow}", workflows)
+
+        self.assertIn("Protected Control JSON Contracts", reference)
+        self.assertIn("update/app/neuro_unit_app/activate", reference)
+        self.assertIn("app/neuro_unit_app/control", reference)
+        self.assertIn("nested `payload.status: error`", reference)
+        self.assertIn("Callback handler execution", reference)
+        self.assertIn("query leases", reference)
+
+    def test_project_shared_skill_mirrors_canonical_resources(self) -> None:
+        project_root = NEURO_CLI_DIR.parent
+        canonical_skill_dir = NEURO_CLI_DIR / "skill"
+        shared_skill_dir = project_root / ".github" / "skills" / "neuro-cli"
+        mirrored_paths = [
+            "references/workflows.md",
+            "assets/neuro_unit_app_template.c",
+            "assets/callback_handler.py",
+        ]
+        for relative_path in mirrored_paths:
+            canonical_text = (canonical_skill_dir / relative_path).read_text(
+                encoding="utf-8"
+            )
+            shared_text = (shared_skill_dir / relative_path).read_text(encoding="utf-8")
+            self.assertEqual(canonical_text, shared_text, relative_path)
+
+    def test_skill_workflow_references_only_live_workflow_plans(self) -> None:
+        project_root = NEURO_CLI_DIR.parent
+        checked_paths = [
+            NEURO_CLI_DIR / "skill" / "SKILL.md",
+            NEURO_CLI_DIR / "skill" / "references" / "workflows.md",
+            NEURO_CLI_DIR / "skill" / "references" / "setup-linux.md",
+            NEURO_CLI_DIR / "skill" / "references" / "setup-windows.md",
+            NEURO_CLI_DIR / "skill" / "references" / "discovery-and-control.md",
+            project_root / ".github" / "skills" / "neuro-cli" / "SKILL.md",
+            project_root
+            / ".github"
+            / "skills"
+            / "neuro-cli"
+            / "references"
+            / "workflows.md",
+        ]
+
+        referenced = set()
+        for path in checked_paths:
+            text = path.read_text(encoding="utf-8")
+            referenced.update(extract_workflow_plan_names(text))
+
+        self.assertTrue(referenced)
+        self.assertTrue(referenced.issubset(neuro_cli.WORKFLOW_PLANS.keys()))
+
+    def test_skill_wrapper_examples_parse_with_live_cli_parser(self) -> None:
+        project_root = NEURO_CLI_DIR.parent
+        checked_paths = [
+            NEURO_CLI_DIR / "skill" / "SKILL.md",
+            NEURO_CLI_DIR / "skill" / "references" / "workflows.md",
+            NEURO_CLI_DIR / "skill" / "references" / "setup-linux.md",
+            NEURO_CLI_DIR / "skill" / "references" / "setup-windows.md",
+            NEURO_CLI_DIR / "skill" / "references" / "discovery-and-control.md",
+            project_root / ".github" / "skills" / "neuro-cli" / "SKILL.md",
+            project_root
+            / ".github"
+            / "skills"
+            / "neuro-cli"
+            / "references"
+            / "workflows.md",
+        ]
+        parser = neuro_cli.build_parser()
+        parsed_commands = 0
+
+        for path in checked_paths:
+            text = path.read_text(encoding="utf-8")
+            for cli_args in extract_wrapper_cli_args(text):
+                self.assertNotIn("--output", cli_args, str(path))
+                parser.parse_args(["--output", "json"] + cli_args)
+                parsed_commands += 1
+
+        self.assertGreater(parsed_commands, len(neuro_cli.WORKFLOW_PLANS))
 
     def test_monitor_app_events_accepts_handler_options(self) -> None:
         parser = neuro_cli.build_parser()
@@ -1835,7 +2438,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertIn("event_stream", names)
         self.assertIn("app_event_stream", names)
 
-    def test_capabilities_reports_release_1_1_5(self) -> None:
+    def test_capabilities_reports_release_1_1_8(self) -> None:
         args = Namespace(output="json")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -1843,7 +2446,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.1.7")
+        self.assertEqual(payload["release_target"], "1.1.8")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

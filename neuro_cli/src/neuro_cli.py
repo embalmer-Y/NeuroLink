@@ -17,7 +17,7 @@ import neuro_protocol as protocol
 
 DEFAULT_CHUNK_SIZE = 1024
 DEFAULT_PRIORITY = 50
-RELEASE_TARGET = "1.1.7"
+RELEASE_TARGET = "1.1.8"
 EVENT_SUBSCRIPTION_READY_DELAY_SEC = 1.0
 EVENT_SUBSCRIPTION_PUMP_INTERVAL_SEC = 1.0
 DEFAULT_SESSION_OPEN_RETRIES = 3
@@ -28,7 +28,9 @@ DEFAULT_QUERY_RETRY_BACKOFF_MAX_MS = 2000
 DEFAULT_HANDLER_TIMEOUT_SEC = 5.0
 DEFAULT_HANDLER_MAX_EVENT_BYTES = 65536
 DEFAULT_HANDLER_MAX_OUTPUT_BYTES = 16384
-PROJECT_SKILL_RELATIVE_PATH = ".github/skills/neuro-cli/SKILL.md"
+CANONICAL_SKILL_RELATIVE_PATH = "neuro_cli/skill/SKILL.md"
+PROJECT_SHARED_SKILL_RELATIVE_PATH = ".github/skills/neuro-cli/SKILL.md"
+PROJECT_SKILL_RELATIVE_PATH = PROJECT_SHARED_SKILL_RELATIVE_PATH
 NEURO_CLI_WRAPPER_RELATIVE_PATH = "neuro_cli/scripts/invoke_neuro_cli.py"
 PAYLOAD_FAILURE_STATUSES = {
     "error",
@@ -41,6 +43,15 @@ PAYLOAD_FAILURE_STATUSES = {
     "session_open_failed",
     "handler_failed",
 }
+WORKFLOW_PLAN_SCHEMA_VERSION = "1.1.8-workflow-plan-v1"
+
+
+def release_label(suffix: str) -> str:
+    return f"release-{RELEASE_TARGET}-{suffix}"
+
+
+def default_app_echo() -> str:
+    return f"neuro_unit_app-{RELEASE_TARGET}-cbor-v2"
 
 
 @dataclass(frozen=True)
@@ -286,11 +297,40 @@ def find_neurolink_root(start: Path | None = None) -> Path | None:
     return None
 
 
+def resolve_neurolink_path(
+    neurolink_root: Path | None, relative_path: str
+) -> Path:
+    return neurolink_root / relative_path if neurolink_root else Path(relative_path)
+
+
+def build_agent_skill_metadata(neurolink_root: Path | None) -> dict:
+    canonical_path = resolve_neurolink_path(
+        neurolink_root, CANONICAL_SKILL_RELATIVE_PATH
+    )
+    project_shared_path = resolve_neurolink_path(
+        neurolink_root, PROJECT_SHARED_SKILL_RELATIVE_PATH
+    )
+    wrapper_path = resolve_neurolink_path(
+        neurolink_root, NEURO_CLI_WRAPPER_RELATIVE_PATH
+    )
+    return {
+        "name": "neuro-cli",
+        "canonical_path": str(canonical_path),
+        "canonical_exists": canonical_path.is_file(),
+        "project_shared_path": str(project_shared_path),
+        "project_shared_exists": project_shared_path.is_file(),
+        "discovery_adapter_path": str(project_shared_path),
+        "wrapper": str(wrapper_path),
+        "wrapper_exists": wrapper_path.is_file(),
+        "structured_stdout": True,
+        "source_of_truth": "canonical",
+        "callback_handler_execution": "explicit_audited_runner",
+    }
+
+
 def build_init_diagnostics(args: argparse.Namespace) -> dict:
     neurolink_root = find_neurolink_root(Path.cwd())
     workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
-    skill_path = neurolink_root / PROJECT_SKILL_RELATIVE_PATH if neurolink_root else Path(PROJECT_SKILL_RELATIVE_PATH)
-    wrapper_path = neurolink_root / NEURO_CLI_WRAPPER_RELATIVE_PATH if neurolink_root else Path(NEURO_CLI_WRAPPER_RELATIVE_PATH)
     scripts = {}
     script_names = [
         "setup_neurolink_env.sh",
@@ -324,18 +364,24 @@ def build_init_diagnostics(args: argparse.Namespace) -> dict:
             "can_modify_parent_shell": False,
             "recommended_command": "source applocation/NeuroLink/scripts/setup_neurolink_env.sh",
         },
-        "agent_skill": {
-            "name": "neuro-cli",
-            "project_shared_path": str(skill_path),
-            "project_shared_exists": skill_path.is_file(),
-            "wrapper": str(wrapper_path),
-            "wrapper_exists": wrapper_path.is_file(),
-            "structured_stdout": True,
-            "callback_handler_execution": "explicit_audited_runner",
-        },
+        "agent_skill": build_agent_skill_metadata(neurolink_root),
         "agent_workflows": [
             "system capabilities --output json",
             "system init --output json",
+            "workflow plan setup-linux --output json",
+            "workflow plan setup-windows --output json",
+            "workflow plan discover-host --output json",
+            "workflow plan discover-router --output json",
+            "workflow plan discover-serial --output json",
+            "workflow plan discover-device --output json",
+            "workflow plan discover-apps --output json",
+            "workflow plan discover-leases --output json",
+            "workflow plan control-health --output json",
+            "workflow plan control-deploy --output json",
+            "workflow plan control-app-invoke --output json",
+            "workflow plan control-callback --output json",
+            "workflow plan control-monitor --output json",
+            "workflow plan control-cleanup --output json",
             "workflow plan app-build --output json",
             "workflow plan preflight --output json",
             "deploy prepare --app-id <app> --file <artifact>",
@@ -365,6 +411,410 @@ def handle_init(session: zenoh.Session | None, args: argparse.Namespace) -> int:
 
 
 WORKFLOW_PLANS = {
+    "setup-linux": {
+        "category": "setup",
+        "description": "construct and validate a Linux NeuroLink build/test/control host",
+        "commands": [
+            "sudo apt-get update",
+            "sudo apt-get install -y git python3 python3-venv python3-pip cmake ninja-build gperf ccache dfu-util device-tree-compiler wget curl xz-utils file make gcc gcc-multilib g++-multilib libsdl2-dev libmagic1 clang-format perl usbutils",
+            "python3 -m venv .venv",
+            "source .venv/bin/activate && python3 -m pip install --upgrade pip wheel west",
+            "source .venv/bin/activate && python3 -m pip install -r zephyr/scripts/requirements.txt -r applocation/NeuroLink/neuro_cli/requirements.txt",
+            "source .venv/bin/activate && west update",
+            "cat zephyr/SDK_VERSION",
+            "export ZEPHYR_SDK_INSTALL_DIR=${HOME}/zephyr-sdk-$(cat zephyr/SDK_VERSION)",
+            "source applocation/NeuroLink/scripts/setup_neurolink_env.sh --activate --strict --install-neuro-cli-deps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system init",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system capabilities",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan unit-build",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan unit-tests",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan app-build",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan preflight",
+        ],
+        "artifacts": [
+            ".venv",
+            "build/neurolink_unit",
+            "build/neurolink_unit_ut_check",
+            "build/neurolink_unit_app",
+        ],
+    },
+    "setup-windows": {
+        "category": "setup",
+        "description": "construct and validate a Windows NeuroLink build/test/control host",
+        "commands": [
+            "winget install --id Git.Git -e --source winget",
+            "winget install --id Python.Python.3.12 -e --source winget",
+            "winget install --id Kitware.CMake -e --source winget",
+            "winget install --id Ninja-build.Ninja -e --source winget",
+            "winget install --id Microsoft.PowerShell -e --source winget",
+            "py -3 -m venv .venv",
+            ". .venv/Scripts/Activate.ps1",
+            "python -m pip install --upgrade pip wheel west",
+            "python -m pip install -r zephyr/scripts/requirements.txt -r applocation/NeuroLink/neuro_cli/requirements.txt",
+            "west update",
+            "Get-Content zephyr/SDK_VERSION",
+            "$env:ZEPHYR_SDK_INSTALL_DIR = \"$HOME/zephyr-sdk-$(Get-Content zephyr/SDK_VERSION)\"",
+            ". applocation/NeuroLink/scripts/setup_neurolink_env.ps1 -Strict",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system init",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system capabilities",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan unit-build",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan cli-tests",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan app-build",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan preflight",
+        ],
+        "artifacts": [
+            ".venv",
+            "build/neurolink_unit",
+            "build/neurolink_unit_app",
+            "applocation/NeuroLink/smoke-evidence",
+        ],
+    },
+    "discover-host": {
+        "category": "discovery",
+        "description": "read local NeuroLink workspace and CLI capability state",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system init",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system capabilities",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "ok": True,
+                "status": "ready",
+                "release_target": RELEASE_TARGET,
+                "agent_skill": {
+                    "name": "neuro-cli",
+                    "source_of_truth": "canonical",
+                },
+                "protocol": {
+                    "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
+                },
+            },
+            "failure_statuses": ["workspace_not_found", "handler_failed"],
+        },
+    },
+    "discover-router": {
+        "category": "discovery",
+        "description": "classify Linux Zenoh router listener state without app control",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --auto-start-router --install-missing-cli-deps --output json",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "status": "ready",
+                "ready": True,
+                "router": {
+                    "listening": True,
+                    "port": 7447,
+                    "auto_started": False,
+                },
+            },
+            "failure_statuses": [
+                "router_not_listening",
+                "router_failed_to_start",
+                "no_reply_board_not_attached",
+                "no_reply_board_unreachable",
+            ],
+        },
+    },
+    "discover-serial": {
+        "category": "discovery",
+        "description": "classify Linux USB serial visibility before hardware evidence",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --require-serial --output json",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "serial": {
+                    "present": True,
+                    "devices": ["/dev/ttyACM0"],
+                },
+            },
+            "failure_statuses": ["serial_device_missing"],
+        },
+    },
+    "discover-device": {
+        "category": "discovery",
+        "description": "query Unit reachability and device state through the router",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query device",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "ok": True,
+                "replies": [
+                    {
+                        "ok": True,
+                        "payload": {
+                            "status": "ok",
+                            "node_id": "unit-01",
+                            "session_ready": True,
+                        },
+                    }
+                ],
+            },
+            "failure_statuses": [
+                "session_open_failed",
+                "no_reply",
+                "parse_failed",
+                "error_reply",
+                "payload.status:error",
+            ],
+        },
+    },
+    "discover-apps": {
+        "category": "discovery",
+        "description": "query deployed Unit apps and runtime/update state",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query apps",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "ok": True,
+                "replies": [
+                    {
+                        "ok": True,
+                        "payload": {
+                            "status": "ok",
+                            "node_id": "unit-01",
+                            "app_count": 0,
+                            "running_count": 0,
+                            "suspended_count": 0,
+                            "apps": [],
+                        },
+                    }
+                ],
+            },
+            "failure_statuses": [
+                "app_not_running",
+                "session_open_failed",
+                "no_reply",
+                "parse_failed",
+                "error_reply",
+                "payload.status:error",
+            ],
+        },
+    },
+    "discover-leases": {
+        "category": "discovery",
+        "description": "query active Unit leases before protected control",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query leases",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "ok": True,
+                "replies": [
+                    {
+                        "ok": True,
+                        "payload": {
+                            "status": "ok",
+                            "node_id": "unit-01",
+                            "leases": [],
+                        },
+                    }
+                ],
+            },
+            "failure_statuses": [
+                "lease_conflict",
+                "session_open_failed",
+                "no_reply",
+                "parse_failed",
+                "error_reply",
+                "payload.status:error",
+            ],
+        },
+    },
+    "control-health": {
+        "category": "control",
+        "description": "run read-only health queries before protected control",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query leases",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "device": {"status": "ok", "node_id": "unit-01"},
+                "apps": {"status": "ok", "apps": []},
+                "leases": {"status": "ok", "leases": []},
+            },
+            "failure_statuses": [
+                "session_open_failed",
+                "no_reply",
+                "parse_failed",
+                "error_reply",
+                "payload.status:error",
+            ],
+        },
+    },
+    "control-deploy": {
+        "category": "control",
+        "description": "protected deploy prepare/verify/activate sequence with lease cleanup",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource update/app/neuro_unit_app/activate --lease-id "
+            f"{release_label('deploy')}-lease --ttl-ms 120000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy prepare --app-id neuro_unit_app --file build/neurolink_unit/llext/neuro_unit_app.llext",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy verify --app-id neuro_unit_app",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy activate --app-id neuro_unit_app --lease-id "
+            f"{release_label('deploy')}-lease --start-args release={RELEASE_TARGET}",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('deploy')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+        ],
+        "artifacts": [
+            "build/neurolink_unit/llext/neuro_unit_app.llext",
+            "applocation/NeuroLink/smoke-evidence",
+        ],
+        "json_contract": {
+            "success": {
+                "lease_acquire": {"status": "ok", "lease_id": f"{release_label('deploy')}-lease"},
+                "deploy_prepare": {"status": "ok", "app_id": "neuro_unit_app"},
+                "deploy_verify": {"status": "ok", "app_id": "neuro_unit_app"},
+                "deploy_activate": {"status": "ok", "app_id": "neuro_unit_app"},
+                "lease_cleanup": {"leases": []},
+            },
+            "failure_statuses": [
+                "lease_conflict",
+                "artifact_missing",
+                "artifact_stale",
+                "prepare_failed",
+                "verify_failed",
+                "activate_failed",
+                "payload.status:error",
+            ],
+        },
+    },
+    "control-app-invoke": {
+        "category": "control",
+        "description": "protected app command invocation with app-control lease cleanup",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource app/neuro_unit_app/control --lease-id "
+            f"{release_label('app-control')}-lease --ttl-ms 60000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app invoke --app-id neuro_unit_app --lease-id "
+            f"{release_label('app-control')}-lease --command invoke --args-json '{{\"echo\": \"{default_app_echo()}\"}}'",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('app-control')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "lease_acquire": {"status": "ok", "resource": "app/neuro_unit_app/control"},
+                "app_invoke": {"status": "ok", "app_id": "neuro_unit_app"},
+                "lease_cleanup": {"leases": []},
+            },
+            "failure_statuses": [
+                "app_not_running",
+                "lease_conflict",
+                "invalid_input",
+                "handler_failed",
+                "payload.status:error",
+            ],
+        },
+    },
+    "control-callback": {
+        "category": "control",
+        "description": "protected callback configuration and same-session callback smoke",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource app/neuro_unit_app/control --lease-id "
+            f"{release_label('callback')}-lease --ttl-ms 60000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app callback-config --app-id neuro_unit_app --lease-id "
+            f"{release_label('callback')}-lease --mode on --trigger-every 1 --event-name callback",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app invoke --app-id neuro_unit_app --lease-id "
+            f"{release_label('callback')}-lease --command invoke --args-json '{{\"echo\": \"{default_app_echo()}\"}}'",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py monitor app-events --app-id neuro_unit_app --duration 5 --max-events 1",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app callback-config --app-id neuro_unit_app --lease-id "
+            f"{release_label('callback')}-lease --mode off --event-name callback",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('callback')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan callback-smoke",
+        ],
+        "artifacts": ["applocation/NeuroLink/smoke-evidence"],
+        "json_contract": {
+            "success": {
+                "callback_config": {"status": "ok", "callback_enabled": True},
+                "app_invoke": {"status": "ok", "app_id": "neuro_unit_app"},
+                "event": {"keyexpr": "neuro/unit-01/event/app/neuro_unit_app/callback"},
+                "lease_cleanup": {"leases": []},
+            },
+            "failure_statuses": [
+                "callback_timeout",
+                "handler_failed",
+                "lease_conflict",
+                "app_not_running",
+                "payload.status:error",
+            ],
+        },
+    },
+    "control-monitor": {
+        "category": "control",
+        "description": "monitor app-scoped events with explicit optional handler audit",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py monitor app-events --app-id neuro_unit_app --duration 10 --max-events 1",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py monitor app-events --app-id neuro_unit_app --duration 10 --max-events 1 --handler-python applocation/NeuroLink/neuro_cli/skill/assets/callback_handler.py --handler-timeout 5",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "subscription": {"status": "ok", "app_id": "neuro_unit_app"},
+                "handler_audit": {
+                    "runner": "explicit",
+                    "returncode": 0,
+                    "max_output_bytes": 16384,
+                },
+            },
+            "failure_statuses": [
+                "callback_timeout",
+                "handler_failed",
+                "handler_timeout",
+                "handler_output_truncated",
+            ],
+        },
+    },
+    "control-cleanup": {
+        "category": "control",
+        "description": "release known workflow leases and confirm clean lease state",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('deploy')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('app-control')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('callback')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {"leases": []},
+            "failure_statuses": [
+                "lease_not_found",
+                "session_open_failed",
+                "no_reply",
+                "payload.status:error",
+            ],
+        },
+    },
     "app-build": {
         "category": "app_development",
         "description": "build the sample LLEXT app artifact",
@@ -409,7 +859,9 @@ WORKFLOW_PLANS = {
         "category": "verification",
         "description": "collect build-time Neuro Unit memory evidence",
         "commands": [
-            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --run-build --no-c-style-check --label release-1.1.7-memory-evidence",
+            "/home/emb/project/zephyrproject/.venv/bin/python "
+            "applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py "
+            f"--run-build --no-c-style-check --label {release_label('memory-evidence')}",
         ],
         "artifacts": ["applocation/NeuroLink/memory-evidence"],
     },
@@ -433,7 +885,11 @@ WORKFLOW_PLANS = {
         "category": "board_operation",
         "description": "run the app callback smoke path through the CLI wrapper",
         "commands": [
-            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app-callback-smoke --app-id neuro_unit_app --expected-app-echo neuro_unit_app-1.1.7-cbor-v2 --trigger-every 1 --invoke-count 2",
+            "/home/emb/project/zephyrproject/.venv/bin/python "
+            "applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py "
+            "app-callback-smoke --app-id neuro_unit_app "
+            f"--expected-app-echo {default_app_echo()} --trigger-every 1 "
+            "--invoke-count 2",
         ],
         "artifacts": [],
     },
@@ -441,7 +897,9 @@ WORKFLOW_PLANS = {
         "category": "verification",
         "description": "review the release closure gate sequence without executing it",
         "commands": [
-            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py --run-build --no-c-style-check --label release-1.1.7-closure",
+            "/home/emb/project/zephyrproject/.venv/bin/python "
+            "applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py "
+            f"--run-build --no-c-style-check --label {release_label('closure')}",
             "/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_protocol.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py",
             "/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q",
             "bash applocation/NeuroLink/tests/scripts/run_all_tests.sh",
@@ -457,18 +915,692 @@ WORKFLOW_PLANS = {
 }
 
 
+WORKFLOW_METADATA_DEFAULTS = {
+    "host_support": ["linux", "wsl"],
+    "requires_hardware": False,
+    "requires_serial": False,
+    "requires_router": False,
+    "requires_network": True,
+    "destructive": False,
+    "preconditions": [
+        "west workspace contains applocation/NeuroLink",
+        "NeuroLink Python environment is active or wrapper Python is explicit",
+    ],
+    "expected_success": [
+        "process exit code is 0",
+        "no JSON payload field reports ok=false or status=error",
+    ],
+    "failure_statuses": [
+        {
+            "status": "process_nonzero",
+            "next_action": "inspect stderr and command-specific logs",
+        },
+        {
+            "status": "json_parse_failed",
+            "next_action": "treat stdout contract as broken for Agent automation",
+        },
+    ],
+    "cleanup": [],
+}
+
+
+WORKFLOW_PLAN_METADATA = {
+    "setup-linux": {
+        "host_support": ["linux"],
+        "requires_hardware": False,
+        "requires_serial": False,
+        "requires_router": False,
+        "requires_network": True,
+        "destructive": False,
+        "preconditions": [
+            "network access is available",
+            "operator approves sudo package installation commands before running them",
+            "workspace root contains zephyr and applocation/NeuroLink",
+            "Zephyr SDK version from zephyr/SDK_VERSION is installed or will be installed before build commands",
+        ],
+        "expected_success": [
+            "required system commands are available",
+            "repository-local .venv exists and has west plus Neuro CLI dependencies",
+            "ZEPHYR_SDK_INSTALL_DIR points at the SDK version recorded in zephyr/SDK_VERSION",
+            "setup_neurolink_env.sh strict validation exits 0",
+            "system init and system capabilities return ok=true JSON",
+        ],
+        "failure_statuses": [
+            {
+                "status": "missing_required_command",
+                "next_action": "install the named system package and rerun setup validation",
+            },
+            {
+                "status": "zephyr_sdk_missing",
+                "next_action": "install Zephyr SDK or export ZEPHYR_SDK_INSTALL_DIR",
+            },
+            {
+                "status": "python_dependency_missing",
+                "next_action": "run pip install for Zephyr and Neuro CLI requirements",
+            },
+        ],
+        "cleanup": [],
+    },
+    "setup-windows": {
+        "host_support": ["windows", "wsl"],
+        "requires_hardware": False,
+        "requires_serial": False,
+        "requires_router": False,
+        "requires_network": True,
+        "destructive": False,
+        "preconditions": [
+            "network access is available",
+            "operator approves winget or manual installer prompts before running them",
+            "PowerShell execution policy allows activating the local virtual environment",
+            "workspace root contains zephyr and applocation/NeuroLink",
+            "Zephyr SDK version from zephyr/SDK_VERSION is installed or will be installed before build commands",
+        ],
+        "expected_success": [
+            "required commands are available from PowerShell",
+            "repository-local .venv exists and has west plus Neuro CLI dependencies",
+            "ZEPHYR_SDK_INSTALL_DIR points at the SDK version recorded in zephyr/SDK_VERSION",
+            "setup_neurolink_env.ps1 strict validation exits 0",
+            "system init and system capabilities return ok=true JSON",
+        ],
+        "failure_statuses": [
+            {
+                "status": "missing_required_command",
+                "next_action": "install the named Windows tool and rerun setup validation",
+            },
+            {
+                "status": "execution_policy_blocked",
+                "next_action": "approve a process-scoped PowerShell execution policy change before activating .venv",
+            },
+            {
+                "status": "zephyr_sdk_missing",
+                "next_action": "install Zephyr SDK or set ZEPHYR_SDK_INSTALL_DIR",
+            },
+            {
+                "status": "wsl_usb_required",
+                "next_action": "switch to WSL USB/IP attach flow for Linux-canonical hardware evidence",
+            },
+        ],
+        "cleanup": [],
+    },
+    "discover-host": {
+        "host_support": ["linux", "windows", "wsl"],
+        "requires_hardware": False,
+        "requires_serial": False,
+        "requires_router": False,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "workspace root contains zephyr and applocation/NeuroLink",
+            "Neuro CLI wrapper can import the local source tree",
+        ],
+        "expected_success": [
+            "system init reports ok=true and status=ready",
+            "system capabilities reports protocol and release metadata",
+            "agent_skill paths identify the canonical skill package",
+        ],
+        "failure_statuses": [
+            {
+                "status": "workspace_not_found",
+                "next_action": "run from the west workspace root or pass an explicit project path in the Agent context",
+            },
+            {
+                "status": "handler_failed",
+                "next_action": "inspect CLI traceback-safe JSON error and Python environment",
+            },
+        ],
+        "cleanup": [],
+    },
+    "discover-router": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": False,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "Linux shell can run the preflight helper",
+            "operator approves auto-starting a local zenoh router if none is listening",
+        ],
+        "expected_success": [
+            "preflight JSON includes router.listening=true",
+            "router.port is 7447 unless overridden by the operator",
+            "Unit no-reply is reported separately from router listener state",
+        ],
+        "failure_statuses": [
+            {
+                "status": "router_not_listening",
+                "next_action": "start the router or rerun with --auto-start-router after operator approval",
+            },
+            {
+                "status": "router_failed_to_start",
+                "next_action": "inspect zenohd install/log output and port binding conflicts",
+            },
+            {
+                "status": "no_reply_board_unreachable",
+                "next_action": "router is reachable locally; check board network readiness or UART logs",
+            },
+        ],
+        "cleanup": ["stop only router processes started by this workflow"],
+    },
+    "discover-serial": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": False,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "target Unit USB cable is attached",
+            "Linux user has permission to read /dev/ttyACM* or /dev/ttyUSB*",
+        ],
+        "expected_success": [
+            "preflight JSON includes serial.present=true",
+            "serial.devices lists at least one /dev/ttyACM* or /dev/ttyUSB* path",
+        ],
+        "failure_statuses": [
+            {
+                "status": "serial_device_missing",
+                "next_action": "check USB cable, dialout permissions, or WSL USB attach state",
+            }
+        ],
+        "cleanup": [],
+    },
+    "discover-device": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "Zenoh router is listening on the expected endpoint",
+            "target Unit has joined the router network",
+        ],
+        "expected_success": [
+            "query device returns ok=true",
+            "reply payload reports status=ok and node_id for the target Unit",
+            "session_ready and network_state are captured when provided by firmware",
+        ],
+        "failure_statuses": [
+            {
+                "status": "session_open_failed",
+                "next_action": "check router availability and Zenoh configuration",
+            },
+            {
+                "status": "no_reply",
+                "next_action": "run discover-router and discover-serial to split router, USB, and board-network causes",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit error as discovery failure and inspect payload message/status_code",
+            },
+        ],
+        "cleanup": [],
+    },
+    "discover-apps": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "Unit query apps route is supported by firmware",
+        ],
+        "expected_success": [
+            "query apps returns ok=true",
+            "reply payload includes app_count, running_count, suspended_count, and apps list",
+            "app_not_running is reported as a state classification before app invoke/control",
+        ],
+        "failure_statuses": [
+            {
+                "status": "app_not_running",
+                "next_action": "deploy or activate the app only through protected control workflows",
+            },
+            {
+                "status": "no_reply",
+                "next_action": "rerun discover-device before app-specific diagnosis",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit error as discovery failure and inspect payload message/status_code",
+            },
+        ],
+        "cleanup": [],
+    },
+    "discover-leases": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "Unit query leases route is supported by firmware",
+        ],
+        "expected_success": [
+            "query leases returns ok=true",
+            "reply payload includes leases list",
+            "empty leases list is required before starting release smoke/control closure",
+        ],
+        "failure_statuses": [
+            {
+                "status": "lease_conflict",
+                "next_action": "release owned stale leases or wait for TTL expiry before protected control",
+            },
+            {
+                "status": "no_reply",
+                "next_action": "rerun discover-device before lease-specific diagnosis",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit error as discovery failure and inspect payload message/status_code",
+            },
+        ],
+        "cleanup": [],
+    },
+    "control-health": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "discover-apps and discover-leases are available for the target Unit",
+        ],
+        "expected_success": [
+            "query device, query apps, and query leases all return ok=true",
+            "nested reply payloads report status=ok",
+            "lease list is empty or only contains leases intentionally owned by the operator",
+        ],
+        "failure_statuses": [
+            {
+                "status": "no_reply",
+                "next_action": "rerun discover-router and discover-device before control",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "stop control flow and inspect nested Unit status_code/message",
+            },
+        ],
+        "cleanup": [],
+    },
+    "control-deploy": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "discover-leases shows no conflicting update/app lease",
+            "fresh LLEXT artifact exists at build/neurolink_unit/llext/neuro_unit_app.llext",
+        ],
+        "expected_success": [
+            "lease acquire returns status=ok for update/app/neuro_unit_app/activate",
+            "deploy prepare, verify, and activate return status=ok in order",
+            "post-activate query apps reports neuro_unit_app active or running",
+            "cleanup releases the deploy lease and query leases is empty",
+        ],
+        "failure_statuses": [
+            {
+                "status": "lease_conflict",
+                "next_action": "release owned stale update lease or wait for TTL expiry",
+            },
+            {
+                "status": "artifact_missing",
+                "next_action": "run workflow plan app-build and rebuild the LLEXT artifact",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "stop deploy flow and preserve prepare/verify/activate payload evidence",
+            },
+        ],
+        "cleanup": [
+            f"release lease {release_label('deploy')}-lease",
+            "query leases until update/app/neuro_unit_app/activate lease is absent",
+        ],
+    },
+    "control-app-invoke": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "discover-apps reports neuro_unit_app running or ready for invoke",
+            "discover-leases shows no conflicting app control lease",
+        ],
+        "expected_success": [
+            "lease acquire returns status=ok for app/neuro_unit_app/control",
+            "app invoke returns status=ok and app_id=neuro_unit_app",
+            "cleanup releases the app control lease and query leases is empty",
+        ],
+        "failure_statuses": [
+            {
+                "status": "app_not_running",
+                "next_action": "run control-deploy before app invoke",
+            },
+            {
+                "status": "lease_conflict",
+                "next_action": "release owned stale app control lease or wait for TTL expiry",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit error as command failure",
+            },
+        ],
+        "cleanup": [
+            f"release lease {release_label('app-control')}-lease",
+            "query leases until app/neuro_unit_app/control lease is absent",
+        ],
+    },
+    "control-callback": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "discover-apps reports neuro_unit_app running",
+            "callback handler execution is explicitly enabled if a handler is used",
+        ],
+        "expected_success": [
+            "callback config on returns status=ok",
+            "app invoke returns status=ok and publishes the callback event",
+            "monitor app-events captures a fresh app-scoped callback event",
+            "callback config off and lease release complete during cleanup",
+        ],
+        "failure_statuses": [
+            {
+                "status": "callback_timeout",
+                "next_action": "check app callback config, event name, and app-scoped subscription path",
+            },
+            {
+                "status": "handler_failed",
+                "next_action": "inspect explicit handler audit stdout/stderr/returncode",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit error as callback control failure",
+            },
+        ],
+        "cleanup": [
+            "turn callback mode off when the workflow enabled it",
+            f"release lease {release_label('callback')}-lease",
+            "undeclare event subscribers and query leases",
+        ],
+    },
+    "control-monitor": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "operator explicitly approves any local handler command or handler Python file",
+        ],
+        "expected_success": [
+            "monitor app-events subscribes to the app-scoped callback key expression",
+            "optional handler audit reports runner, cwd, timeout, returncode, stdout, and stderr",
+            "event collection stops on max-events or duration without leaking non-JSON stdout",
+        ],
+        "failure_statuses": [
+            {
+                "status": "handler_failed",
+                "next_action": "inspect handler audit fields and do not retry blindly",
+            },
+            {
+                "status": "callback_timeout",
+                "next_action": "verify callback is enabled and event name matches monitor path",
+            },
+        ],
+        "cleanup": ["undeclare subscriber and stop local handler execution"],
+    },
+    "control-cleanup": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "one or more known release workflow lease ids may still be active",
+            "target Unit is reachable enough to query leases",
+        ],
+        "expected_success": [
+            "owned workflow leases are released or already absent",
+            "final query leases returns ok=true with an empty leases list for closure",
+        ],
+        "failure_statuses": [
+            {
+                "status": "lease_not_found",
+                "next_action": "treat as already-clean for the named workflow lease and continue final query leases",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "inspect lease payload and avoid claiming cleanup closure",
+            },
+        ],
+        "cleanup": ["repeat query leases after each release attempt"],
+    },
+    "app-build": {
+        "preconditions": [
+            "Unit EDK headers and LLEXT support output are available or buildable",
+            "Zephyr toolchain and west workspace are configured",
+        ],
+        "expected_success": [
+            "build command exits 0",
+            "build/neurolink_unit_app/neuro_unit_app.llext exists",
+        ],
+    },
+    "unit-build": {
+        "preconditions": [
+            "Zephyr SDK or compatible toolchain is installed",
+            "west workspace modules are initialized",
+        ],
+        "expected_success": [
+            "build command exits 0",
+            "build/neurolink_unit/zephyr/zephyr.elf exists",
+        ],
+    },
+    "unit-edk": {
+        "preconditions": [
+            "Zephyr SDK or compatible toolchain is installed",
+            "Unit firmware build configuration can generate LLEXT EDK output",
+        ],
+        "expected_success": [
+            "build command exits 0",
+            "build/neurolink_unit/zephyr/llext-edk exists",
+        ],
+    },
+    "unit-tests": {
+        "preconditions": [
+            "native_sim toolchain support is available",
+            "west workspace modules are initialized",
+        ],
+        "expected_success": [
+            "west build exits 0",
+            "native_sim Unit tests report success",
+        ],
+    },
+    "cli-tests": {
+        "host_support": ["linux", "windows", "wsl"],
+        "requires_network": False,
+        "preconditions": [
+            "Neuro CLI Python test dependencies are installed",
+            "zenoh import is available or tests install a fake module where expected",
+        ],
+        "expected_success": [
+            "pytest exits 0",
+            "CLI JSON and wrapper contract regressions pass",
+        ],
+    },
+    "memory-evidence": {
+        "preconditions": [
+            "Zephyr SDK or compatible toolchain is installed",
+            "memory evidence collector can run a Unit build",
+        ],
+        "expected_success": [
+            "collector exits 0",
+            "memory evidence JSON and summary artifacts are written",
+        ],
+    },
+    "preflight": {
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": True,
+        "preconditions": [
+            "target Unit USB serial device is visible to the host",
+            "Zenoh router can be started or is already reachable",
+            "Neuro CLI Python dependencies are installed or installable",
+        ],
+        "expected_success": [
+            "preflight exits 0",
+            "serial, router, and Unit query checks pass",
+        ],
+        "failure_statuses": [
+            {
+                "status": "serial_device_missing",
+                "next_action": "check USB cable, permissions, or WSL USB attach",
+            },
+            {
+                "status": "no_reply_board_unreachable",
+                "next_action": "check board network readiness and UART logs",
+            },
+        ],
+        "cleanup": ["stop only router processes started by this workflow"],
+    },
+    "smoke": {
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": True,
+        "destructive": True,
+        "preconditions": [
+            "preflight passes for the target Unit",
+            "fresh Unit app artifact is buildable",
+        ],
+        "expected_success": [
+            "smoke script exits 0",
+            "fresh smoke evidence is written",
+            "post-smoke lease query is empty",
+        ],
+        "cleanup": ["release any acquired app/update leases"],
+    },
+    "callback-smoke": {
+        "requires_hardware": True,
+        "requires_router": True,
+        "destructive": True,
+        "preconditions": [
+            "target Unit is reachable through query device",
+            "neuro_unit_app is deployed and activated",
+            "callback handler execution is explicitly enabled if a handler is used",
+        ],
+        "expected_success": [
+            "wrapper exits 0",
+            "callback events are fresh and app-scoped",
+            "nested Unit reply payloads do not report status=error",
+        ],
+        "failure_statuses": [
+            {
+                "status": "handler_failed",
+                "next_action": "inspect audited handler stderr/stdout and return code",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit reply as command failure",
+            },
+        ],
+        "cleanup": ["release callback smoke lease when acquired"],
+    },
+    "release-closure": {
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": True,
+        "destructive": True,
+        "preconditions": [
+            "local CLI, wrapper, script, build, and skill gates are green",
+            "hardware preflight and smoke can run against the target Unit",
+            "release identity has not been promoted prematurely",
+        ],
+        "expected_success": [
+            "all listed gates exit 0",
+            "memory and smoke evidence are fresh",
+            "release identity remains controlled until final promotion slice",
+        ],
+        "cleanup": ["release any acquired leases", "capture final evidence paths"],
+    },
+}
+
+
+def workflow_agent_metadata(workflow_name: str) -> dict:
+    metadata = dict(WORKFLOW_METADATA_DEFAULTS)
+    metadata.update(WORKFLOW_PLAN_METADATA.get(workflow_name, {}))
+    return metadata
+
+
+def build_workflow_surface() -> dict:
+    plans = []
+    for workflow_name in sorted(WORKFLOW_PLANS.keys()):
+        workflow = WORKFLOW_PLANS[workflow_name]
+        metadata = workflow_agent_metadata(workflow_name)
+        plans.append(
+            {
+                "workflow": workflow_name,
+                "category": workflow["category"],
+                "description": workflow["description"],
+                "host_support": metadata["host_support"],
+                "requires_hardware": metadata["requires_hardware"],
+                "requires_serial": metadata["requires_serial"],
+                "requires_router": metadata["requires_router"],
+                "requires_network": metadata["requires_network"],
+                "destructive": metadata["destructive"],
+                "plan_command": f"workflow plan {workflow_name}",
+            }
+        )
+
+    return {
+        "schema_version": WORKFLOW_PLAN_SCHEMA_VERSION,
+        "plan_command": "workflow plan <name>",
+        "system_plan_command": "system workflow plan <name>",
+        "categories": sorted({plan["category"] for plan in plans}),
+        "plans": plans,
+    }
+
+
 def build_workflow_plan(args: argparse.Namespace) -> dict:
     workflow = WORKFLOW_PLANS[args.workflow]
+    metadata = workflow_agent_metadata(args.workflow)
     neurolink_root = find_neurolink_root(Path.cwd())
     workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
-    skill_path = neurolink_root / PROJECT_SKILL_RELATIVE_PATH if neurolink_root else Path(PROJECT_SKILL_RELATIVE_PATH)
-    wrapper_path = neurolink_root / NEURO_CLI_WRAPPER_RELATIVE_PATH if neurolink_root else Path(NEURO_CLI_WRAPPER_RELATIVE_PATH)
     return {
         "ok": True,
         "workflow": args.workflow,
+        "schema_version": WORKFLOW_PLAN_SCHEMA_VERSION,
         "category": workflow["category"],
         "description": workflow["description"],
         "release_target": RELEASE_TARGET,
+        "host_support": metadata["host_support"],
+        "requires_hardware": metadata["requires_hardware"],
+        "requires_serial": metadata["requires_serial"],
+        "requires_router": metadata["requires_router"],
+        "requires_network": metadata["requires_network"],
+        "destructive": metadata["destructive"],
+        "preconditions": metadata["preconditions"],
+        "expected_success": metadata["expected_success"],
+        "failure_statuses": metadata["failure_statuses"],
+        "cleanup": metadata["cleanup"],
         "protocol": {
             "version": protocol.DEFAULT_PROTOCOL_VERSION,
             "wire_encoding": protocol.DEFAULT_WIRE_ENCODING,
@@ -478,14 +1610,10 @@ def build_workflow_plan(args: argparse.Namespace) -> dict:
         },
         "executes_commands": False,
         "workspace_root": str(workspace_root),
-        "agent_skill": {
-            "name": "neuro-cli",
-            "project_shared_path": str(skill_path),
-            "wrapper": str(wrapper_path),
-            "structured_stdout": True,
-        },
+        "agent_skill": build_agent_skill_metadata(neurolink_root),
         "commands": workflow["commands"],
         "artifacts": workflow["artifacts"],
+        "json_contract": workflow.get("json_contract", {}),
         "next_step": "run the listed command explicitly after reviewing it",
     }
 
@@ -1688,6 +2816,7 @@ def handle_app_callback_smoke(
 
 def handle_capabilities(session: zenoh.Session, args: argparse.Namespace) -> int:
     del session
+    neurolink_root = find_neurolink_root(Path.cwd())
     capabilities = []
     for name, item in CAPABILITY_MATRIX.items():
         capabilities.append(
@@ -1712,13 +2841,10 @@ def handle_capabilities(session: zenoh.Session, args: argparse.Namespace) -> int
                     "cbor_v2_enabled": protocol.DEFAULT_WIRE_ENCODING == "cbor-v2",
                 },
                 "agent_skill": {
-                    "name": "neuro-cli",
-                    "project_shared_path": PROJECT_SKILL_RELATIVE_PATH,
-                    "wrapper": NEURO_CLI_WRAPPER_RELATIVE_PATH,
-                    "structured_stdout": True,
+                    **build_agent_skill_metadata(neurolink_root),
                     "init_diagnostics_command": "system init --output json",
-                    "callback_handler_execution": "explicit_audited_runner",
                 },
+                "workflow_surface": build_workflow_surface(),
                 "capabilities": capabilities,
             }
         )

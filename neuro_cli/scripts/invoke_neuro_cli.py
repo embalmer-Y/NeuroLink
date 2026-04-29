@@ -62,12 +62,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--node", default="unit-01")
     parser.add_argument("--source-core", default="core-cli")
     parser.add_argument("--source-agent", default="skills")
+    parser.add_argument("--timeout", type=float, default=None, help="forwarded query timeout")
+    parser.add_argument(
+        "--query-retries", type=int, default=None, help="forwarded query retry count"
+    )
+    parser.add_argument(
+        "--query-retry-backoff-ms",
+        type=int,
+        default=None,
+        help="forwarded initial query retry backoff",
+    )
+    parser.add_argument(
+        "--query-retry-backoff-max-ms",
+        type=int,
+        default=None,
+        help="forwarded maximum query retry backoff",
+    )
     parser.add_argument(
         "cli_args",
         nargs=argparse.REMAINDER,
         help="arguments passed to neuro_cli.py, for example: query device",
     )
     return parser
+
+
+def build_forwarded_global_args(args: argparse.Namespace) -> list[str]:
+    forwarded = []
+    for option_name in (
+        "timeout",
+        "query_retries",
+        "query_retry_backoff_ms",
+        "query_retry_backoff_max_ms",
+    ):
+        value = getattr(args, option_name)
+        if value is not None:
+            forwarded.extend([f"--{option_name.replace('_', '-')}", str(value)])
+    return forwarded
 
 
 def main() -> int:
@@ -89,7 +119,7 @@ def main() -> int:
         args.source_core,
         "--source-agent",
         args.source_agent,
-    ] + args.cli_args
+    ] + build_forwarded_global_args(args) + args.cli_args
 
     proc = subprocess.run(cmd, capture_output=True, text=True)
 

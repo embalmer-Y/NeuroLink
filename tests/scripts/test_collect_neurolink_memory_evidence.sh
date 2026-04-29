@@ -75,7 +75,7 @@ output="$(${PYTHON_BIN} "${SCRIPT}" \
   --require-runtime-evidence \
   --label test-baseline)"
 
-[[ "${output}" == *"release_target=1.1.7"* ]] || {
+[[ "${output}" == *"release_target=1.1.8"* ]] || {
   printf '%s\n' "${output}" >&2
   exit 1
 }
@@ -180,7 +180,7 @@ external_output="$(${PYTHON_BIN} "${SCRIPT}" \
   --require-external-staging-evidence \
   --label test-external-candidate)"
 
-[[ "${external_output}" == *"release_target=1.1.7"* ]] || {
+[[ "${external_output}" == *"release_target=1.1.8"* ]] || {
   printf '%s\n' "${external_output}" >&2
   exit 1
 }

@@ -6,6 +6,11 @@ argument-hint: "workflow or command goal, for example: preflight, deploy app, mo
 
 # Neuro CLI Orchestration
 
+This project-shared file is the VS Code Agent discovery adapter for the Neuro
+CLI skill. The canonical source of truth lives at
+`../../../neuro_cli/skill/SKILL.md`; keep implementation details, references,
+and assets there first.
+
 ## When To Use
 
 Use this skill for NeuroLink board and app-development workflows that should go
@@ -17,7 +22,7 @@ configuration, callback event monitoring, and evidence collection.
 ## Ground Rules
 
 1. Keep CLI stdout and automation evidence JSON-readable. Use `--output json`
-   or the wrapper at `./../../../neuro_cli/scripts/invoke_neuro_cli.py`.
+   or the wrapper at `../../../neuro_cli/scripts/invoke_neuro_cli.py`.
 2. Treat both process exit code and JSON payload status as authoritative.
    `ok: false`, `status: error`, `status: not_implemented`, unreadable JSON,
    and nonzero process exits are failures for Agent workflows.
@@ -82,6 +87,10 @@ configuration, callback event monitoring, and evidence collection.
 
 ## References
 
-- [Workflow reference](./references/workflows.md)
-- [App template](./assets/neuro_unit_app_template.c)
-- [Callback handler template](./assets/callback_handler.py)
+- [Canonical skill](../../../neuro_cli/skill/SKILL.md)
+- [Workflow reference](../../../neuro_cli/skill/references/workflows.md)
+- [Linux setup reference](../../../neuro_cli/skill/references/setup-linux.md)
+- [Windows setup reference](../../../neuro_cli/skill/references/setup-windows.md)
+- [Discovery and control reference](../../../neuro_cli/skill/references/discovery-and-control.md)
+- [App template](../../../neuro_cli/skill/assets/neuro_unit_app_template.c)
+- [Callback handler template](../../../neuro_cli/skill/assets/callback_handler.py)

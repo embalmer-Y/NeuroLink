@@ -1,3 +1,353 @@
+2026-04-30: Closed release-1.1.8 after completing `EXEC-190` local closure gates and `EXEC-191` hardware closure, then promoting release identity. `EXEC-190` validation passed for Python compile, focused CLI+wrapper tests (`104 passed`), script regression suite (`9/9`), clean build memory evidence `applocation/NeuroLink/memory-evidence/exec-190-local-closure.{json,summary.txt}` with `release_target=1.1.7` and `dram0=377188`, Unit clean build endpoint `CONFIG_NEUROLINK_ZENOH_CONNECT="tcp/192.168.2.94:7447"`, rebuilt LLEXT artifact, Unit Linux UT (`result=PASS`, `qemu_status=passed`), capabilities JSON, workflow release-closure JSON, and whitespace check after normalizing the board config line endings. `EXEC-191` updated the DNESP32S3B board default endpoint from `tcp/192.168.2.95:7447` to `tcp/192.168.2.94:7447`, flashed the final clean-built Unit firmware to `/dev/ttyACM0` successfully (`808492` bytes written, hash verified), prepared the board with UART evidence `applocation/NeuroLink/smoke-evidence/serial-diag/serial-capture-20260429T161155Z.log`, and confirmed serial-required preflight ready. Final pre-promotion hardware closure passed wrapper `query device`, `query apps`, `query leases`, Linux smoke `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260429-161308.ndjson`, explicit smoke lease cleanup, callback smoke, and final empty leases. Promoted `neuro_cli/src/neuro_cli.py` to `RELEASE_TARGET = "1.1.8"`, promoted the sample app version/build id to `1.1.8`/`neuro_unit_app-1.1.8-cbor-v2`, updated release-target tests, regenerated final memory evidence `applocation/NeuroLink/memory-evidence/release-1.1.8-closure.{json,summary.txt}` with `release_target=1.1.8` and `dram0=377188`, rebuilt the 1.1.8 LLEXT and verified it contains `neuro_unit_app-1.1.8-cbor-v2`, verified wrapper `system capabilities` and `workflow plan release-closure` report `1.1.8`, reran post-promotion preflight and Linux smoke `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260429-161838.ndjson`, released the smoke activation lease, ran callback smoke with expected echo `neuro_unit_app-1.1.8-cbor-v2`, and confirmed final state: Unit `NETWORK_READY`, board IPv4 `192.168.2.67`, `neuro_unit_app` running/active, and `leases: []`. Windows validation was intentionally not run for this version per user direction. Release-1.1.8 is closed against the current Linux/hardware evidence. - Copilot
+
+2026-04-29: Reflashed the DNESP32S3B Unit to resolve the WSL/router endpoint drift found in `EXEC-189`, then reran Linux hardware validation. Built `build/neurolink_unit` with a one-off overlay setting `CONFIG_NEUROLINK_ZENOH_CONNECT="tcp/192.168.2.94:7447"`; verified `build/neurolink_unit/zephyr/.config` contains that endpoint and `zephyr.bin`/`zephyr.elf` were regenerated. Flashed `/dev/ttyACM0` successfully with `west flash` through `build_neurolink.sh --preset flash-unit --esp-device /dev/ttyACM0 --no-c-style-check`; esptool connected to ESP32-S3 `fc:01:2c:cf:ca:98`, wrote `808492` bytes, verified hash, and hard reset the board. Board preparation succeeded, with serial evidence `applocation/NeuroLink/smoke-evidence/serial-diag/serial-capture-20260429T160006Z.log`; preflight returned `status=ready`, router listening on `7447`, `/dev/ttyACM0` present, artifact present, and `query_device` successful. Wrapper discovery passed for `query device`, `query apps`, and `query leases`: Unit `unit-01` reports board `dnesp32s3b`, `session_ready: true`, `NETWORK_READY`, board IPv4 `192.168.2.67`; initial apps and leases were empty. Ran Linux hardware smoke via `smoke_neurolink_linux.sh --install-missing-cli-deps --events-duration-sec 5`; result `PASS`, evidence `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260429-160227.ndjson`, summary reports no failed step. Smoke left activate lease `lease-act-017b-001` under `source_agent=rational`; releasing through wrapper as `skills` correctly failed with `lease holder mismatch`, then direct CLI release with `source_agent=rational` succeeded and final lease query was empty. Ran callback smoke through the wrapper; the first run intentionally failed only because the expected echo was set to `hw_retest_confirm` while the app replied `neuro_unit_app-1.1.7-cbor-v2`; rerun with the actual expected echo passed, emitted callback events, released its `smoke-a4003f94` lease, and final discovery showed device ready, `neuro_unit_app` running/active, and leases empty. `RELEASE_TARGET` remains `1.1.7`; Windows validation was not run. - Copilot
+
+2026-04-29: Continued release-1.1.8 with `EXEC-189`, completing CLI reliability and skill/workflow alignment regressions, then running Linux hardware discovery after the Unit was reconnected. Added capabilities `workflow_surface` output in `neuro_cli/src/neuro_cli.py` so Agents can enumerate every live workflow plan with schema version, categories, host support, hardware/router/serial/network requirements, destructive state, and canonical `workflow plan <name>` commands. Fixed `system capabilities` Agent skill metadata to resolve the NeuroLink root and report real canonical skill, project-shared adapter, and wrapper paths with existence checks set to true. Extended `neuro_cli/scripts/invoke_neuro_cli.py` to accept and forward common CLI global retry/timeout options before forwarded CLI args, including `--query-retries`, `--query-retry-backoff-ms`, `--query-retry-backoff-max-ms`, and `--timeout`; this fixed the planned wrapper form `invoke_neuro_cli.py --query-retries 3 query device`. Added skill/reference alignment regressions that extract workflow names and wrapper examples from canonical and project-shared skill files, require referenced plans to exist in live `WORKFLOW_PLANS`, require examples to omit wrapper-level `--output`, and parse each example through the live CLI parser. Validation passed for Python compile, focused CLI tests (`94 passed`), combined CLI+wrapper tests (`104 passed`), wrapper `system capabilities` JSON with `workflow_surface`, wrapper `workflow plan release-closure`, fixed wrapper retry-option parsing, and `git -C applocation/NeuroLink diff --check`. Hardware discovery was non-destructive: initial preflight failed with `serial_device_missing`; `prepare_dnesp32s3b_wsl.sh --attach-only` restored BUSID `8-4` as `/dev/ttyACM0`; serial-required preflight then advanced to `no_reply_board_unreachable`; UART preparation showed Wi-Fi connected and `NETWORK_READY` at board IPv4 `192.168.2.67`, but the board repeatedly probed `tcp/192.168.2.95:7447` while the current WSL/Windows LAN address is `192.168.2.94` and router `zenohd` is listening on `0.0.0.0:7447`. A temporary `192.168.2.95` WSL alias was not added because it required interactive `sudo`; no destructive deploy, app invoke, callback configuration, smoke, lease cleanup, firmware change, setup script behavior change, or release identity promotion was performed. `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-189 Release-1.1.8 CLI Reliability and Skill Workflow Alignment
+
+- Status: completed for local CLI/wrapper/skill alignment; hardware discovery blocked at board-to-router endpoint mismatch
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-188` protected control workflow plans
+  - exposes a complete workflow surface through capabilities for lower-parameter Agents
+  - validates skill/reference examples against live parser behavior
+  - keeps hardware operations non-destructive until discovery reaches Unit query readiness
+  - preserves setup script behavior, firmware behavior, destructive hardware state, and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `system capabilities` now includes `workflow_surface`
+  - capabilities skill metadata resolves canonical/project-shared/wrapper paths from the workspace root
+  - wrapper accepts and forwards common retry/timeout global options before CLI command args
+  - canonical and project-shared skill workflow examples are checked against live workflow names and parser behavior
+  - wrapper examples are guarded against duplicate wrapper-level `--output`
+- Hardware evidence:
+  - initial preflight: `serial_device_missing`, router listening, artifact present
+  - WSL USB attach: BUSID `8-4` attached, `/dev/ttyACM0` restored
+  - second preflight: `no_reply_board_unreachable`, serial present, router listening, query `no_reply`
+  - UART preparation log: `applocation/NeuroLink/smoke-evidence/serial-diag/serial-capture-20260429T155211Z.log`
+  - board state: Wi-Fi connected, `NETWORK_READY`, board IPv4 `192.168.2.67`
+  - blocker: board probes `tcp/192.168.2.95:7447`, but current WSL/Windows LAN address is `192.168.2.94`; router listens on `0.0.0.0:7447`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`94 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`104 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system capabilities` => PASS (`ok: true`, `workflow_surface` present)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan release-closure` => PASS (`ok: true`, `executes_commands: false`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query device` => parser/wrapper PASS, runtime expected FAIL (`status: no_reply`) under current endpoint mismatch
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Validation boundary:
+  - Windows/PowerShell validation was intentionally not run for this slice per user direction
+  - hardware deploy, app invoke, callback configuration, smoke, and lease cleanup were not executed because discovery did not reach Unit query readiness
+  - temporary host alias `192.168.2.95` was not added because `sudo` required interactive credentials
+- Next action:
+  - restore board-to-router reachability with an operator-approved temporary `192.168.2.95` host alias, host IP restoration, or Unit rebuild/reflash to `tcp/192.168.2.94:7447`, then rerun preflight and discovery queries before destructive control
+
+2026-04-29: Continued release-1.1.8 with `EXEC-188`, adding Linux-validated protected remote control workflow plans, safety metadata, lease cleanup guidance, and JSON contracts for Neuro CLI Agent workflows. Added non-executing `workflow plan control-health`, `control-deploy`, `control-app-invoke`, `control-callback`, `control-monitor`, and `control-cleanup` in `neuro_cli/src/neuro_cli.py`; each plan reports `category: control`, `executes_commands: false`, host support, hardware/router requirements, destructive state, preconditions, expected success fields, failure statuses, cleanup, and a `json_contract` object. Destructive plans are explicitly marked for deploy, app invoke, and callback configuration; read-only health, monitor, and cleanup remain non-destructive while preserving hardware/router requirements where needed. The contracts cover update/app and app-control lease ids, deploy prepare/verify/activate, app invoke, callback config on/off, app-scoped events, explicit handler audit, known lease cleanup, and failure statuses including `lease_conflict`, `artifact_missing`, `artifact_stale`, `prepare_failed`, `verify_failed`, `activate_failed`, `app_not_running`, `callback_timeout`, `handler_failed`, `handler_timeout`, `handler_output_truncated`, `lease_not_found`, and nested `payload.status: error`. Updated canonical discovery/control and workflow references, plus the project-shared workflow mirror, so Agents run discovery before protected control and can inspect exact cleanup expectations. Added regressions for parser support, destructive flags, lease boundaries, handler boundaries, cleanup commands, JSON contracts, and reference coverage. Linux validation passed for Python compile, focused CLI tests (`92 passed`), focused CLI+wrapper tests (`101 passed`), wrapper `workflow plan control-deploy` JSON output, wrapper `workflow plan control-callback` JSON output, and whitespace check. This slice did not execute hardware deploy, app invoke, callback configuration, or cleanup commands; it only validated non-executing workflow plans. No setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-188 Release-1.1.8 Protected Remote Control Workflows
+
+- Status: completed for Linux-validated protected control workflow plans and safety contracts
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-187` remote discovery workflows
+  - requires discovery before protected control
+  - keeps every control workflow as a non-executing plan until explicitly run by an operator/Agent after review
+  - marks deploy, app invoke, and callback plans as destructive and documents lease cleanup
+  - preserves setup script behavior, firmware behavior, hardware state, and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `workflow plan control-health` is available through parser and wrapper
+  - `workflow plan control-deploy` is available through parser and wrapper
+  - `workflow plan control-app-invoke` is available through parser and wrapper
+  - `workflow plan control-callback` is available through parser and wrapper
+  - `workflow plan control-monitor` is available through parser and wrapper
+  - `workflow plan control-cleanup` is available through parser and wrapper
+  - destructive control plans declare `destructive: true` and include lease cleanup commands
+  - monitor control documents explicit handler audit boundaries
+  - discovery/control reference defines protected control order and JSON contracts
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`92 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`101 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan control-deploy` => PASS (`ok: true`, `executes_commands: false`, `destructive: true`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan control-callback` => PASS (`ok: true`, `executes_commands: false`, `destructive: true`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Validation boundary:
+  - Windows/PowerShell validation was intentionally not run for this slice per user direction
+  - hardware deploy, app invoke, callback configuration, and cleanup commands were not executed in this slice
+- Next action:
+  - continue with `EXEC-189` CLI reliability and skill/workflow alignment regressions across setup, discovery, control, callback, event, and wrapper paths
+
+2026-04-29: Continued release-1.1.8 with `EXEC-187`, adding Linux-validated remote discovery workflow plans and JSON contracts for Neuro CLI Agent workflows. Added non-executing `workflow plan discover-host`, `discover-router`, `discover-serial`, `discover-device`, `discover-apps`, and `discover-leases` in `neuro_cli/src/neuro_cli.py`; each plan reports `category: discovery`, `executes_commands: false`, host support, hardware/serial/router requirements, destructive state, preconditions, expected success fields, failure statuses, cleanup, and a `json_contract` object. The contracts cover host `status: ready`, router `router.listening`, serial `serial.present`, device reply payload `status: ok`, app counts/state lists, lease lists, and failure classifications including `workspace_not_found`, `router_not_listening`, `router_failed_to_start`, `serial_device_missing`, `no_reply_board_unreachable`, `session_open_failed`, `no_reply`, `parse_failed`, `error_reply`, `app_not_running`, `lease_conflict`, and nested `payload.status: error`. Updated canonical discovery/control and workflow references, plus the project-shared workflow mirror, so Agents discover host/router/serial/device/apps/leases before preflight, smoke, callback smoke, or protected control. Added regressions for parser support, discovery metadata, Linux wrapper/preflight command forms, JSON contracts, and reference coverage. Linux validation passed for Python compile, focused CLI tests (`88 passed`), focused CLI+wrapper tests (`97 passed`), wrapper `workflow plan discover-device` JSON output, wrapper `workflow plan discover-apps` JSON output, and whitespace check. Per user direction, this slice did not run or claim Windows/PowerShell validation. No setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-187 Release-1.1.8 Remote Discovery Workflows
+
+- Status: completed for Linux-validated discovery workflow plans and JSON contracts
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-186` Windows setup reference but validates only Linux/Python in this slice
+  - adds read-only discovery workflow plans before protected control planning
+  - keeps every discovery workflow non-executing and non-destructive
+  - preserves setup script behavior, firmware behavior, hardware state, and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `workflow plan discover-host` is available through parser and wrapper
+  - `workflow plan discover-router` is available through parser and wrapper
+  - `workflow plan discover-serial` is available through parser and wrapper
+  - `workflow plan discover-device` is available through parser and wrapper
+  - `workflow plan discover-apps` is available through parser and wrapper
+  - `workflow plan discover-leases` is available through parser and wrapper
+  - discovery plans include machine-readable `json_contract` payload examples and failure statuses
+  - discovery/control reference defines host, router, serial, device, apps, and leases JSON contracts
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`88 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`97 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device` => PASS (`ok: true`, `executes_commands: false`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps` => PASS (`ok: true`, `executes_commands: false`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Validation boundary:
+  - Windows/PowerShell validation was intentionally not run for this slice per user direction
+- Next action:
+  - continue with `EXEC-188` protected remote control recipes, safety metadata, and lease cleanup guidance
+
+2026-04-29: Continued release-1.1.8 with `EXEC-186`, implementing the Windows zero-host setup slice for Neuro CLI Agent workflows. Expanded `neuro_cli/skill/references/setup-windows.md` from a placeholder into a PowerShell-first fresh-host guide covering supported Windows host shape, operator-approved `winget` or manual installer prompts, `.venv` creation, PowerShell execution policy boundaries, Zephyr and Neuro CLI Python requirements, `west update`, Zephyr SDK selection from `zephyr/SDK_VERSION`, strict PowerShell validation, build/test workflow discovery, WSL boundaries, and failure recovery. Added non-executing `workflow plan setup-windows` in `neuro_cli/src/neuro_cli.py` with Windows/WSL host support, network requirement, non-destructive/no-hardware metadata, installer/environment/SDK/check commands, expected success fields, failure statuses, and artifacts. Updated canonical and project-shared workflow references to surface `workflow plan setup-windows` beside `setup-linux`. Added regressions for parser support, setup-windows plan metadata and commands, and Windows setup reference content. Validation passed for Python compile of edited CLI/test files, focused CLI tests (`84 passed`), focused CLI+wrapper tests (`93 passed`), wrapper `workflow plan setup-windows` JSON output, and whitespace check. PowerShell parser validation was not run because `pwsh` is unavailable in this Linux environment (`command -v pwsh` exit 1). No setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-186 Release-1.1.8 Zero-Host Windows Setup
+
+- Status: completed for Windows setup reference and workflow plan
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-185` Linux setup reference and workflow plan
+  - adds `setup-windows` workflow plan without executing setup commands
+  - keeps installer prompts, execution policy, drivers, and USB/IP as explicit operator-approved steps
+  - preserves setup script behavior, firmware behavior, and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/references/setup-windows.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `workflow plan setup-windows` is available through parser and wrapper
+  - plan metadata marks Windows setup as network-required, non-destructive, and hardware-free
+  - plan commands cover `winget`, `.venv`, Python dependencies, `west update`, SDK version lookup, PowerShell strict validation, and follow-on workflow discovery
+  - Windows setup reference documents PowerShell-first setup, conda compatibility, WSL boundary, SDK handling, build/test checks, and recovery notes
+  - canonical and project-shared workflow references both point Agents to `workflow plan setup-windows`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`84 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`93 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan setup-windows` => PASS (`ok: true`, `executes_commands: false`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+  - `command -v pwsh` => unavailable in this Linux environment (PowerShell parser validation not run)
+- Next action:
+  - continue with `EXEC-187` remote discovery workflows and JSON contracts
+
+2026-04-29: Continued release-1.1.8 with `EXEC-185`, implementing the Linux zero-host setup slice for Neuro CLI Agent workflows. Expanded `neuro_cli/skill/references/setup-linux.md` from a placeholder into a concrete fresh-host guide covering supported Linux host shape, operator-approved system packages, `.venv` creation, Zephyr and Neuro CLI Python requirements, `west update`, Zephyr SDK selection from `zephyr/SDK_VERSION`, strict setup validation, build/test workflow discovery, hardware preflight boundaries, USB/serial permissions, and failure recovery. Added non-executing `workflow plan setup-linux` in `neuro_cli/src/neuro_cli.py` with Linux-only host support, network requirement, non-destructive/no-hardware metadata, package/environment/SDK/check commands, expected success fields, failure statuses, and artifacts. Updated canonical and project-shared workflow references to surface `workflow plan setup-linux` before setup validation commands. Added regressions for parser support, setup-linux plan metadata and commands, and Linux setup reference content. Validation passed for Python compile of edited CLI/test files, focused CLI tests (`81 passed`), focused CLI+wrapper tests (`90 passed`), wrapper `workflow plan setup-linux` JSON output, and whitespace check. No setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-185 Release-1.1.8 Zero-Host Linux Setup
+
+- Status: completed for Linux setup reference and workflow plan
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-184` release-string hygiene and skill metadata alignment
+  - adds `setup-linux` workflow plan without executing setup commands
+  - keeps privileged package installation as an explicit operator-approved step
+  - preserves setup script behavior, firmware behavior, and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/references/setup-linux.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `workflow plan setup-linux` is available through parser and wrapper
+  - plan metadata marks Linux setup as network-required, non-destructive, and hardware-free
+  - plan commands cover system packages, `.venv`, Python dependencies, `west update`, SDK version lookup, strict setup validation, and follow-on workflow discovery
+  - Linux setup reference now documents zero-host bootstrap, SDK handling, build/test checks, USB/serial boundaries, and recovery notes
+  - canonical and project-shared workflow references both point Agents to `workflow plan setup-linux`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`81 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`90 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan setup-linux` => PASS (`ok: true`, `executes_commands: false`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with `EXEC-186` zero-host Windows setup reference and `workflow plan setup-windows`
+
+2026-04-29: Continued release-1.1.8 with `EXEC-184`, cleaning workflow release-string hygiene and aligning Agent skill metadata with the new canonical package ownership. Added explicit `CANONICAL_SKILL_RELATIVE_PATH` and `PROJECT_SHARED_SKILL_RELATIVE_PATH` constants while preserving the legacy `PROJECT_SKILL_RELATIVE_PATH` compatibility alias. Added `release_label()`, `default_app_echo()`, `resolve_neurolink_path()`, and `build_agent_skill_metadata()` in `neuro_cli/src/neuro_cli.py`. Workflow plan commands now derive memory evidence labels, release closure labels, and callback-smoke expected app echo from `RELEASE_TARGET`, so future release promotion no longer leaves stale workflow command literals behind. System init, workflow plan, and capabilities JSON now report canonical skill path, project-shared discovery adapter path, discovery adapter alias, existence checks, wrapper path, structured stdout support, source-of-truth state, and callback handler execution policy through one helper. Added regressions for canonical/discovery metadata and source-level release-string hygiene. Validation passed for Python compile of edited CLI/test files, focused CLI tests (`78 passed`), focused CLI+wrapper tests (`87 passed`), and whitespace check. No setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-184 Release-1.1.8 Release-String Hygiene and Skill Metadata
+
+- Status: completed for release-string hygiene and skill metadata alignment
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-183` structured workflow metadata
+  - keeps `RELEASE_TARGET = "1.1.7"` until final closure
+  - removes stale workflow-command release literals from CLI source
+  - exposes canonical and project-shared skill paths together for Agents
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - memory evidence workflow label is derived from `RELEASE_TARGET`
+  - release closure workflow label is derived from `RELEASE_TARGET`
+  - callback smoke expected app echo is derived from `RELEASE_TARGET`
+  - `agent_skill` metadata reports canonical skill path and discovery adapter path
+  - shared helper keeps `system init`, `workflow plan`, and `system capabilities` metadata aligned
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`78 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`87 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with `EXEC-185` zero-host Linux setup reference and `workflow plan setup-linux`
+
+2026-04-29: Continued release-1.1.8 with `EXEC-183`, extending existing Neuro CLI workflow plans with structured low-parameter Agent metadata while preserving all existing workflow plan names and legacy output fields. Added `WORKFLOW_PLAN_SCHEMA_VERSION = "1.1.8-workflow-plan-v1"`, default workflow metadata, per-workflow metadata overrides, and `workflow_agent_metadata()` in `neuro_cli/src/neuro_cli.py`. `workflow plan <name> --output json` now reports `schema_version`, `host_support`, `requires_hardware`, `requires_serial`, `requires_router`, `requires_network`, `destructive`, `preconditions`, `expected_success`, `failure_statuses`, and `cleanup` for the existing plans. Added focused regressions proving every workflow emits the new schema fields and that safety metadata is explicit for preflight, callback smoke, and CLI tests. Validation passed for Python compile of the edited CLI/test files, focused CLI tests (`76 passed`), focused CLI+wrapper tests (`85 passed`), and whitespace check. No setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-183 Release-1.1.8 Structured Workflow Plan Metadata
+
+- Status: completed for existing workflow plan schema expansion
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-182` canonical skill package migration
+  - preserves all existing workflow plan names and legacy output fields
+  - adds low-parameter Agent metadata without executing commands
+  - preserves setup scripts, firmware behavior, and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - workflow plans now expose `schema_version = "1.1.8-workflow-plan-v1"`
+  - workflow plans now expose host support and hardware/router/serial/network requirements
+  - destructive workflows are explicitly marked for Agent safety
+  - plans include preconditions, expected success, failure statuses, and cleanup guidance
+  - `preflight`, `callback-smoke`, and `cli-tests` have targeted safety assertions
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`76 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`85 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with `EXEC-184` release-string hygiene and canonical/project-shared Agent skill metadata
+
+2026-04-29: Continued release-1.1.8 with `EXEC-182`, migrating the canonical Neuro CLI skill package into `applocation/NeuroLink/neuro_cli/skill`. `neuro_cli/skill/SKILL.md` now owns the skill frontmatter, operating contract, ground rules, first checks, common workflows, and canonical references. Added canonical `neuro_cli/skill/references/workflows.md`, initial setup placeholders for Linux and Windows, discovery/control reference scaffolding, and canonical app/callback assets. Updated `neuro_cli/skill/README.md` to state that this directory is the source of truth. Kept `.github/skills/neuro-cli/SKILL.md` as the VS Code Agent discovery adapter and pointed it back to `../../../neuro_cli/skill/SKILL.md`; existing `.github` workflow/assets are now tested mirrors. Added focused CLI tests to validate canonical skill required resources, discovery-adapter backlink, and mirrored reference/asset equality. Validation passed for Python compile of the edited test, focused CLI tests (`74 passed`), full focused CLI+wrapper suite (`83 passed`), and whitespace check. No runtime CLI behavior, setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-182 Release-1.1.8 Canonical Skill Package Migration
+
+- Status: completed for canonical skill package migration
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-181` inventory and plan refinement
+  - makes `neuro_cli/skill` the canonical skill package directory
+  - preserves `.github/skills/neuro-cli` as the discovery adapter and tested mirror surface
+  - preserves runtime CLI behavior and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/skill/SKILL.md`
+  - `applocation/NeuroLink/neuro_cli/skill/README.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/setup-linux.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/setup-windows.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`
+  - `applocation/NeuroLink/neuro_cli/skill/assets/neuro_unit_app_template.c`
+  - `applocation/NeuroLink/neuro_cli/skill/assets/callback_handler.py`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/SKILL.md`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - canonical skill frontmatter and workflow contract now live under `neuro_cli/skill`
+  - `.github/skills/neuro-cli/SKILL.md` points Agents to the canonical package
+  - required references and assets exist beside the CLI implementation
+  - tests guard required resource presence and `.github` mirror drift for workflows/assets
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` => PASS (`74 passed`)
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`83 passed`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with `EXEC-183` workflow plan schema metadata for low-parameter Agents
+
+2026-04-29: Progressed release-1.1.8 with `EXEC-181`, performing the plan reasonableness review and live surface inventory before changing CLI behavior. Confirmed the baseline plan is sound if executed as a phased Neuro CLI/skill-contract release: MVP includes canonical `neuro_cli/skill` ownership, structured workflow metadata, zero-host Linux/Windows setup references, discovery/control recipes, and alignment validation; deferred scope includes full Windows system installer automation, multi-node mesh discovery, protocol replacement, and firmware changes unless host-side state cannot express the requirement. Inventory confirmed `WORKFLOW_PLANS` currently lives in `neuro_cli/src/neuro_cli.py`, returns only basic plan fields plus wrapper/protocol metadata, has hardcoded `1.1.7` strings in `memory-evidence`, `callback-smoke`, and `release-closure`, and still reports only `.github/skills/neuro-cli/SKILL.md` as the Agent skill path. Updated `docs/project/RELEASE_1.1.8_PRE_RESEARCH.md` with plan reasonableness analysis, implementation prerequisites, detailed execution phases, and refined execution slices through `EXEC-191`. No source behavior, setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. - Copilot
+
+#### EXEC-181 Release-1.1.8 Plan Reasonableness and Live Inventory
+
+- Status: completed for planning refinement
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - refines the `EXEC-180` release-1.1.8 baseline before behavior changes
+  - confirms the release should proceed as a phased CLI/skill-contract track
+  - preserves firmware behavior and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Inventory findings:
+  - `WORKFLOW_PLANS` is currently defined in `neuro_cli/src/neuro_cli.py`
+  - workflow plans currently expose basic commands/artifacts but not the low-parameter Agent metadata planned for 1.1.8
+  - `memory-evidence`, `callback-smoke`, and `release-closure` still contain hardcoded `1.1.7` labels or app echo strings
+  - CLI Agent skill metadata currently points only at `.github/skills/neuro-cli/SKILL.md`
+  - `workflow plan <name>` and `system workflow plan <name>` exist; a workflow listing command does not yet exist
+- Planning refinements:
+  - split implementation into inventory, skill canonicalization, workflow schema, release-string hygiene, Linux setup, Windows setup, discovery, control, alignment regressions, local closure, and hardware closure
+  - keep Windows full system installer automation deferred unless a later slice explicitly accepts that risk
+  - require discovery workflows to precede destructive control workflows
+- Next action:
+  - continue with `EXEC-182` canonical skill package migration under `neuro_cli/skill`
+
+2026-04-29: Opened release-1.1.8 planning with `EXEC-180` after reading the release-1.1.7 closure ledger and current Neuro CLI skill/setup surfaces. Release-1.1.8 is scoped as a Neuro CLI reliability and completeness release for Agent embedding: canonical skill ownership moves into `applocation/NeuroLink/neuro_cli/skill`, `.github/skills/neuro-cli` remains the discovery adapter or mirror, Linux and Windows setup guidance must become complete enough for network-only fresh hosts, and remote discovery/control must be expressed as structured workflow plans that low-parameter Agents can execute without guessing. Added the release baseline plan at `docs/project/RELEASE_1.1.8_PRE_RESEARCH.md` with workstreams for canonical skill packaging, zero-host Linux/Windows bootstrap, structured workflow plan schema, explicit discovery semantics, protected remote control recipes, CLI/wrapper reliability regressions, skill validation, local/build gates, hardware closure, and final `RELEASE_TARGET` promotion policy. No source behavior, setup script behavior, firmware behavior, hardware state, or release identity changed; `RELEASE_TARGET` remains `1.1.7`. — Copilot
+
+#### EXEC-180 Release-1.1.8 Baseline Planning
+
+- Status: completed for kickoff planning
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - starts release-1.1.8 from the closed release-1.1.7 evidence baseline
+  - focuses on `neuro_cli` reliability, completeness, and Agent-embeddable skill behavior
+  - preserves firmware behavior and `RELEASE_TARGET = "1.1.7"`
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.8_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Planned release themes:
+  - make `neuro_cli/skill` the canonical skill package with `.github/skills/neuro-cli` as discovery adapter or tested mirror
+  - document zero-host Linux setup from system dependencies through Unit build/test/control environment
+  - document zero-host Windows setup from system dependencies through Windows/WSL-compatible build/test/control environment
+  - add structured workflow plan metadata for low-parameter Agents
+  - define explicit host/router/serial/device/app discovery workflows
+  - define protected remote control recipes for query, deploy, app invoke, callbacks, event monitoring, and cleanup
+  - preserve stable CLI and wrapper JSON failure classification
+- Next action:
+  - continue with `EXEC-181` inventory of live CLI commands, workflow plans, skill references, setup scripts, and Windows/Linux support gaps
+
 2026-04-29: Completed release-1.1.7 hardware closure and release identity promotion with `EXEC-179B`. After the user reconnected USB, `prepare_dnesp32s3b_wsl.sh --attach-only` restored BUSID `8-4` as `/dev/ttyACM0`; full board preparation restored `unit-01` to `NETWORK_READY` at `192.168.2.69`. Serial-required preflight passed, and full Linux smoke passed with fresh final LLEXT evidence `smoke-evidence/SMOKE-017B-LINUX-001-20260428-184958.ndjson`; the deployed artifact was `21520` bytes and contains `neuro_unit_app-1.1.7-cbor-v2`. The callback freshness blocker was root-caused with UART evidence: Unit published `neuro/unit-01/event/app//callback`, so the CLI subscriber on `neuro/unit-01/event/app/neuro_unit_app/**` correctly received no events. Fixed the sample LLEXT app to use a stable local `app_id` for callback events instead of `app_runtime_manifest.app_name`, rebuilt/redeployed fresh LLEXT, and verified `app-callback-smoke --expected-app-echo neuro_unit_app-1.1.7-cbor-v2 --trigger-every 1 --invoke-count 2` passed with three CBOR callback events on `neuro/unit-01/event/app/neuro_unit_app/callback`. Promoted Neuro CLI `RELEASE_TARGET` to `1.1.7`, promoted the sample app version/build id to `1.1.7`/`neuro_unit_app-1.1.7-cbor-v2`, captured final memory evidence at `memory-evidence/exec-179-release-closure.{json,summary.txt}` with `release_target=1.1.7` and `dram0=377188`, and confirmed live capabilities JSON reports `release_target: 1.1.7`. Validation passed for final LLEXT rebuild/build-id check, Python compile, focused CLI suite (`81 passed`), clean-environment script suite (`9/9`), full Linux smoke, callback freshness, smoke lease cleanup (`query leases` empty), and `git diff --check`. Release-1.1.7 is closed against the current workspace evidence. — Copilot
 
 #### EXEC-179B Release-1.1.7 Hardware Closure and Identity Promotion

@@ -45,6 +45,35 @@ class TestInvokeNeuroCliWrapper(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
 
+    def test_forwards_retry_options_before_cli_args(self) -> None:
+        wrapper = load_wrapper()
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='{"ok": true, "status": "ok"}', stderr=""
+        )
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "invoke_neuro_cli.py",
+                "--query-retries",
+                "3",
+                "--query-retry-backoff-ms",
+                "100",
+                "query",
+                "device",
+            ],
+        ), mock.patch.object(subprocess, "run", return_value=completed) as run:
+            with redirect_stdout(io.StringIO()):
+                code = wrapper.main()
+
+        self.assertEqual(code, 0)
+        cmd = run.call_args.args[0]
+        self.assertLess(cmd.index("--query-retries"), cmd.index("query"))
+        self.assertLess(cmd.index("--query-retry-backoff-ms"), cmd.index("query"))
+        self.assertEqual(cmd[cmd.index("--query-retries") + 1], "3")
+        self.assertEqual(cmd[cmd.index("--query-retry-backoff-ms") + 1], "100")
+
     def test_payload_status_error_fails_even_with_zero_process_exit(self) -> None:
         wrapper = load_wrapper()
         completed = subprocess.CompletedProcess(
