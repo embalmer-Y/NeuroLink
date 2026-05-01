@@ -169,6 +169,11 @@ void neuro_unit_handle_app_command(
 			(void)neuro_app_command_registry_set_app_enabled(
 				app_id, false);
 		}
+	} else if (strcmp(action, "unload") == 0) {
+		ret = app_runtime_unload(app_id);
+		if (!ret) {
+			(void)neuro_app_command_registry_remove_app(app_id);
+		}
 	} else {
 		ops->reply_error(
 			reply_ctx, request_id, "unsupported app command", 404);
@@ -176,6 +181,11 @@ void neuro_unit_handle_app_command(
 	}
 
 	if (ret) {
+		if (ret == -ENOENT && strcmp(action, "unload") == 0) {
+			ops->reply_error(
+				reply_ctx, request_id, "app not loaded", 404);
+			return;
+		}
 		ops->reply_error(reply_ctx, request_id,
 			"app runtime command failed", 500);
 		return;

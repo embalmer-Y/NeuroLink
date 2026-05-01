@@ -272,6 +272,24 @@ int neuro_update_manager_record_stable_ref(struct neuro_update_manager *manager,
 	return 0;
 }
 
+int neuro_update_manager_remove(
+	struct neuro_update_manager *manager, const char *app_id)
+{
+	struct neuro_update_entry *entry;
+
+	if (manager == NULL || app_id == NULL || app_id[0] == '\0') {
+		return -EINVAL;
+	}
+
+	entry = find_entry(manager, app_id);
+	if (entry == NULL) {
+		return -ENOENT;
+	}
+
+	memset(entry, 0, sizeof(*entry));
+	return 0;
+}
+
 int neuro_update_manager_rollback_begin(struct neuro_update_manager *manager,
 	const char *app_id, const char *reason)
 {

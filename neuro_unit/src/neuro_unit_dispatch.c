@@ -439,7 +439,8 @@ void neuro_unit_dispatch_update_query(const z_loaned_query_t *query,
 			   strcmp(route.action, "verify") == 0 ||
 			   strcmp(route.action, "activate") == 0 ||
 			   strcmp(route.action, "rollback") == 0 ||
-			   strcmp(route.action, "recover") == 0;
+			   strcmp(route.action, "recover") == 0 ||
+			   strcmp(route.action, "delete") == 0;
 
 	if (lifecycle_action) {
 		if (ops->ensure_recovery_seed_initialized == NULL) {

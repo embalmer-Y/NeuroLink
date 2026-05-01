@@ -73,6 +73,15 @@ ZTEST(neuro_protocol, test_route_builders_contract)
 			"neuro/unit-01/update/app/neuro_unit_app/activate") ==
 			0,
 		"update route contract changed");
+
+	zassert_equal(neuro_protocol_build_update_route(route, sizeof(route),
+			      "unit-01", "neuro_unit_app",
+			      NEURO_PROTOCOL_UPDATE_DELETE),
+		0, "update delete route build should succeed");
+	zassert_true(
+		strcmp(route,
+			"neuro/unit-01/update/app/neuro_unit_app/delete") == 0,
+		"update delete route contract changed");
 }
 
 ZTEST(neuro_protocol, test_event_route_builders_contract)

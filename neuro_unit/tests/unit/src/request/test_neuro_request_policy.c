@@ -106,6 +106,13 @@ ZTEST(neuro_request_policy, test_update_unknown_action_has_no_policy)
 			   NEURO_REQ_META_REQUIRE_LEASE_ID),
 		"recover should require protected write fields");
 	zassert_equal(neuro_request_policy_required_fields_for_update_action(
+			      "delete"),
+		(uint32_t)(NEURO_REQ_META_REQUIRE_COMMON |
+			   NEURO_REQ_META_REQUIRE_PRIORITY |
+			   NEURO_REQ_META_REQUIRE_IDEMPOTENCY_KEY |
+			   NEURO_REQ_META_REQUIRE_LEASE_ID),
+		"delete should require protected write fields");
+	zassert_equal(neuro_request_policy_required_fields_for_update_action(
 			      "unknown"),
 		0U, "unknown action should have no mapped policy");
 }

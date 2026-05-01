@@ -396,6 +396,23 @@ ZTEST(neuro_unit_dispatch, test_update_recover_requires_recovery_ready)
 		"recover action should be preserved for handler");
 }
 
+ZTEST(neuro_unit_dispatch, test_update_delete_requires_recovery_ready)
+{
+	struct neuro_request_metadata metadata = { 0 };
+
+	snprintk(metadata.request_id, sizeof(metadata.request_id), "req-3c");
+	neuro_unit_dispatch_update_query(NULL,
+		"neuro/unit-01/update/app/neuro_unit_app/delete", "{}",
+		&metadata, NULL, &g_ops);
+
+	zassert_equal(g_probe.ensure_recovery_calls, 1,
+		"delete route should pass recovery gate");
+	zassert_equal(g_probe.update_action_calls, 1,
+		"delete route should dispatch when recovery gate passes");
+	zassert_true(strcmp(g_probe.action, "delete") == 0,
+		"delete action should be preserved for handler");
+}
+
 ZTEST(neuro_unit_dispatch, test_update_recovery_gate_failure_replies_503)
 {
 	struct neuro_request_metadata metadata = { 0 };

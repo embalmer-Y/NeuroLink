@@ -11,6 +11,7 @@
     "update_verify_request": 7,
     "update_activate_request": 8,
     "update_rollback_request": 9,
+    "update_delete_request": 10,
     "error_reply": 20,
     "lease_reply": 21,
     "query_device_reply": 22,

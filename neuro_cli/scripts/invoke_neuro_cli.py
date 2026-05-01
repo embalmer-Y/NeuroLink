@@ -17,6 +17,12 @@ PAYLOAD_FAILURE_STATUSES = {
     "parse_failed",
     "session_open_failed",
     "handler_failed",
+    "serial_dependency_missing",
+    "serial_device_missing",
+    "serial_open_failed",
+    "serial_timeout",
+    "shell_error",
+    "endpoint_verify_failed",
 }
 
 

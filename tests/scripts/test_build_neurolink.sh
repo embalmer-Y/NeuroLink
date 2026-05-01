@@ -56,6 +56,16 @@ candidate_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/externa
 grep -q "CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y" "${candidate_overlay}"
 grep -q "CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n" "${candidate_overlay}"
 
+dynamic_heap_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/llext_dynamic_heap_candidate.conf"
+[[ -f "${dynamic_heap_overlay}" ]] || {
+  echo "missing LLEXT dynamic heap candidate overlay: ${dynamic_heap_overlay}" >&2
+  exit 1
+}
+grep -q "CONFIG_LLEXT_HEAP_DYNAMIC=y" "${dynamic_heap_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n" "${dynamic_heap_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n" "${dynamic_heap_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576" "${dynamic_heap_overlay}"
+
 heap_trim_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/heap_trim_candidate.conf"
 [[ -f "${heap_trim_overlay}" ]] || {
   echo "missing heap trim candidate overlay: ${heap_trim_overlay}" >&2

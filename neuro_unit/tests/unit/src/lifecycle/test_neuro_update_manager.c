@@ -62,6 +62,25 @@ ZTEST(neuro_update_manager, test_activate_before_verify_rejected)
 		NEURO_UPDATE_STATE_PREPARED, "state should remain PREPARED");
 }
 
+ZTEST(neuro_update_manager, test_remove_deletes_entry)
+{
+	struct neuro_update_manager manager;
+	int ret;
+
+	neuro_update_manager_init(&manager);
+	ret = neuro_update_manager_prepare_begin(&manager, "demo");
+	zassert_equal(ret, 0, "prepare begin should create entry");
+	zassert_not_equal(neuro_update_manager_state_for(&manager, "demo"),
+		NEURO_UPDATE_STATE_NONE, "entry should exist before remove");
+
+	ret = neuro_update_manager_remove(&manager, "demo");
+	zassert_equal(ret, 0, "remove should delete existing entry");
+	zassert_equal(neuro_update_manager_state_for(&manager, "demo"),
+		NEURO_UPDATE_STATE_NONE, "removed entry should report NONE");
+	zassert_equal(neuro_update_manager_remove(&manager, "demo"), -ENOENT,
+		"removing a missing entry should report ENOENT");
+}
+
 ZTEST(neuro_update_manager, test_prepare_fail_marks_failed)
 {
 	struct neuro_update_manager manager;

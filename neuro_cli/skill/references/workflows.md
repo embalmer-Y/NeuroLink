@@ -19,6 +19,9 @@ python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan unit-tests
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan cli-tests
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan memory-evidence
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan memory-layout-dump
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan llext-memory-config
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan llext-lifecycle
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan callback-smoke
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan release-closure
 ```
@@ -36,12 +39,23 @@ The generated JSON and summary record the release target, firmware build
 configuration, stack/heap/network buffer settings, static ELF staging settings,
 and any build-log memory summary available from the Unit build.
 
+For release 1.1.9 static layout work, ask for `workflow plan
+memory-layout-dump`, then run `memory layout-dump` to collect section-level
+board layout evidence. Use `workflow plan llext-memory-config`, then run
+`memory config-plan` to compare baseline and candidate layout evidence before
+any runtime or hardware promotion step. For dynamic heap candidates, review
+`docs/project/RELEASE_1.1.9_LLEXT_MEMORY_BOUNDARIES.md` first; static layout
+evidence alone cannot promote `CONFIG_LLEXT_HEAP_DYNAMIC=y`.
+
 ## Board Gates
 
 ```bash
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-host
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-router
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-serial
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-discover
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-zenoh-config
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-zenoh-recover
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases
@@ -59,6 +73,8 @@ python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan
 Run discovery in order before protected control: host, router, serial, device,
 apps, then leases. Discovery plans are read-only for Unit state; router discovery
 may start only a local router when the operator approves the listed command.
+Use the serial Zenoh workflows only when endpoint drift or first-boot router
+configuration must be corrected through the Unit UART shell.
 
 Run protected control only after discovery succeeds. Control plans cover
 read-only health, protected deploy, app invoke, callback configuration, event
@@ -95,4 +111,7 @@ evidence have all passed.
 - `status: parse_failed`: unreadable OK reply payload.
 - `status: session_open_failed`: dependency/session-open failure after retries.
 - `status: handler_failed`: CLI handler failure after session open.
+- `status: serial_device_missing`: Unit UART is not visible to the host.
+- `status: serial_timeout`: UART shell did not reply before timeout.
+- `status: endpoint_verify_failed`: UART shell output did not confirm the requested Zenoh endpoint.
 - `payload.status: error`: Unit-level error reply.

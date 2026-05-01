@@ -1,6 +1,238 @@
+2026-05-01: Closed release-1.1.9 with `EXEC-197` after completing hardware closure, fixing the discovered update-delete CBOR route gap, and promoting release identity. Hardware closure used `/dev/ttyACM0` and router endpoint `tcp/192.168.2.94:7447`; UART Zenoh `show`, `set`, and `clear` all succeeded and the Unit returned to `NETWORK_READY` at `192.168.2.67`. The first lifecycle hardware pass exposed stale firmware for unload and missing CBOR request mapping for `update/app/neuro_unit_app/delete`; reflashing current firmware and adding `update_delete_request=10` to Python and Unit protocol contracts resolved it. Post-promotion changed `neuro_cli/src/neuro_cli.py` to `RELEASE_TARGET = "1.1.9"`, promoted the sample app to `1.1.9`/`neuro_unit_app-1.1.9-cbor-v2`, updated release-target regressions and README status, regenerated `applocation/NeuroLink/memory-evidence/release-1.1.9-closure.{json,summary.txt}` with `release_target=1.1.9`, `dram0=377188`, `iram0=66216`, `flash=673952`, `ext_ram=2847776`, and `section_count=77`, rebuilt `build/neurolink_unit/llext/neuro_unit_app.llext`, and verified the artifact contains `neuro_unit_app-1.1.9-cbor-v2`. Final local gates passed for Python compile, CLI+wrapper tests (`123 passed`), script suite (`script_tests_passed=9`, `script_tests_failed=0`), Unit native_sim (`PROJECT EXECUTION SUCCESSFUL`), wrapper `system capabilities` and `workflow plan release-closure` reporting `release_target=1.1.9`, and `git -C applocation/NeuroLink diff --check`. Final hardware gates passed for serial-required preflight, Linux smoke `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260501-021622.ndjson`, explicit smoke lease release as `source_agent=rational`, callback smoke with `neuro_unit_app-1.1.9-cbor-v2` echo and three CBOR callback events, and final queries showing Unit ready, `neuro_unit_app` running/active, and `leases: []`. Release-1.1.9 is closed against the current Linux/hardware evidence. - Copilot
+
+2026-05-01: Started release-1.1.9 `EXEC-197` closure preparation after completing the local `EXEC-196` dynamic LLEXT memory candidate boundary slice. Ran the non-destructive local closure setup that is safe before a hardware validation window: generated fresh static memory evidence at `applocation/NeuroLink/memory-evidence/exec-197-local-closure.{json,summary.txt}` from `build/neurolink_unit` with `release_target=1.1.8`, `dram0=377188`, `iram0=66216`, `flash=673780`, `ext_ram=2847776`, and `section_count=77`; confirmed wrapper `workflow plan release-closure` still reports `release_target=1.1.8`, `requires_hardware=true`, `requires_serial=true`, `requires_router=true`, and `destructive=true`. Hardware preflight, UART Zenoh recovery/config proof, LLEXT lifecycle smoke, callback smoke, final lease cleanup, and release identity promotion were intentionally not run in this local preparation slice. `RELEASE_TARGET = "1.1.8"` remains unchanged. - Copilot
+
+#### EXEC-197 Release-1.1.9 Closure and Promotion
+
+- Status: completed and closed for release-1.1.9
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-196` dynamic LLEXT memory candidate gating
+  - preserved release identity until all hardware closure evidence was green
+  - treats closure workflow commands as reviewable/non-executing plans until explicitly run
+  - completed destructive hardware smoke and explicit lease cleanup in the hardware closure window
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/memory-evidence/exec-197-local-closure.json`
+  - `applocation/NeuroLink/memory-evidence/exec-197-local-closure.summary.txt`
+  - `applocation/NeuroLink/memory-evidence/release-1.1.9-closure.json`
+  - `applocation/NeuroLink/memory-evidence/release-1.1.9-closure.summary.txt`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_protocol.py`
+  - `applocation/NeuroLink/neuro_cli/tests/fixtures/protocol_cbor_v2_schema.json`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_unit/include/neuro_protocol.h`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_protocol_codec_cbor.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/protocol/test_neuro_protocol.c`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+- Result:
+  - generated persistent local static memory evidence for closure preparation
+  - confirmed release-closure workflow still requires hardware, serial, router, network, and destructive review
+  - completed UART Zenoh show/set/clear hardware proof on `/dev/ttyACM0`
+  - completed LLEXT deploy/activate/invoke/unload/delete lifecycle proof after adding `update_delete_request=10`
+  - promoted release target and sample app identity to `1.1.9`
+  - regenerated final release-1.1.9 memory evidence and rebuilt the 1.1.9 LLEXT artifact
+  - confirmed final board state is ready, app running/active, and leases empty
+- Verification evidence:
+  - `memory layout-dump --build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence --label exec-197-local-closure` => PASS (`dram0=377188`, `iram0=66216`, `flash=673780`, `ext_ram=2847776`, `section_count=77`)
+  - `invoke_neuro_cli.py workflow plan release-closure` => PASS (`release_target=1.1.8`, `requires_hardware=true`, `requires_serial=true`, `requires_router=true`, `destructive=true`)
+  - UART Zenoh `show/set/clear` on `/dev/ttyACM0` => PASS (`tcp/192.168.2.94:7447`)
+  - Linux smoke before promotion => PASS (`applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260501-020738.ndjson`)
+  - explicit invoke/unload/delete lifecycle smoke => PASS after delete CBOR route support
+  - post-promotion `memory layout-dump --label release-1.1.9-closure` => PASS (`dram0=377188`, `iram0=66216`, `flash=673952`, `ext_ram=2847776`, `section_count=77`)
+  - rebuilt `build/neurolink_unit/llext/neuro_unit_app.llext` => PASS (`neuro_unit_app-1.1.9-cbor-v2` present)
+  - Python compile and CLI+wrapper tests => PASS (`123 passed`)
+  - script regression suite => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - Unit native_sim => PASS (`PROJECT EXECUTION SUCCESSFUL`)
+  - post-promotion serial-required preflight => PASS (`status=ready`, `/dev/ttyACM0`)
+  - post-promotion Linux smoke => PASS (`applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260501-021622.ndjson`)
+  - callback smoke => PASS (`neuro_unit_app-1.1.9-cbor-v2`, three CBOR callback events, lease released)
+  - final `query device`, `query apps`, `query leases` => PASS (`NETWORK_READY`, app running/active, leases empty)
+
+2026-05-01: Continued release-1.1.9 with `EXEC-196`, completing the local dynamic LLEXT memory candidate boundary slice. Added `docs/project/RELEASE_1.1.9_LLEXT_MEMORY_BOUNDARIES.md` to document Zephyr `CONFIG_LLEXT_HEAP_DYNAMIC` behavior, the current NeuroLink static heap/staging defaults, and the promotion boundary: dynamic LLEXT heap candidates require explicit `llext_heap_init()` wiring plus runtime evidence before hardware promotion. Added reproducible overlay `neuro_unit/overlays/llext_dynamic_heap_candidate.conf`, extended memory evidence collection to capture `CONFIG_LLEXT_HEAP_DYNAMIC`, and hardened `memory config-plan` so static layout wins from dynamic heap are classified as `runtime_heap_dynamic_unsafe` until runtime heap evidence exists. Dynamic heap candidate build passed and static comparison against `build/neurolink_unit` showed `dram0_delta=-65516`, `flash_delta=+172`, `iram0_delta=0`, `status=runtime_heap_dynamic_unsafe`, `promotion_allowed=false`, and `config_plan_rc=2`. Validation passed for Python compile, CLI+wrapper tests (`122 passed`), full script regression suite (`script_tests_passed=9`, `script_tests_failed=0`), Unit native_sim (`PROJECT EXECUTION SUCCESSFUL`), dynamic heap candidate build, config-plan smoke, and `git -C applocation/NeuroLink diff --check`. `RELEASE_TARGET = "1.1.8"` remains unchanged. - Copilot
+
+#### EXEC-196 Release-1.1.9 Dynamic LLEXT Memory Candidates
+
+- Status: completed for local boundary documentation, reproducible candidate overlay, static evidence, and promotion gating
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-195` static memory layout dump and candidate comparison
+  - keeps dynamic heap as a candidate-only configuration until Unit firmware initializes the LLEXT heap explicitly
+  - treats static DRAM reduction as insufficient for promotion without runtime heap and staging evidence
+  - preserves conservative static ELF staging defaults in the dynamic candidate overlay
+  - keeps `RELEASE_TARGET = "1.1.8"` until final release-1.1.9 closure
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.9_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.9_LLEXT_MEMORY_BOUNDARIES.md`
+  - `applocation/NeuroLink/neuro_unit/overlays/llext_dynamic_heap_candidate.conf`
+  - `applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py`
+  - `applocation/NeuroLink/tests/scripts/test_build_neurolink.sh`
+  - `applocation/NeuroLink/tests/scripts/test_collect_neurolink_memory_evidence.sh`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - documented dynamic heap safety boundaries and the missing `llext_heap_init()` runtime requirement
+  - added a buildable dynamic heap candidate overlay without changing default firmware configuration
+  - memory evidence now records `CONFIG_LLEXT_HEAP_DYNAMIC`
+  - `memory config-plan` reports `dynamic_heap_enabled`, blocks promotion with `runtime_heap_dynamic_unsafe`, and points the next action at explicit heap-init wiring
+  - workflow guidance now warns that static layout evidence alone cannot promote `CONFIG_LLEXT_HEAP_DYNAMIC=y`
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/scripts/collect_neurolink_memory_evidence.py applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`122 passed`)
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`PROJECT EXECUTION SUCCESSFUL`)
+  - `build_neurolink.sh --preset unit --build-dir build/neurolink_unit_llext_dynamic_heap_candidate --overlay-config applocation/NeuroLink/neuro_unit/overlays/llext_dynamic_heap_candidate.conf --no-c-style-check` => PASS (`Successfully created ESP32-S3 image`)
+  - `memory config-plan --baseline-json <tmp>/exec-196-static-baseline.json --candidate-json <tmp>/exec-196-dynamic-heap-candidate.json` => expected BLOCK (`status=runtime_heap_dynamic_unsafe`, `dram0_delta=-65516`, `flash_delta=+172`, `iram0_delta=0`, `promotion_allowed=false`, `promotion_blockers=runtime_heap_dynamic_unsafe,runtime_evidence_required`, `config_plan_rc=2`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - start `EXEC-197` closure only after deciding whether release-1.1.9 will keep dynamic heap as a blocked candidate or add explicit `llext_heap_init()` firmware wiring plus hardware runtime evidence
+
+2026-05-01: Continued release-1.1.9 with `EXEC-195`, extending the static memory layout dump slice into candidate comparison for future LLEXT dynamic-memory configuration. Added a no-session CLI command surface for build-artifact layout evidence: `memory-layout-dump` as a legacy command and `memory layout-dump` as the grouped command. Added `llext-memory-config-plan` and grouped `memory config-plan` to compare baseline and candidate evidence JSON, calculate region deltas, classify internal `dram0`/`iram0` growth as `memory_regression`, and keep `promotion_allowed=false` until runtime evidence is present even when static layout deltas are clean. The `memory-layout-dump` workflow now points operators at the wrapper command instead of exposing the collector implementation detail, and `llext-memory-config` now includes `memory layout-dump` plus `memory config-plan` after candidate overlay builds. Real smoke against `build/neurolink_unit` succeeded with `dram0=377188`, `iram0=66216`, `flash=673780`, `ext_ram=2847776`, and `section_count=77`; a same-build baseline/candidate comparison produced zero deltas and `promotion_blockers=[runtime_evidence_required]`. Validation passed for Python compile, focused CLI+wrapper tests (`121 passed`), wrapper `workflow plan llext-memory-config`, config-plan smoke, and `git -C applocation/NeuroLink diff --check`. `RELEASE_TARGET = "1.1.8"` remains unchanged. - Copilot
+
+#### EXEC-195 Release-1.1.9 Static Memory Layout Dump
+
+- Status: completed for local static dump and candidate comparison coverage
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-194` LLEXT lifecycle semantics
+  - keeps memory layout dumping build-artifact based and non-destructive
+  - exposes a user-facing CLI command while reusing the existing collector implementation
+  - gates candidate promotion on runtime evidence rather than static layout alone
+  - keeps `RELEASE_TARGET = "1.1.8"` until final release-1.1.9 closure
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `memory-layout-dump` and `memory layout-dump` run without a Zenoh session
+  - `llext-memory-config-plan` and `memory config-plan` compare baseline and candidate evidence without a Zenoh session
+  - missing build artifacts return classified JSON statuses before invoking the collector
+  - successful dumps return static layout totals, platform, memory capability, section count, and evidence artifact paths
+  - candidate comparison returns section deltas, memory capability/config, static regressions, promotion blockers, and artifact paths
+  - workflow guidance now points to the CLI command surface rather than the collector script internals
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`121 passed`)
+  - `memory layout-dump --build-dir build/neurolink_unit --output-dir <tmp> --label exec-195-static-layout-smoke` => PASS (`dram0=377188`, `iram0=66216`, `flash=673780`, `ext_ram=2847776`, `section_count=77`)
+  - `memory config-plan --baseline-json <tmp>/exec-195-compare-baseline.json --candidate-json <tmp>/exec-195-compare-candidate.json` => PASS (`dram0_delta=0`, `iram0_delta=0`, `flash_delta=0`, `ext_ram_delta=0`, `promotion_allowed=false`, `promotion_blockers=runtime_evidence_required`)
+  - `invoke_neuro_cli.py workflow plan llext-memory-config` => PASS and includes `memory config-plan`
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - start `EXEC-196` by documenting safe LLEXT dynamic-memory boundaries and adding reproducible candidate overlays while keeping promotion gated on runtime safety evidence
+
+2026-05-01: Continued release-1.1.9 with `EXEC-194`, completing the LLEXT lifecycle semantics slice for protected runtime unload and inactive artifact delete. `app unload --app-id <id> --lease-id <lease>` now routes through `cmd/app/<app>/unload`, requires the existing app-control lease policy, calls `app_runtime_unload()`, removes callback command registrations on success, publishes one state event, and reports an already-unloaded runtime as `app not loaded`/404 instead of a generic runtime failure. `app delete --app-id <id> --lease-id <lease>` now routes through `update/app/<app>/delete`, requires protected update lease metadata, passes the recovery readiness gate, rejects loaded runtime apps with 409, removes the stored artifact file and artifact-store entry, clears update-manager/app-command registry state, persists the recovery seed snapshot, publishes update/state events, and returns a standard ok payload for inactive artifacts. Validation passed for Python compile, focused CLI+wrapper tests (`114 passed`), Unit native_sim tests (`PROJECT EXECUTION SUCCESSFUL`, including delete/unload coverage), and `git -C applocation/NeuroLink diff --check`. `RELEASE_TARGET = "1.1.8"` remains unchanged. - Copilot
+
+#### EXEC-194 Release-1.1.9 LLEXT Lifecycle Semantics
+
+- Status: completed for native_sim and CLI regression coverage
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-193` Unit Zenoh override hardening
+  - separates runtime unload from artifact delete instead of mixing runtime and storage state
+  - preserves protected app-control lease requirements for destructive runtime commands
+  - uses protected update lease requirements and recovery readiness for artifact deletion
+  - keeps `RELEASE_TARGET = "1.1.8"` until final release-1.1.9 closure
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_unit_app_command.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/app/test_neuro_unit_app_command.c`
+  - `applocation/NeuroLink/neuro_unit/include/neuro_update_manager.h`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_update_manager.c`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_request_policy.c`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_unit_dispatch.c`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_unit_update_service.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/lifecycle/test_neuro_update_manager.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/lifecycle/test_neuro_unit_dispatch.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/lifecycle/test_neuro_unit_update_service.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/request/test_neuro_request_policy.c`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `app unload --app-id <id> --lease-id <lease>` now sends a real app control command
+  - Unit handles `cmd/app/<app>/unload` by calling `app_runtime_unload()`
+  - successful unload removes app callback command registrations and publishes state
+  - already-unloaded runtime apps return `app not loaded`/404 without success reply
+  - `app delete --app-id <id> --lease-id <lease>` now sends a protected update delete command
+  - Unit handles `update/app/<app>/delete` by rejecting loaded runtime apps, deleting inactive artifacts, clearing artifact/update/app-command state, persisting recovery seed, and publishing update/state events
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m py_compile applocation/NeuroLink/neuro_cli/src/neuro_cli.py applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py` => PASS
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py -q` => PASS (`114 passed`)
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`PROJECT EXECUTION SUCCESSFUL`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - start `EXEC-195` by adding static memory layout dump evidence for future LLEXT dynamic-memory configuration
+
+2026-05-01: Continued release-1.1.9 with `EXEC-193`, hardening the Unit-side Zenoh endpoint override path used by the new UART recovery CLI. Split lightweight Zenoh transport configuration into `neuro_unit/src/zenoh/neuro_unit_zenoh_config.c`, leaving the full transport/session runtime in `neuro_unit_zenoh.c`, so endpoint default lookup, override set, override clear, and transport init are independently testable without linking zenoh-pico into native unit tests. Added opaque Zenoh type support to `neuro_unit/include/neuro_unit_zenoh.h` for `NEURO_UNIT_OPAQUE_ZENOH_TYPES` test builds, added `CONFIG_NEUROLINK_ZENOH_CONNECT` to the unit-test Kconfig, and added native_sim coverage for default endpoint selection, invalid/oversized endpoint rejection, idle override set, same-endpoint no-op behavior, changed-endpoint reconnect teardown, clear override teardown, empty clear no-op, and null clear rejection. Validation passed for `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` with the new `neuro_unit_zenoh_config` suite passing 8/8 and the full Unit module test project successful. A full native_sim Unit app build was attempted to sanity-check production linkage but remains blocked by the existing board/storage configuration issue `modules/fs/fatfs/ff.c: #error Wrong FF_VOLUMES setting`; the failure occurs in FatFS module compilation, outside the Zenoh split. Hardware validation remains reserved for the later serial recovery proof gate. `RELEASE_TARGET = "1.1.8"` remains unchanged. - Copilot
+
+#### EXEC-193 Release-1.1.9 Unit Zenoh Override Hardening
+
+- Status: completed for native_sim Unit coverage
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-192` UART CLI foundation
+  - keeps UART Zenoh recovery on the existing shell command surface
+  - makes endpoint override state testable without requiring the full zenoh-pico runtime in native unit tests
+  - preserves `RELEASE_TARGET = "1.1.8"`
+- Touched files:
+  - `applocation/NeuroLink/neuro_unit/CMakeLists.txt`
+  - `applocation/NeuroLink/neuro_unit/include/neuro_unit_zenoh.h`
+  - `applocation/NeuroLink/neuro_unit/src/zenoh/neuro_unit_zenoh.c`
+  - `applocation/NeuroLink/neuro_unit/src/zenoh/neuro_unit_zenoh_config.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/CMakeLists.txt`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/Kconfig`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/lifecycle/test_neuro_unit_zenoh_config.c`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - lightweight Zenoh transport config logic is split from the full session runtime
+  - Unit tests cover default endpoint, invalid and oversized endpoint rejection, set/clear behavior, no-op unchanged endpoints, and reconnect teardown triggers
+  - unit-test builds can use opaque Zenoh transport types without including `zenoh-pico.h`
+- Verification evidence:
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`PROJECT EXECUTION SUCCESSFUL`, `neuro_unit_zenoh_config` 8/8)
+  - full native_sim Unit app build attempted, but blocked by existing FatFS `FF_VOLUMES` board/storage configuration outside the Zenoh split
+
+2026-05-01: Started release-1.1.9 implementation with `EXEC-192`, following the closed release-1.1.8 baseline. Scope is `neuro_cli` user interaction and performance, UART-assisted Unit Zenoh endpoint configuration, LLEXT install/unload/delete lifecycle improvements, and static memory layout evidence for future LLEXT dynamic memory configuration. Added `docs/project/RELEASE_1.1.9_PRE_RESEARCH.md` as the kickoff planning baseline. Initial implementation will keep `RELEASE_TARGET = "1.1.8"` until final 1.1.9 closure evidence and will use the existing Unit shell commands `app zenoh_connect_show`, `app zenoh_connect_set <locator>`, and `app zenoh_connect_clear` for the first UART recovery path. Linux remains the canonical validation path for this slice; hardware validation is reserved for the serial recovery and lifecycle proof gates. - Copilot
+
+#### EXEC-192 Release-1.1.9 Kickoff and UART CLI Foundation
+
+- Status: completed for local CLI/wrapper foundation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - opens release-1.1.9 from the closed release-1.1.8 baseline
+  - keeps `RELEASE_TARGET = "1.1.8"` until final closure
+  - uses existing Unit shell Zenoh endpoint commands for the first UART recovery path
+  - keeps hardware validation reserved for later serial recovery and lifecycle proof gates
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.9_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neuro_cli/requirements.txt`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+- Result:
+  - added `pyserial` CLI dependency
+  - added `serial list` and `serial zenoh show/set/clear` command surface
+  - added serial workflow plans and 1.1.9 LLEXT/memory workflow plans
+  - wrapper classifies serial failure statuses as command failures
+- Verification evidence:
+  - Python compile => PASS
+  - focused CLI+wrapper pytest => PASS (`111 passed`)
+  - script regression suite => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - wrapper workflow plan JSON checks for serial and memory plans => PASS
+
 2026-04-30: Closed release-1.1.8 after completing `EXEC-190` local closure gates and `EXEC-191` hardware closure, then promoting release identity. `EXEC-190` validation passed for Python compile, focused CLI+wrapper tests (`104 passed`), script regression suite (`9/9`), clean build memory evidence `applocation/NeuroLink/memory-evidence/exec-190-local-closure.{json,summary.txt}` with `release_target=1.1.7` and `dram0=377188`, Unit clean build endpoint `CONFIG_NEUROLINK_ZENOH_CONNECT="tcp/192.168.2.94:7447"`, rebuilt LLEXT artifact, Unit Linux UT (`result=PASS`, `qemu_status=passed`), capabilities JSON, workflow release-closure JSON, and whitespace check after normalizing the board config line endings. `EXEC-191` updated the DNESP32S3B board default endpoint from `tcp/192.168.2.95:7447` to `tcp/192.168.2.94:7447`, flashed the final clean-built Unit firmware to `/dev/ttyACM0` successfully (`808492` bytes written, hash verified), prepared the board with UART evidence `applocation/NeuroLink/smoke-evidence/serial-diag/serial-capture-20260429T161155Z.log`, and confirmed serial-required preflight ready. Final pre-promotion hardware closure passed wrapper `query device`, `query apps`, `query leases`, Linux smoke `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260429-161308.ndjson`, explicit smoke lease cleanup, callback smoke, and final empty leases. Promoted `neuro_cli/src/neuro_cli.py` to `RELEASE_TARGET = "1.1.8"`, promoted the sample app version/build id to `1.1.8`/`neuro_unit_app-1.1.8-cbor-v2`, updated release-target tests, regenerated final memory evidence `applocation/NeuroLink/memory-evidence/release-1.1.8-closure.{json,summary.txt}` with `release_target=1.1.8` and `dram0=377188`, rebuilt the 1.1.8 LLEXT and verified it contains `neuro_unit_app-1.1.8-cbor-v2`, verified wrapper `system capabilities` and `workflow plan release-closure` report `1.1.8`, reran post-promotion preflight and Linux smoke `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260429-161838.ndjson`, released the smoke activation lease, ran callback smoke with expected echo `neuro_unit_app-1.1.8-cbor-v2`, and confirmed final state: Unit `NETWORK_READY`, board IPv4 `192.168.2.67`, `neuro_unit_app` running/active, and `leases: []`. Windows validation was intentionally not run for this version per user direction. Release-1.1.8 is closed against the current Linux/hardware evidence. - Copilot
 
-2026-04-29: Reflashed the DNESP32S3B Unit to resolve the WSL/router endpoint drift found in `EXEC-189`, then reran Linux hardware validation. Built `build/neurolink_unit` with a one-off overlay setting `CONFIG_NEUROLINK_ZENOH_CONNECT="tcp/192.168.2.94:7447"`; verified `build/neurolink_unit/zephyr/.config` contains that endpoint and `zephyr.bin`/`zephyr.elf` were regenerated. Flashed `/dev/ttyACM0` successfully with `west flash` through `build_neurolink.sh --preset flash-unit --esp-device /dev/ttyACM0 --no-c-style-check`; esptool connected to ESP32-S3 `fc:01:2c:cf:ca:98`, wrote `808492` bytes, verified hash, and hard reset the board. Board preparation succeeded, with serial evidence `applocation/NeuroLink/smoke-evidence/serial-diag/serial-capture-20260429T160006Z.log`; preflight returned `status=ready`, router listening on `7447`, `/dev/ttyACM0` present, artifact present, and `query_device` successful. Wrapper discovery passed for `query device`, `query apps`, and `query leases`: Unit `unit-01` reports board `dnesp32s3b`, `session_ready: true`, `NETWORK_READY`, board IPv4 `192.168.2.67`; initial apps and leases were empty. Ran Linux hardware smoke via `smoke_neurolink_linux.sh --install-missing-cli-deps --events-duration-sec 5`; result `PASS`, evidence `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260429-160227.ndjson`, summary reports no failed step. Smoke left activate lease `lease-act-017b-001` under `source_agent=rational`; releasing through wrapper as `skills` correctly failed with `lease holder mismatch`, then direct CLI release with `source_agent=rational` succeeded and final lease query was empty. Ran callback smoke through the wrapper; the first run intentionally failed only because the expected echo was set to `hw_retest_confirm` while the app replied `neuro_unit_app-1.1.7-cbor-v2`; rerun with the actual expected echo passed, emitted callback events, released its `smoke-a4003f94` lease, and final discovery showed device ready, `neuro_unit_app` running/active, and leases empty. `RELEASE_TARGET` remains `1.1.7`; Windows validation was not run. - Copilot
+2026-04-29: Reflashed the DNESP32S3B Unit to resolve the WSL/router endpoint drift found in `EXEC-189`, then reran Linux hardware validation under `EXEC-191`. Built `build/neurolink_unit` with a one-off overlay setting `CONFIG_NEUROLINK_ZENOH_CONNECT="tcp/192.168.2.94:7447"`; verified `build/neurolink_unit/zephyr/.config` contains that endpoint and `zephyr.bin`/`zephyr.elf` were regenerated. Flashed `/dev/ttyACM0` successfully with `west flash` through `build_neurolink.sh --preset flash-unit --esp-device /dev/ttyACM0 --no-c-style-check`; esptool connected to ESP32-S3 `fc:01:2c:cf:ca:98`, wrote `808492` bytes, verified hash, and hard reset the board. Board preparation succeeded, with serial evidence `applocation/NeuroLink/smoke-evidence/serial-diag/serial-capture-20260429T160006Z.log`; preflight returned `status=ready`, router listening on `7447`, `/dev/ttyACM0` present, artifact present, and `query_device` successful. Wrapper discovery passed for `query device`, `query apps`, and `query leases`: Unit `unit-01` reports board `dnesp32s3b`, `session_ready: true`, `NETWORK_READY`, board IPv4 `192.168.2.67`; initial apps and leases were empty. Ran Linux hardware smoke via `smoke_neurolink_linux.sh --install-missing-cli-deps --events-duration-sec 5`; result `PASS`, evidence `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260429-160227.ndjson`, summary reports no failed step. Smoke left activate lease `lease-act-017b-001` under `source_agent=rational`; releasing through wrapper as `skills` correctly failed with `lease holder mismatch`, then direct CLI release with `source_agent=rational` succeeded and final lease query was empty. Ran callback smoke through the wrapper; the first run intentionally failed only because the expected echo was set to `hw_retest_confirm` while the app replied `neuro_unit_app-1.1.7-cbor-v2`; rerun with the actual expected echo passed, emitted callback events, released its `smoke-a4003f94` lease, and final discovery showed device ready, `neuro_unit_app` running/active, and leases empty. `RELEASE_TARGET` remains `1.1.7`; Windows validation was not run. - Copilot
 
 2026-04-29: Continued release-1.1.8 with `EXEC-189`, completing CLI reliability and skill/workflow alignment regressions, then running Linux hardware discovery after the Unit was reconnected. Added capabilities `workflow_surface` output in `neuro_cli/src/neuro_cli.py` so Agents can enumerate every live workflow plan with schema version, categories, host support, hardware/router/serial/network requirements, destructive state, and canonical `workflow plan <name>` commands. Fixed `system capabilities` Agent skill metadata to resolve the NeuroLink root and report real canonical skill, project-shared adapter, and wrapper paths with existence checks set to true. Extended `neuro_cli/scripts/invoke_neuro_cli.py` to accept and forward common CLI global retry/timeout options before forwarded CLI args, including `--query-retries`, `--query-retry-backoff-ms`, `--query-retry-backoff-max-ms`, and `--timeout`; this fixed the planned wrapper form `invoke_neuro_cli.py --query-retries 3 query device`. Added skill/reference alignment regressions that extract workflow names and wrapper examples from canonical and project-shared skill files, require referenced plans to exist in live `WORKFLOW_PLANS`, require examples to omit wrapper-level `--output`, and parse each example through the live CLI parser. Validation passed for Python compile, focused CLI tests (`94 passed`), combined CLI+wrapper tests (`104 passed`), wrapper `system capabilities` JSON with `workflow_surface`, wrapper `workflow plan release-closure`, fixed wrapper retry-option parsing, and `git -C applocation/NeuroLink diff --check`. Hardware discovery was non-destructive: initial preflight failed with `serial_device_missing`; `prepare_dnesp32s3b_wsl.sh --attach-only` restored BUSID `8-4` as `/dev/ttyACM0`; serial-required preflight then advanced to `no_reply_board_unreachable`; UART preparation showed Wi-Fi connected and `NETWORK_READY` at board IPv4 `192.168.2.67`, but the board repeatedly probed `tcp/192.168.2.95:7447` while the current WSL/Windows LAN address is `192.168.2.94` and router `zenohd` is listening on `0.0.0.0:7447`. A temporary `192.168.2.95` WSL alias was not added because it required interactive `sudo`; no destructive deploy, app invoke, callback configuration, smoke, lease cleanup, firmware change, setup script behavior change, or release identity promotion was performed. `RELEASE_TARGET` remains `1.1.7`. - Copilot
 

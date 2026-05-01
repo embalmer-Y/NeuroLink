@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import tempfile
 import sys
 import types
@@ -117,6 +118,15 @@ class TestNeuroProtocolModule(unittest.TestCase):
             len(schema["message_kinds"]),
         )
         self.assertEqual(len(set(schema["keys"].values())), len(schema["keys"]))
+
+    def test_update_delete_route_maps_to_cbor_request_kind(self) -> None:
+        self.assertEqual(
+            neuro_protocol.message_kind_for_keyexpr(
+                "neuro/unit-01/update/app/neuro_unit_app/delete",
+                {"lease_id": "lease-1"},
+            ),
+            "update_delete_request",
+        )
 
     def test_cbor_encode_matches_initial_golden_vectors(self) -> None:
         schema = json.loads(
@@ -418,7 +428,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.1.8")
+        self.assertEqual(payload["release_target"], "1.1.9")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -564,11 +574,219 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
     def test_parser_accepts_agent_evidence_workflow_plans(self) -> None:
         parser = neuro_cli.build_parser()
 
-        for workflow in ("memory-evidence", "callback-smoke", "release-closure"):
+        for workflow in (
+            "memory-evidence",
+            "memory-layout-dump",
+            "llext-memory-config",
+            "llext-lifecycle",
+            "callback-smoke",
+            "release-closure",
+        ):
             args = parser.parse_args(["--output", "json", "workflow", "plan", workflow])
             self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
             self.assertFalse(args.requires_session)
             self.assertEqual(args.workflow, workflow)
+
+    def test_parser_accepts_memory_layout_dump_without_session(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        legacy = parser.parse_args(["--output", "json", "memory-layout-dump"])
+        grouped = parser.parse_args(["--output", "json", "memory", "layout-dump"])
+
+        self.assertIs(legacy.handler, neuro_cli.handle_memory_layout_dump)
+        self.assertFalse(legacy.requires_session)
+        self.assertEqual(legacy.build_dir, "build/neurolink_unit")
+        self.assertIs(grouped.handler, neuro_cli.handle_memory_layout_dump)
+        self.assertFalse(grouped.requires_session)
+        self.assertEqual(grouped.output_dir, "applocation/NeuroLink/memory-evidence")
+
+    def test_parser_accepts_llext_memory_config_plan_without_session(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        legacy = parser.parse_args(
+            [
+                "--output",
+                "json",
+                "llext-memory-config-plan",
+                "--baseline-json",
+                "baseline.json",
+                "--candidate-json",
+                "candidate.json",
+            ]
+        )
+        grouped = parser.parse_args(
+            [
+                "--output",
+                "json",
+                "memory",
+                "config-plan",
+                "--baseline-json",
+                "baseline.json",
+                "--candidate-json",
+                "candidate.json",
+            ]
+        )
+
+        self.assertIs(legacy.handler, neuro_cli.handle_llext_memory_config_plan)
+        self.assertFalse(legacy.requires_session)
+        self.assertEqual(legacy.baseline_json, "baseline.json")
+        self.assertIs(grouped.handler, neuro_cli.handle_llext_memory_config_plan)
+        self.assertFalse(grouped.requires_session)
+        self.assertEqual(grouped.candidate_json, "candidate.json")
+
+    def test_parser_accepts_serial_commands_without_zenoh_session(self) -> None:
+        parser = neuro_cli.build_parser()
+        show = parser.parse_args(
+            ["--output", "json", "serial", "zenoh", "show", "--port", "/dev/ttyACM0"]
+        )
+        set_endpoint = parser.parse_args(
+            [
+                "--output",
+                "json",
+                "serial",
+                "zenoh",
+                "set",
+                "tcp/192.168.2.94:7447",
+                "--port",
+                "/dev/ttyACM0",
+            ]
+        )
+
+        self.assertIs(show.handler, neuro_cli.handle_serial_zenoh)
+        self.assertFalse(show.requires_session)
+        self.assertEqual(show.serial_zenoh_command, "show")
+        self.assertEqual(show.port, "/dev/ttyACM0")
+        self.assertEqual(show.baudrate, neuro_cli.DEFAULT_SERIAL_BAUDRATE)
+        self.assertIs(set_endpoint.handler, neuro_cli.handle_serial_zenoh)
+        self.assertFalse(set_endpoint.requires_session)
+        self.assertEqual(set_endpoint.serial_zenoh_command, "set")
+        self.assertEqual(set_endpoint.endpoint, "tcp/192.168.2.94:7447")
+
+    def test_parser_routes_app_unload_to_control_command(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        args = parser.parse_args(
+            [
+                "--output",
+                "json",
+                "app",
+                "unload",
+                "--app-id",
+                "neuro_unit_app",
+                "--lease-id",
+                "lease-1",
+            ]
+        )
+
+        self.assertIs(args.handler, neuro_cli.handle_app_control)
+        self.assertTrue(getattr(args, "requires_session", True))
+        self.assertEqual(args.action, "unload")
+
+    def test_parser_routes_app_delete_to_update_command(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        args = parser.parse_args(
+            [
+                "--output",
+                "json",
+                "app",
+                "delete",
+                "--app-id",
+                "neuro_unit_app",
+                "--lease-id",
+                "lease-1",
+            ]
+        )
+
+        self.assertIs(args.handler, neuro_cli.handle_update)
+        self.assertTrue(getattr(args, "requires_session", True))
+        self.assertEqual(args.stage, "delete")
+
+    def test_serial_list_reports_devices_as_json(self) -> None:
+        args = Namespace(output="json")
+        with mock.patch.object(
+            neuro_cli,
+            "discover_serial_devices",
+            return_value=[{"device": "/dev/ttyACM0", "source": "pyserial"}],
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_serial_list(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["devices"][0]["device"], "/dev/ttyACM0")
+
+    def test_serial_zenoh_set_verifies_shell_endpoint(self) -> None:
+        args = Namespace(
+            output="json",
+            serial_zenoh_command="set",
+            endpoint="tcp/192.168.2.94:7447",
+        )
+        with mock.patch.object(
+            neuro_cli,
+            "run_serial_shell_command",
+            return_value={
+                "ok": True,
+                "status": "ok",
+                "output": "zenoh connect override applied: tcp/192.168.2.94:7447\r\n",
+            },
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_serial_zenoh(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["endpoint"], "tcp/192.168.2.94:7447")
+
+    def test_serial_zenoh_set_fails_when_endpoint_does_not_match(self) -> None:
+        args = Namespace(
+            output="json",
+            serial_zenoh_command="set",
+            endpoint="tcp/192.168.2.94:7447",
+        )
+        with mock.patch.object(
+            neuro_cli,
+            "run_serial_shell_command",
+            return_value={
+                "ok": True,
+                "status": "ok",
+                "output": "zenoh connect override applied: tcp/192.168.2.95:7447\r\n",
+            },
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_serial_zenoh(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "endpoint_verify_failed")
+
+    def test_serial_workflow_plans_document_uart_recovery_contracts(self) -> None:
+        expected = {
+            "serial-discover": "serial list",
+            "serial-zenoh-config": "serial zenoh set",
+            "serial-zenoh-recover": "query device",
+            "memory-layout-dump": "memory layout-dump",
+            "llext-memory-config": "memory config-plan",
+            "llext-lifecycle": "app delete",
+        }
+
+        for workflow, command in expected.items():
+            payload = neuro_cli.build_workflow_plan(
+                Namespace(output="json", workflow=workflow)
+            )
+            commands = "\n".join(payload["commands"])
+
+            self.assertFalse(payload["executes_commands"], workflow)
+            self.assertIn(command, commands, workflow)
+            self.assertTrue(payload["json_contract"], workflow)
+            self.assertIn("failure_statuses", payload["json_contract"], workflow)
 
 
 class TestNeuroCliResultClassification(unittest.TestCase):
@@ -796,6 +1014,64 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertEqual(keyexpr, "neuro/unit-01/update/app/neuro_unit_app/activate")
         self.assertEqual(sent_payload["lease_id"], "lease-1")
         self.assertEqual(sent_payload["start_args"], "mode=demo,profile=release")
+
+    def test_main_grouped_app_unload_payload_path(self) -> None:
+        code, payload, collect = self._run_main_with_collect_result(
+            [
+                "--output",
+                "json",
+                "app",
+                "unload",
+                "--app-id",
+                "neuro_unit_app",
+                "--lease-id",
+                "lease-1",
+            ],
+            {
+                "ok": True,
+                "keyexpr": "neuro/unit-01/cmd/app/neuro_unit_app/unload",
+                "payload": {"request_id": "req-1"},
+                "replies": [
+                    {"ok": True, "payload": {"status": "ok", "app_id": "neuro_unit_app"}}
+                ],
+            },
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        keyexpr = collect.call_args[0][1]
+        sent_payload = collect.call_args[0][2]
+        self.assertEqual(keyexpr, "neuro/unit-01/cmd/app/neuro_unit_app/unload")
+        self.assertEqual(sent_payload["lease_id"], "lease-1")
+
+    def test_main_grouped_app_delete_payload_path(self) -> None:
+        code, payload, collect = self._run_main_with_collect_result(
+            [
+                "--output",
+                "json",
+                "app",
+                "delete",
+                "--app-id",
+                "neuro_unit_app",
+                "--lease-id",
+                "lease-1",
+            ],
+            {
+                "ok": True,
+                "keyexpr": "neuro/unit-01/update/app/neuro_unit_app/delete",
+                "payload": {"request_id": "req-1"},
+                "replies": [
+                    {"ok": True, "payload": {"status": "ok", "app_id": "neuro_unit_app"}}
+                ],
+            },
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        keyexpr = collect.call_args[0][1]
+        sent_payload = collect.call_args[0][2]
+        self.assertEqual(keyexpr, "neuro/unit-01/update/app/neuro_unit_app/delete")
+        self.assertEqual(sent_payload["lease_id"], "lease-1")
 
     def test_workflow_plan_outputs_command_plan_without_execution(self) -> None:
         args = Namespace(output="json", workflow="preflight")
@@ -1104,6 +1380,218 @@ class TestNeuroCliResultClassification(unittest.TestCase):
             payload["commands"][0],
         )
         self.assertIn("applocation/NeuroLink/memory-evidence", payload["artifacts"])
+
+    def test_memory_layout_dump_reports_missing_build_dir(self) -> None:
+        args = Namespace(
+            output="json",
+            build_dir="build/does-not-exist-for-test",
+            output_dir="applocation/NeuroLink/memory-evidence",
+            label="test-static-layout",
+            build_log="",
+            run_build=False,
+            no_c_style_check=False,
+        )
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = neuro_cli.handle_memory_layout_dump(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "build_dir_missing")
+
+    def test_memory_layout_dump_invokes_collector_and_returns_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            build_dir = temp_path / "build" / "unit"
+            output_dir = temp_path / "evidence"
+            (build_dir / "zephyr").mkdir(parents=True)
+            (build_dir / "zephyr" / ".config").write_text("CONFIG_BOARD=demo\n")
+            (build_dir / "zephyr" / "zephyr.stat").write_text("\n")
+            output_dir.mkdir()
+            evidence_path = output_dir / "test-static-layout.json"
+            summary_path = output_dir / "test-static-layout.summary.txt"
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "label": "test-static-layout",
+                        "release_target": neuro_cli.RELEASE_TARGET,
+                        "build_dir": str(build_dir),
+                        "platform": {"board": "demo"},
+                        "memory_capability": {"provider": "none"},
+                        "section_totals": {"dram0": 16, "iram0": 8},
+                        "sections": [{"name": ".dram0.bss", "size_bytes": 16}],
+                    }
+                )
+                + "\n"
+            )
+            summary_path.write_text("summary\n")
+            args = Namespace(
+                output="json",
+                build_dir=str(build_dir),
+                output_dir=str(output_dir),
+                label="test-static-layout",
+                build_log="",
+                run_build=False,
+                no_c_style_check=False,
+            )
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=(
+                    f"memory_evidence_json={evidence_path}\n"
+                    f"memory_evidence_summary={summary_path}\n"
+                ),
+                stderr="",
+            )
+
+            out = io.StringIO()
+            with mock.patch.object(neuro_cli.subprocess, "run", return_value=completed):
+                with redirect_stdout(out):
+                    code = neuro_cli.handle_memory_layout_dump(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["section_totals"]["dram0"], 16)
+        self.assertEqual(payload["section_count"], 1)
+        self.assertIn("json", payload["artifacts"])
+
+    def test_llext_memory_config_plan_compares_static_layouts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            baseline_path = temp_path / "baseline.json"
+            candidate_path = temp_path / "candidate.json"
+            baseline_path.write_text(
+                json.dumps(
+                    {
+                        "label": "baseline",
+                        "release_target": neuro_cli.RELEASE_TARGET,
+                        "section_totals": {"dram0": 100, "iram0": 50, "flash": 500},
+                    }
+                )
+                + "\n"
+            )
+            candidate_path.write_text(
+                json.dumps(
+                    {
+                        "label": "candidate",
+                        "release_target": neuro_cli.RELEASE_TARGET,
+                        "section_totals": {"dram0": 96, "iram0": 50, "flash": 520},
+                        "memory_capability": {"provider": "esp-spiram"},
+                        "runtime_evidence_gate": {"passed": False},
+                    }
+                )
+                + "\n"
+            )
+            args = Namespace(
+                output="json",
+                baseline_json=str(baseline_path),
+                candidate_json=str(candidate_path),
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_llext_memory_config_plan(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["section_deltas"]["dram0"]["delta_bytes"], -4)
+        self.assertFalse(payload["promotion_allowed"])
+        self.assertIn("runtime_evidence_required", payload["promotion_blockers"])
+
+    def test_llext_memory_config_plan_reports_memory_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            baseline_path = temp_path / "baseline.json"
+            candidate_path = temp_path / "candidate.json"
+            baseline_path.write_text(
+                json.dumps({"section_totals": {"dram0": 100, "iram0": 50}}) + "\n"
+            )
+            candidate_path.write_text(
+                json.dumps({"section_totals": {"dram0": 104, "iram0": 48}}) + "\n"
+            )
+            args = Namespace(
+                output="json",
+                baseline_json=str(baseline_path),
+                candidate_json=str(candidate_path),
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_llext_memory_config_plan(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "memory_regression")
+        self.assertEqual(payload["static_regressions"][0]["region"], "dram0")
+        self.assertIn("memory_regression", payload["promotion_blockers"])
+
+    def test_llext_memory_config_plan_blocks_dynamic_heap_without_runtime_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            baseline_path = temp_path / "baseline.json"
+            candidate_path = temp_path / "candidate.json"
+            baseline_path.write_text(
+                json.dumps({"section_totals": {"dram0": 100, "iram0": 50}}) + "\n"
+            )
+            candidate_path.write_text(
+                json.dumps(
+                    {
+                        "section_totals": {"dram0": 96, "iram0": 48},
+                        "config": {"CONFIG_LLEXT_HEAP_DYNAMIC": "y"},
+                        "runtime_evidence_gate": {"passed": False},
+                    }
+                )
+                + "\n"
+            )
+            args = Namespace(
+                output="json",
+                baseline_json=str(baseline_path),
+                candidate_json=str(candidate_path),
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_llext_memory_config_plan(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "runtime_heap_dynamic_unsafe")
+        self.assertTrue(payload["dynamic_heap_enabled"])
+        self.assertIn("runtime_heap_dynamic_unsafe", payload["promotion_blockers"])
+        self.assertIn("runtime_evidence_required", payload["promotion_blockers"])
+        self.assertEqual(
+            payload["next_action"],
+            "add explicit llext_heap_init wiring before hardware promotion",
+        )
+
+    def test_llext_memory_config_plan_reports_missing_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            baseline_path = temp_path / "baseline.json"
+            candidate_path = temp_path / "missing.json"
+            baseline_path.write_text(json.dumps({"section_totals": {}}) + "\n")
+            args = Namespace(
+                output="json",
+                baseline_json=str(baseline_path),
+                candidate_json=str(candidate_path),
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_llext_memory_config_plan(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "candidate_layout_missing")
 
     def test_release_closure_workflow_plan_lists_gates_without_execution(self) -> None:
         args = Namespace(output="json", workflow="release-closure")
@@ -2438,7 +2926,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertIn("event_stream", names)
         self.assertIn("app_event_stream", names)
 
-    def test_capabilities_reports_release_1_1_8(self) -> None:
+    def test_capabilities_reports_release_1_1_9(self) -> None:
         args = Namespace(output="json")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -2446,7 +2934,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.1.8")
+        self.assertEqual(payload["release_target"], "1.1.9")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

@@ -835,6 +835,83 @@ ZTEST(neuro_unit_update_service, test_activate_action_marks_app_active)
 		"service activate should end at service egress");
 }
 
+ZTEST(neuro_unit_update_service, test_delete_action_removes_inactive_artifact)
+{
+	const struct neuro_artifact_meta *artifact;
+
+	enable_successful_update_io();
+	drive_verified_state(&g_reply_ctx);
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "delete", "{}", "req-delete");
+
+	artifact = neuro_artifact_store_get(&g_artifact_store, "demo_app");
+	zassert_is_null(artifact, "delete should remove artifact metadata");
+	zassert_equal(g_remove_calls, 1,
+		"delete should remove the artifact file once");
+	zassert_equal(
+		neuro_update_manager_state_for(&g_update_manager, "demo_app"),
+		NEURO_UPDATE_STATE_NONE,
+		"delete should remove update manager state");
+	zassert_equal(g_reply_error_calls, 0,
+		"delete should not emit reply_error on success");
+	zassert_true(strstr(g_last_reply_json, "\"status\":\"ok\"") != NULL,
+		"delete should emit ok reply");
+	zassert_true(strstr(g_last_reply_json,
+			     "\"path\":\"/mock/apps/demo_app.llext\"") != NULL,
+		"delete reply should include artifact path");
+	zassert_true(strcmp(g_last_event_stage, "delete") == 0,
+		"delete should publish delete stage");
+	zassert_true(strcmp(g_last_event_status, "ok") == 0,
+		"delete should publish ok status");
+	zassert_equal(g_publish_state_event_calls, 1,
+		"delete should publish state once");
+}
+
+ZTEST(neuro_unit_update_service, test_delete_action_rejects_loaded_runtime)
+{
+	g_mock_runtime_app_is_loaded = true;
+	enable_successful_update_io();
+	drive_verified_state(&g_reply_ctx);
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "delete", "{}", "req-delete-active");
+
+	zassert_equal(g_remove_calls, 0,
+		"delete must not remove artifact while runtime is loaded");
+	zassert_equal(g_reply_error_calls, 1,
+		"loaded runtime delete should emit one error");
+	zassert_equal(g_reply_error_status, 409,
+		"loaded runtime delete should map to conflict");
+	zassert_true(
+		strcmp(g_last_error_message, "delete active app rejected") == 0,
+		"loaded runtime delete error message changed");
+	zassert_not_null(
+		neuro_artifact_store_get(&g_artifact_store, "demo_app"),
+		"loaded runtime delete should keep artifact metadata");
+}
+
+ZTEST(neuro_unit_update_service, test_delete_action_reports_missing_artifact)
+{
+	enable_successful_update_io();
+
+	neuro_unit_update_service_handle_action(&g_service, &g_reply_ctx,
+		"demo_app", "delete", "{}", "req-delete-missing");
+
+	zassert_equal(g_remove_calls, 0,
+		"missing artifact delete should not remove a file");
+	zassert_equal(g_reply_error_calls, 1,
+		"missing artifact delete should emit one error");
+	zassert_equal(g_reply_error_status, 404,
+		"missing artifact delete should map to not found");
+	zassert_true(strcmp(g_last_error_message, "artifact missing") == 0,
+		"missing artifact delete message changed");
+	zassert_true(strcmp(g_last_event_stage, "delete") == 0,
+		"missing artifact delete should publish delete stage");
+	zassert_true(strcmp(g_last_event_status, "error") == 0,
+		"missing artifact delete should publish error status");
+}
+
 ZTEST(neuro_unit_update_service, test_rollback_action_completes_recovery_flow)
 {
 	enable_successful_update_io();

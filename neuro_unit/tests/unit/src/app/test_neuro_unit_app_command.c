@@ -1,6 +1,7 @@
 #include <zephyr/ztest.h>
 #include <zephyr/sys/printk.h>
 
+#include <errno.h>
 #include <string.h>
 
 #include "neuro_app_command_registry.h"
@@ -23,6 +24,10 @@ static uint8_t g_last_reply_cbor[256];
 static size_t g_last_reply_cbor_len;
 static char g_last_lease_id[32];
 static const struct neuro_unit_reply_context *g_last_reply_ctx;
+
+extern void app_runtime_test_reset(void);
+extern void app_runtime_test_set_unload_return(int ret);
+extern int app_runtime_test_unload_calls(void);
 
 static void mock_reply_error(const struct neuro_unit_reply_context *reply_ctx,
 	const char *request_id, const char *message, int status_code)
@@ -107,6 +112,7 @@ static void test_reset(void *fixture)
 
 	neuro_app_command_registry_init();
 	test_app_runtime_dispatch_reset();
+	app_runtime_test_reset();
 	g_reply_ctx.transport_query = &g_dummy_query_storage;
 	g_reply_ctx.request_id = NULL;
 	g_reply_ctx.metadata = NULL;
@@ -311,6 +317,79 @@ ZTEST(neuro_unit_app_command, test_start_prefers_context_request_fields)
 		"context request fields should not break start command");
 	zassert_equal(g_query_reply_calls, 1,
 		"start command should still emit success reply");
+}
+
+ZTEST(neuro_unit_app_command, test_unload_action_unloads_and_removes_commands)
+{
+	struct neuro_app_command_desc app_cmd;
+
+	register_callback_command("demo_app", "invoke", true, true);
+
+	neuro_unit_handle_app_command(&g_reply_ctx, "demo_app", "unload", "{}",
+		"req-app-unload", &g_ops);
+
+	zassert_equal(g_reply_error_calls, 0,
+		"unload action should not emit reply_error");
+	zassert_equal(
+		g_require_lease_calls, 1, "unload action should require lease");
+	zassert_equal(app_runtime_test_unload_calls(), 1,
+		"unload action should call app_runtime_unload once");
+	zassert_equal(g_publish_state_calls, 1,
+		"unload action should publish one state event");
+	zassert_equal(g_query_reply_calls, 1,
+		"unload action should emit one success reply");
+	zassert_true(strstr(g_last_reply_json, "\"action\":\"unload\"") != NULL,
+		"unload action should preserve action in reply");
+	zassert_not_equal(
+		neuro_app_command_registry_find("demo_app", "invoke", &app_cmd),
+		0, "unload should remove app callback commands");
+}
+
+ZTEST(neuro_unit_app_command, test_unload_action_failure_reports_runtime_error)
+{
+	app_runtime_test_set_unload_return(-EIO);
+
+	neuro_unit_handle_app_command(&g_reply_ctx, "demo_app", "unload", "{}",
+		"req-app-unload-fail", &g_ops);
+
+	zassert_equal(g_require_lease_calls, 1,
+		"failed unload should still require lease");
+	zassert_equal(app_runtime_test_unload_calls(), 1,
+		"failed unload should still call runtime once");
+	zassert_equal(g_publish_state_calls, 0,
+		"failed unload should not publish state event");
+	zassert_equal(g_query_reply_calls, 0,
+		"failed unload must not emit success reply");
+	zassert_equal(
+		g_reply_error_calls, 1, "failed unload should emit one error");
+	zassert_equal(
+		g_reply_error_status, 500, "failed unload should map to 500");
+	zassert_true(
+		strcmp(g_last_error_message, "app runtime command failed") == 0,
+		"failed unload message mismatch");
+}
+
+ZTEST(neuro_unit_app_command, test_unload_action_not_loaded_reports_404)
+{
+	app_runtime_test_set_unload_return(-ENOENT);
+
+	neuro_unit_handle_app_command(&g_reply_ctx, "demo_app", "unload", "{}",
+		"req-app-unload-missing", &g_ops);
+
+	zassert_equal(g_require_lease_calls, 1,
+		"missing unload should still require lease");
+	zassert_equal(app_runtime_test_unload_calls(), 1,
+		"missing unload should still call runtime once");
+	zassert_equal(g_publish_state_calls, 0,
+		"missing unload should not publish state event");
+	zassert_equal(g_query_reply_calls, 0,
+		"missing unload must not emit success reply");
+	zassert_equal(
+		g_reply_error_calls, 1, "missing unload should emit one error");
+	zassert_equal(g_reply_error_status, 404,
+		"missing unload should map to not found");
+	zassert_true(strcmp(g_last_error_message, "app not loaded") == 0,
+		"missing unload message mismatch");
 }
 
 ZTEST_SUITE(neuro_unit_app_command, NULL, NULL, test_reset, NULL, NULL);

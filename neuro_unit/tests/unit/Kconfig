@@ -10,6 +10,12 @@ config NEUROLINK_PROTOCOL_CBOR
 	help
 	  Builds the zcbor-backed NeuroLink CBOR-v2 codec facade for unit tests.
 
+config NEUROLINK_ZENOH_CONNECT
+	string "Zenoh connect endpoint for tests"
+	default "tcp/192.168.2.95:7447"
+	help
+	  Default zenoh connect locator used by lightweight transport config tests.
+
 config NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE
 	int "Static LLEXT ELF staging buffer size for tests"
 	default 0

@@ -13,11 +13,14 @@ JSON contracts before running anything on a Linux host.
 	router failure statuses before any Unit query diagnosis.
 3. Serial: `workflow plan discover-serial` then require explicit
 	`/dev/ttyACM*` or `/dev/ttyUSB*` visibility for hardware evidence.
-4. Device: `workflow plan discover-device` then query the target node with
+4. UART recovery: `workflow plan serial-discover`, `workflow plan
+	serial-zenoh-config`, or `workflow plan serial-zenoh-recover` only when the
+	Unit router endpoint must be inspected or corrected through the shell.
+5. Device: `workflow plan discover-device` then query the target node with
 	`query device` or `system query device`.
-5. Apps: `workflow plan discover-apps` then inspect `app_count`,
+6. Apps: `workflow plan discover-apps` then inspect `app_count`,
 	`running_count`, `suspended_count`, and each app runtime/update state.
-6. Leases: `workflow plan discover-leases` then ensure stale leases are absent
+7. Leases: `workflow plan discover-leases` then ensure stale leases are absent
 	before protected deploy or app control.
 
 ## Discovery Workflow Plans
@@ -26,6 +29,9 @@ JSON contracts before running anything on a Linux host.
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-host
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-router
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-serial
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-discover
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-zenoh-config
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-zenoh-recover
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases
@@ -55,6 +61,14 @@ Serial discovery uses the Linux preflight JSON shape. Success contains
 `serial.present: true` and a non-empty `serial.devices` list. Failure is
 `serial_device_missing`; treat this as USB attachment, host permissions, or WSL
 USB pass-through state, not a CLI protocol failure.
+
+Serial Zenoh configuration uses wrapper JSON around `serial zenoh show`,
+`serial zenoh set <locator>`, and `serial zenoh clear`. Success contains
+`ok: true`, `status: ok`, the serial `port`, and the confirmed `endpoint` parsed
+from the Unit shell output. Failure states include `serial_dependency_missing`,
+`serial_open_failed`, `serial_timeout`, `shell_error`, and
+`endpoint_verify_failed`. Treat endpoint verification failure as a stop condition
+before running router queries.
 
 Device discovery uses wrapper JSON around `query device`. Success contains
 `ok: true` and at least one OK reply whose payload reports `status: ok`,
@@ -151,8 +165,10 @@ python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan
 ## Failure States To Preserve
 
 1. `serial_device_missing`
-2. `no_reply_board_unreachable`
-3. `session_open_failed`
-4. `parse_failed`
-5. `handler_failed`
-6. nested `payload.status: error`
+2. `serial_timeout`
+3. `endpoint_verify_failed`
+4. `no_reply_board_unreachable`
+5. `session_open_failed`
+6. `parse_failed`
+7. `handler_failed`
+8. nested `payload.status: error`

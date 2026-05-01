@@ -206,6 +206,27 @@ class TestInvokeNeuroCliWrapper(unittest.TestCase):
         self.assertEqual(code, wrapper.EXIT_COMMAND_FAILED)
         self.assertIn("parse_failed", err.getvalue())
 
+    def test_serial_failure_status_fails_even_with_zero_process_exit(self) -> None:
+        wrapper = load_wrapper()
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='{"ok": false, "status": "endpoint_verify_failed"}',
+            stderr="",
+        )
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            ["invoke_neuro_cli.py", "serial", "zenoh", "set", "tcp/192.168.2.94:7447"],
+        ), mock.patch.object(subprocess, "run", return_value=completed):
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = wrapper.main()
+
+        self.assertEqual(code, wrapper.EXIT_COMMAND_FAILED)
+        self.assertIn("endpoint_verify_failed", err.getvalue())
+
 
 class TestProjectSharedNeuroCliSkill(unittest.TestCase):
     def test_skill_frontmatter_and_resources_are_discoverable(self) -> None:

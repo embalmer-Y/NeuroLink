@@ -63,6 +63,8 @@ int neuro_update_manager_activate_fail(struct neuro_update_manager *manager,
 
 int neuro_update_manager_record_stable_ref(struct neuro_update_manager *manager,
 	const char *app_id, const char *stable_ref);
+int neuro_update_manager_remove(
+	struct neuro_update_manager *manager, const char *app_id);
 int neuro_update_manager_rollback_begin(struct neuro_update_manager *manager,
 	const char *app_id, const char *reason);
 int neuro_update_manager_rollback_mark_in_progress(

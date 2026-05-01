@@ -23,8 +23,8 @@ static char callback_event_name[NEURO_UNIT_APP_EVENT_NAME_LEN] = "callback";
 /* Sample app command exposed through the Unit app-command registry contract. */
 static const char app_command_name[] = "invoke";
 static const char app_id[] = "neuro_unit_app";
-static const char app_version[] = "1.1.8";
-static const char app_build_id[] = "neuro_unit_app-1.1.8-cbor-v2";
+static const char app_version[] = "1.1.9";
+static const char app_build_id[] = "neuro_unit_app-1.1.9-cbor-v2";
 
 static void print_app_version(const char *stage)
 {

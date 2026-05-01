@@ -28,7 +28,6 @@ LOG_MODULE_DECLARE(neurolink_unit, LOG_LEVEL_INF);
 #define NEURO_QUERY_TIMEOUT_MS 10000
 #define NEUROLINK_NODE_ID CONFIG_NEUROLINK_NODE_ID
 #define NEUROLINK_ZENOH_MODE CONFIG_NEUROLINK_ZENOH_MODE
-#define NEUROLINK_ZENOH_CONNECT_DEFAULT CONFIG_NEUROLINK_ZENOH_CONNECT
 
 struct neuro_fetch_reply_ctx {
 	struct k_sem done;
@@ -39,96 +38,6 @@ struct neuro_fetch_reply_ctx {
 	bool replied;
 	atomic_t refs;
 };
-
-void neuro_unit_zenoh_init(struct neuro_unit_zenoh_transport *transport,
-	const struct neuro_unit_zenoh_handlers *handlers)
-{
-	if (transport == NULL) {
-		return;
-	}
-
-	memset(transport, 0, sizeof(*transport));
-	k_mutex_init(&transport->lock);
-	transport->lock_ready = true;
-	if (handlers != NULL) {
-		transport->handlers = *handlers;
-	}
-}
-
-const char *neuro_unit_zenoh_get_connect(
-	const struct neuro_unit_zenoh_transport *transport)
-{
-	if (transport != NULL && transport->connect_override[0] != '\0') {
-		return transport->connect_override;
-	}
-
-	return NEUROLINK_ZENOH_CONNECT_DEFAULT;
-}
-
-int neuro_unit_zenoh_set_connect_override(
-	struct neuro_unit_zenoh_transport *transport, const char *endpoint)
-{
-	bool need_reconnect = false;
-	size_t len;
-
-	if (transport == NULL || endpoint == NULL || endpoint[0] == '\0') {
-		return -EINVAL;
-	}
-
-	len = strlen(endpoint);
-	if (len >= sizeof(transport->connect_override)) {
-		return -ENAMETOOLONG;
-	}
-
-	if (transport->lock_ready) {
-		k_mutex_lock(&transport->lock, K_FOREVER);
-	}
-
-	if (strcmp(transport->connect_override, endpoint) != 0) {
-		snprintk(transport->connect_override,
-			sizeof(transport->connect_override), "%s", endpoint);
-		need_reconnect = transport->session_ready;
-		if (need_reconnect) {
-			neuro_unit_zenoh_disconnect_locked(
-				transport, "zenoh endpoint override updated");
-		}
-	}
-
-	if (transport->lock_ready) {
-		k_mutex_unlock(&transport->lock);
-	}
-
-	return 0;
-}
-
-int neuro_unit_zenoh_clear_connect_override(
-	struct neuro_unit_zenoh_transport *transport)
-{
-	bool need_reconnect = false;
-
-	if (transport == NULL) {
-		return -EINVAL;
-	}
-
-	if (transport->lock_ready) {
-		k_mutex_lock(&transport->lock, K_FOREVER);
-	}
-
-	if (transport->connect_override[0] != '\0') {
-		transport->connect_override[0] = '\0';
-		need_reconnect = transport->session_ready;
-		if (need_reconnect) {
-			neuro_unit_zenoh_disconnect_locked(
-				transport, "zenoh endpoint override cleared");
-		}
-	}
-
-	if (transport->lock_ready) {
-		k_mutex_unlock(&transport->lock);
-	}
-
-	return 0;
-}
 
 static void neuro_fetch_ctx_put(struct neuro_fetch_reply_ctx *fetch)
 {

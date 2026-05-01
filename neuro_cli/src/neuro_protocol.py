@@ -19,6 +19,7 @@ CBOR_V2_MESSAGE_KINDS = {
     "update_verify_request": 7,
     "update_activate_request": 8,
     "update_rollback_request": 9,
+    "update_delete_request": 10,
     "error_reply": 20,
     "lease_reply": 21,
     "query_device_reply": 22,
@@ -297,6 +298,7 @@ def message_kind_for_keyexpr(keyexpr: str, payload: dict | None = None) -> str:
             "verify": "update_verify_request",
             "activate": "update_activate_request",
             "rollback": "update_rollback_request",
+            "delete": "update_delete_request",
         }
         if action in mapping:
             return mapping[action]

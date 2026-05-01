@@ -30,6 +30,7 @@ target_sources(app PRIVATE
   src/neuro_request_policy.c
   src/neuro_protocol_codec.c
   src/neuro_unit_event.c
+  src/zenoh/neuro_unit_zenoh_config.c
   src/zenoh/neuro_unit_zenoh.c
   src/neuro_unit_llext_exports.c
   src/runtime/app_runtime_exception.c

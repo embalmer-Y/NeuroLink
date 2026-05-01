@@ -966,6 +966,112 @@ static void handle_update_rollback(struct neuro_unit_update_service *service,
 		"rollback", &reply, json);
 }
 
+static void handle_update_delete(struct neuro_unit_update_service *service,
+	const struct neuro_unit_reply_context *reply_ctx, const char *app_id,
+	const char *payload, const char *request_id)
+{
+	struct neuro_request_metadata metadata;
+	const struct neuro_request_metadata *request_metadata;
+	const struct neuro_artifact_meta *artifact;
+	const struct neuro_unit_port_fs_ops *fs_ops;
+	char resource[64];
+	char path[128];
+	char json[NEURO_UNIT_UPDATE_JSON_LEN];
+	int ret;
+	int save_ret;
+
+	service_log_transaction(
+		service, app_id, "delete", request_id, "begin", 0, "enter");
+	request_metadata = neuro_unit_reply_context_metadata(reply_ctx);
+	if (request_metadata == NULL) {
+		neuro_request_metadata_init(&metadata);
+		(void)neuro_request_metadata_parse(payload, &metadata);
+		request_metadata = &metadata;
+	}
+
+	snprintk(resource, sizeof(resource), "update/app/%s/delete", app_id);
+	if (!service->ops->require_resource_lease_or_reply(
+		    reply_ctx, request_id, resource, request_metadata)) {
+		service_log_transaction(service, app_id, "delete", request_id,
+			"reject", -EPERM, "lease check failed");
+		return;
+	}
+
+	if (service->ops->runtime_app_is_loaded(app_id)) {
+		service->ops->publish_update_event(app_id, "delete", "error",
+			"delete active app rejected");
+		service_log_transaction(service, app_id, "delete", request_id,
+			"reject", -EBUSY, "delete active app rejected");
+		service->ops->reply_error(reply_ctx, request_id,
+			"delete active app rejected", 409);
+		return;
+	}
+
+	artifact =
+		neuro_artifact_store_get(service->ctx.artifact_store, app_id);
+	if (artifact != NULL && artifact->path[0] != '\0') {
+		snprintk(path, sizeof(path), "%s", artifact->path);
+	} else {
+		build_app_path(app_id, path, sizeof(path));
+	}
+
+	fs_ops = neuro_unit_port_get_fs_ops();
+	if (fs_ops == NULL || fs_ops->remove == NULL) {
+		service->ops->publish_update_event(app_id, "delete", "error",
+			"artifact delete unavailable");
+		service_log_transaction(service, app_id, "delete", request_id,
+			"fail", -ENOTSUP, "artifact delete unavailable");
+		service->ops->reply_error(reply_ctx, request_id,
+			"artifact delete unavailable", 500);
+		return;
+	}
+
+	if (artifact == NULL) {
+		service->ops->publish_update_event(
+			app_id, "delete", "error", "artifact missing");
+		service_log_transaction(service, app_id, "delete", request_id,
+			"reject", -ENOENT, "artifact missing");
+		service->ops->reply_error(
+			reply_ctx, request_id, "artifact missing", 404);
+		return;
+	}
+
+	ret = fs_ops->remove(path);
+	if (ret) {
+		service->ops->publish_update_event(
+			app_id, "delete", "error", "artifact remove failed");
+		service_log_transaction(service, app_id, "delete", request_id,
+			"fail", ret, "artifact remove failed");
+		service->ops->reply_error(
+			reply_ctx, request_id, "artifact remove failed", 500);
+		return;
+	}
+
+	(void)neuro_artifact_store_remove(service->ctx.artifact_store, app_id);
+	(void)neuro_update_manager_remove(service->ctx.update_manager, app_id);
+	(void)neuro_app_command_registry_remove_app(app_id);
+	save_ret = persist_recovery_seed_snapshot(service);
+	if (save_ret) {
+		service->ops->publish_update_event(
+			app_id, "delete", "error", "recovery seed save failed");
+		service_log_transaction(service, app_id, "delete", request_id,
+			"fail", save_ret, "recovery seed save failed");
+		service->ops->reply_error(reply_ctx, request_id,
+			"delete recovery seed save failed", 500);
+		return;
+	}
+
+	service->ops->publish_update_event(
+		app_id, "delete", "ok", "artifact deleted");
+	service->ops->publish_state_event();
+	snprintk(json, sizeof(json),
+		"{\"status\":\"ok\",\"request_id\":\"%s\",\"node_id\":\"%s\",\"app_id\":\"%s\",\"path\":\"%s\"}",
+		request_id, service->ops->node_id, app_id, path);
+	service_log_transaction(service, app_id, "delete", request_id, "commit",
+		0, "delete success");
+	service->ops->query_reply_json(reply_ctx, json);
+}
+
 int neuro_unit_update_service_init(struct neuro_unit_update_service *service,
 	const struct neuro_unit_update_service_ctx *ctx,
 	const struct neuro_unit_update_service_ops *ops)
@@ -1034,6 +1140,14 @@ void neuro_unit_update_service_handle_action(
 
 	if (strcmp(action, "rollback") == 0 || strcmp(action, "recover") == 0) {
 		handle_update_rollback(
+			service, reply_ctx, app_id, payload, request_id);
+		service_log_transaction(service, app_id, txn_action, request_id,
+			"egress", 0, "service done");
+		return;
+	}
+
+	if (strcmp(action, "delete") == 0) {
+		handle_update_delete(
 			service, reply_ctx, app_id, payload, request_id);
 		service_log_transaction(service, app_id, txn_action, request_id,
 			"egress", 0, "service done");

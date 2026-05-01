@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import dataclass
+import glob
 import json
 import os
 import shlex
@@ -9,6 +10,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any, cast
 
 import zenoh
 
@@ -17,7 +19,7 @@ import neuro_protocol as protocol
 
 DEFAULT_CHUNK_SIZE = 1024
 DEFAULT_PRIORITY = 50
-RELEASE_TARGET = "1.1.8"
+RELEASE_TARGET = "1.1.9"
 EVENT_SUBSCRIPTION_READY_DELAY_SEC = 1.0
 EVENT_SUBSCRIPTION_PUMP_INTERVAL_SEC = 1.0
 DEFAULT_SESSION_OPEN_RETRIES = 3
@@ -42,8 +44,17 @@ PAYLOAD_FAILURE_STATUSES = {
     "parse_failed",
     "session_open_failed",
     "handler_failed",
+    "serial_dependency_missing",
+    "serial_device_missing",
+    "serial_open_failed",
+    "serial_timeout",
+    "shell_error",
+    "endpoint_verify_failed",
 }
 WORKFLOW_PLAN_SCHEMA_VERSION = "1.1.8-workflow-plan-v1"
+DEFAULT_SERIAL_BAUDRATE = 115200
+DEFAULT_SERIAL_TIMEOUT_SEC = 5.0
+DEFAULT_SERIAL_SETTLE_SEC = 0.2
 
 
 def release_label(suffix: str) -> str:
@@ -128,8 +139,20 @@ def open_session_with_retry(args: argparse.Namespace) -> zenoh.Session:
 CAPABILITY_MATRIX = protocol.CAPABILITY_MATRIX
 
 
-def print_json(data: dict) -> None:
+def print_json(data: dict[str, Any]) -> None:
     print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def emit_result(
+    args: argparse.Namespace, result: dict[str, Any], success_message: str
+) -> int:
+    if args.output == "json":
+        print_json(result)
+    elif result.get("ok"):
+        print(success_message)
+    else:
+        print(f"error: {result.get('status', 'error')}: {result.get('error', '')}")
+    return 0 if result.get("ok", False) else 2
 
 
 def make_request_id() -> str:
@@ -138,6 +161,196 @@ def make_request_id() -> str:
 
 def make_idempotency_key() -> str:
     return protocol.make_idempotency_key()
+
+
+def import_serial_module() -> tuple[Any | None, str]:
+    try:
+        import serial  # type: ignore[import-not-found]
+    except Exception as exc:
+        return None, str(exc)
+
+    return serial, ""
+
+
+def discover_serial_devices() -> list[dict[str, str]]:
+    serial_module, _error = import_serial_module()
+    devices: list[dict[str, str]] = []
+
+    tools = getattr(serial_module, "tools", None) if serial_module is not None else None
+    list_ports = getattr(tools, "list_ports", None) if tools is not None else None
+    comports: Any = getattr(list_ports, "comports", None) if list_ports is not None else None
+    if comports is None and serial_module is not None:
+        try:
+            from serial.tools import list_ports as imported_list_ports  # type: ignore[import-not-found]
+
+            comports = imported_list_ports.comports
+        except Exception:
+            comports = None
+    if callable(comports):
+        try:
+            for port in cast(Any, comports)():
+                device = getattr(port, "device", "")
+                if device:
+                    devices.append(
+                        {
+                            "device": device,
+                            "description": getattr(port, "description", ""),
+                            "hwid": getattr(port, "hwid", ""),
+                            "source": "pyserial",
+                        }
+                    )
+        except Exception:
+            devices = []
+
+    if not devices:
+        for pattern in ("/dev/ttyACM*", "/dev/ttyUSB*"):
+            for device in glob.glob(pattern):
+                devices.append(
+                    {
+                        "device": device,
+                        "description": "",
+                        "hwid": "",
+                        "source": "glob",
+                    }
+                )
+
+    unique: dict[str, dict[str, str]] = {}
+    for device in devices:
+        unique[str(device["device"])] = device
+    return [unique[name] for name in sorted(unique)]
+
+
+def resolve_serial_port(args: argparse.Namespace) -> tuple[str, dict[str, Any] | None]:
+    configured = getattr(args, "port", "")
+    if configured:
+        return configured, None
+
+    devices = discover_serial_devices()
+    if not devices:
+        return "", {
+            "ok": False,
+            "status": "serial_device_missing",
+            "error": "no serial device found; pass --port or attach a Unit UART device",
+            "devices": [],
+        }
+
+    return str(devices[0]["device"]), None
+
+
+def serial_read_text(serial_port: Any, timeout_sec: float) -> str:
+    deadline = time.monotonic() + max(0.1, timeout_sec)
+    chunks: list[bytes] = []
+    while time.monotonic() < deadline:
+        chunk = serial_port.read(256)
+        if chunk:
+            chunks.append(bytes(chunk))
+            continue
+        time.sleep(0.05)
+
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def run_serial_shell_command(args: argparse.Namespace, command: str) -> dict[str, Any]:
+    serial_module, import_error = import_serial_module()
+    if serial_module is None:
+        return {
+            "ok": False,
+            "status": "serial_dependency_missing",
+            "error": f"pyserial is required for serial commands: {import_error}",
+        }
+
+    port, error = resolve_serial_port(args)
+    if error is not None:
+        return error
+
+    baudrate = int(getattr(args, "baudrate", DEFAULT_SERIAL_BAUDRATE))
+    timeout_sec = float(getattr(args, "serial_timeout", DEFAULT_SERIAL_TIMEOUT_SEC))
+    settle_sec = float(getattr(args, "serial_settle_sec", DEFAULT_SERIAL_SETTLE_SEC))
+
+    try:
+        serial_port = serial_module.Serial(
+            port=port,
+            baudrate=baudrate,
+            timeout=0.1,
+            write_timeout=timeout_sec,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "serial_open_failed",
+            "port": port,
+            "baudrate": baudrate,
+            "error": str(exc),
+        }
+
+    try:
+        with serial_port:
+            reset_input = getattr(serial_port, "reset_input_buffer", None)
+            if callable(reset_input):
+                reset_input()
+            if settle_sec > 0:
+                time.sleep(settle_sec)
+            serial_port.write((command + "\r\n").encode("utf-8"))
+            flush = getattr(serial_port, "flush", None)
+            if callable(flush):
+                flush()
+            output = serial_read_text(serial_port, timeout_sec)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "serial_open_failed",
+            "port": port,
+            "baudrate": baudrate,
+            "command": command,
+            "error": str(exc),
+        }
+
+    if not output.strip():
+        return {
+            "ok": False,
+            "status": "serial_timeout",
+            "port": port,
+            "baudrate": baudrate,
+            "command": command,
+            "timeout_sec": timeout_sec,
+            "error": "no shell output received before timeout",
+        }
+
+    lowered = output.lower()
+    if "error" in lowered or "failed" in lowered:
+        return {
+            "ok": False,
+            "status": "shell_error",
+            "port": port,
+            "baudrate": baudrate,
+            "command": command,
+            "output": output,
+            "error": "serial shell reported an error",
+        }
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "port": port,
+        "baudrate": baudrate,
+        "command": command,
+        "output": output,
+    }
+
+
+def parse_zenoh_endpoint_from_shell(output: str) -> str:
+    patterns = (
+        "zenoh connect endpoint:",
+        "zenoh connect override applied:",
+        "zenoh connect override cleared:",
+    )
+    for line in output.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        for pattern in patterns:
+            if pattern in lowered:
+                return stripped.split(":", 1)[1].strip()
+    return ""
 
 
 def dump_reply(reply) -> None:
@@ -373,6 +586,9 @@ def build_init_diagnostics(args: argparse.Namespace) -> dict:
             "workflow plan discover-host --output json",
             "workflow plan discover-router --output json",
             "workflow plan discover-serial --output json",
+            "workflow plan serial-discover --output json",
+            "workflow plan serial-zenoh-config --output json",
+            "workflow plan serial-zenoh-recover --output json",
             "workflow plan discover-device --output json",
             "workflow plan discover-apps --output json",
             "workflow plan discover-leases --output json",
@@ -533,6 +749,73 @@ WORKFLOW_PLANS = {
                 },
             },
             "failure_statuses": ["serial_device_missing"],
+        },
+    },
+    "serial-discover": {
+        "category": "discovery",
+        "description": "list host serial ports available for Unit UART recovery",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py serial list",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "ok": True,
+                "status": "ok",
+                "devices": [{"device": "/dev/ttyACM0", "source": "pyserial"}],
+            },
+            "failure_statuses": ["serial_device_missing"],
+        },
+    },
+    "serial-zenoh-config": {
+        "category": "configuration",
+        "description": "configure the Unit Zenoh connect endpoint through UART shell",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py serial zenoh show --port /dev/ttyACM0",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py serial zenoh set tcp/<host-ip>:7447 --port /dev/ttyACM0",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 5 query device",
+        ],
+        "artifacts": ["applocation/NeuroLink/smoke-evidence/serial-diag"],
+        "json_contract": {
+            "success": {
+                "ok": True,
+                "status": "ok",
+                "endpoint": "tcp/<host-ip>:7447",
+                "verified": True,
+            },
+            "failure_statuses": [
+                "serial_dependency_missing",
+                "serial_device_missing",
+                "serial_open_failed",
+                "serial_timeout",
+                "shell_error",
+                "endpoint_verify_failed",
+                "no_reply",
+            ],
+        },
+    },
+    "serial-zenoh-recover": {
+        "category": "configuration",
+        "description": "recover Unit connectivity when router endpoint drift causes no_reply",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-router",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-discover",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan serial-zenoh-config",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 5 query device",
+        ],
+        "artifacts": ["applocation/NeuroLink/smoke-evidence/serial-diag"],
+        "json_contract": {
+            "success": {
+                "serial_config": {"status": "ok"},
+                "device_query": {"status": "ok", "node_id": "unit-01"},
+            },
+            "failure_statuses": [
+                "router_not_listening",
+                "serial_device_missing",
+                "endpoint_verify_failed",
+                "no_reply_board_unreachable",
+                "no_reply",
+            ],
         },
     },
     "discover-device": {
@@ -865,6 +1148,84 @@ WORKFLOW_PLANS = {
         ],
         "artifacts": ["applocation/NeuroLink/memory-evidence"],
     },
+    "llext-lifecycle": {
+        "category": "app_development",
+        "description": "exercise explicit LLEXT install, runtime unload, and artifact delete semantics",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan control-deploy",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app stop --app-id neuro_unit_app --lease-id <lease>",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app unload --app-id neuro_unit_app --lease-id <lease>",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app delete --app-id neuro_unit_app --lease-id <lease>",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query apps",
+        ],
+        "artifacts": ["applocation/NeuroLink/smoke-evidence"],
+        "json_contract": {
+            "success": {
+                "deploy_activate": {"status": "ok"},
+                "runtime_unload": {"status": "ok"},
+                "artifact_delete": {"status": "ok"},
+            },
+            "failure_statuses": [
+                "lease_conflict",
+                "app_not_running",
+                "artifact_missing",
+                "delete_active_app_rejected",
+                "payload.status:error",
+            ],
+        },
+    },
+    "memory-layout-dump": {
+        "category": "verification",
+        "description": "dump board static memory layout from Unit build artifacts",
+        "commands": [
+            "/home/emb/project/zephyrproject/.venv/bin/python "
+            "applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py "
+            "memory layout-dump "
+            "--build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence "
+            f"--label {release_label('static-layout-baseline')}",
+        ],
+        "artifacts": ["applocation/NeuroLink/memory-evidence"],
+        "json_contract": {
+            "success": {
+                "section_totals": {"dram0": 377188},
+                "config": {"CONFIG_LLEXT_HEAP_SIZE": 64},
+                "sections": [{"name": ".dram0.bss", "size": 0}],
+            },
+            "failure_statuses": [
+                "build_dir_missing",
+                "zephyr_stat_missing",
+                "config_missing",
+                "parse_failed",
+            ],
+        },
+    },
+    "llext-memory-config": {
+        "category": "app_development",
+        "description": "plan LLEXT memory configuration candidates from static layout evidence",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan memory-layout-dump",
+            "bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --overlay-config applocation/NeuroLink/neuro_unit/overlays/<llext-memory-candidate>.conf --no-c-style-check",
+            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py memory layout-dump --build-dir build/neurolink_unit --output-dir applocation/NeuroLink/memory-evidence --label release-1.1.9-llext-memory-candidate",
+            "/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py memory config-plan --baseline-json applocation/NeuroLink/memory-evidence/release-1.1.8-closure.json --candidate-json applocation/NeuroLink/memory-evidence/release-1.1.9-llext-memory-candidate.json",
+        ],
+        "artifacts": ["applocation/NeuroLink/memory-evidence"],
+        "json_contract": {
+            "success": {
+                "baseline_layout": {"status": "ok"},
+                "candidate_layout": {"status": "ok"},
+                "promotion_allowed": False,
+            },
+            "failure_statuses": [
+                "baseline_layout_missing",
+                "candidate_layout_missing",
+                "loaded_extensions_present",
+                "candidate_build_failed",
+                "runtime_heap_dynamic_unsafe",
+                "memory_regression",
+                "parse_failed",
+            ],
+        },
+    },
     "preflight": {
         "category": "board_operation",
         "description": "run Linux host and board preflight checks",
@@ -1102,6 +1463,106 @@ WORKFLOW_PLAN_METADATA = {
                 "status": "serial_device_missing",
                 "next_action": "check USB cable, dialout permissions, or WSL USB attach state",
             }
+        ],
+        "cleanup": [],
+    },
+    "serial-discover": {
+        "host_support": ["linux", "windows", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": False,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "target Unit USB serial device is attached",
+            "pyserial is installed in the Neuro CLI Python environment",
+        ],
+        "expected_success": [
+            "serial list returns ok=true",
+            "devices contains at least one candidate Unit UART path",
+        ],
+        "failure_statuses": [
+            {
+                "status": "serial_device_missing",
+                "next_action": "check USB cable, host permissions, WSL USB attach, or pass --port explicitly",
+            },
+            {
+                "status": "serial_dependency_missing",
+                "next_action": "install applocation/NeuroLink/neuro_cli/requirements.txt",
+            },
+        ],
+        "cleanup": [],
+    },
+    "serial-zenoh-config": {
+        "host_support": ["linux", "windows", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": False,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "serial-discover finds the target Unit UART port or operator passes --port",
+            "target router endpoint is known, for example tcp/<host-ip>:7447",
+            "Unit firmware includes app zenoh_connect_show/set/clear shell commands",
+        ],
+        "expected_success": [
+            "serial zenoh set returns ok=true",
+            "reply endpoint matches the requested locator",
+            "follow-up query device succeeds after reconnect when router is reachable",
+        ],
+        "failure_statuses": [
+            {
+                "status": "serial_dependency_missing",
+                "next_action": "install applocation/NeuroLink/neuro_cli/requirements.txt",
+            },
+            {
+                "status": "serial_device_missing",
+                "next_action": "attach the Unit UART device or pass --port explicitly",
+            },
+            {
+                "status": "serial_open_failed",
+                "next_action": "check permissions or close other programs using the UART port",
+            },
+            {
+                "status": "serial_timeout",
+                "next_action": "confirm shell is enabled and baud rate matches the Unit UART",
+            },
+            {
+                "status": "endpoint_verify_failed",
+                "next_action": "inspect shell output and rerun serial zenoh show before retrying",
+            },
+        ],
+        "cleanup": [],
+    },
+    "serial-zenoh-recover": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "discover-router reports the expected host router listener",
+            "serial-discover can reach the Unit UART shell",
+            "Zenoh no_reply is suspected to be endpoint drift rather than app failure",
+        ],
+        "expected_success": [
+            "serial endpoint config returns ok=true",
+            "query device reaches status=ok after reconnect retries",
+        ],
+        "failure_statuses": [
+            {
+                "status": "serial_open_failed",
+                "next_action": "recover serial access before endpoint recovery",
+            },
+            {
+                "status": "no_reply",
+                "next_action": "inspect board network readiness and UART logs after endpoint config",
+            },
+            {
+                "status": "router_not_listening",
+                "next_action": "start zenohd before changing the Unit endpoint",
+            },
         ],
         "cleanup": [],
     },
@@ -1457,6 +1918,80 @@ WORKFLOW_PLAN_METADATA = {
             "memory evidence JSON and summary artifacts are written",
         ],
     },
+    "llext-lifecycle": {
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "destructive": True,
+        "preconditions": [
+            "control-deploy can activate the sample LLEXT app",
+            "operator owns required app/update leases before destructive lifecycle changes",
+        ],
+        "expected_success": [
+            "runtime unload and artifact delete report distinct status fields",
+            "query apps confirms no stale running app after lifecycle cleanup",
+        ],
+        "failure_statuses": [
+            {
+                "status": "delete_active_app_rejected",
+                "next_action": "stop and unload the running app before deleting its artifact",
+            },
+            {
+                "status": "artifact_missing",
+                "next_action": "treat as already deleted only when query apps/artifacts confirms clean state",
+            },
+        ],
+    },
+    "memory-layout-dump": {
+        "requires_hardware": False,
+        "requires_serial": False,
+        "requires_router": False,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "build/neurolink_unit contains Zephyr build artifacts",
+            "memory evidence collector can parse .config and zephyr.stat",
+        ],
+        "expected_success": [
+            "static layout JSON and summary artifacts are written",
+            "section totals include dram0, iram0, flash, and ext_ram when available",
+        ],
+        "failure_statuses": [
+            {
+                "status": "build_dir_missing",
+                "next_action": "run workflow plan unit-build before dumping static layout",
+            },
+            {
+                "status": "zephyr_stat_missing",
+                "next_action": "inspect the Unit build output and rebuild if needed",
+            },
+        ],
+    },
+    "llext-memory-config": {
+        "requires_hardware": False,
+        "requires_serial": False,
+        "requires_router": False,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "memory-layout-dump baseline exists",
+            "candidate overlay changes only LLEXT memory/staging configuration",
+        ],
+        "expected_success": [
+            "candidate build evidence is comparable with static layout baseline",
+            "promotion remains blocked until hardware runtime evidence is collected",
+        ],
+        "failure_statuses": [
+            {
+                "status": "runtime_heap_dynamic_unsafe",
+                "next_action": "keep the change as a build-time overlay candidate",
+            },
+            {
+                "status": "memory_regression",
+                "next_action": "reject the candidate or collect a narrower isolated overlay",
+            },
+        ],
+    },
     "preflight": {
         "requires_hardware": True,
         "requires_serial": True,
@@ -1630,6 +2165,298 @@ def handle_workflow_plan(
         for command in result["commands"]:
             print(command)
     return 0
+
+
+def resolve_workspace_path(workspace_root: Path, value: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return workspace_root / path
+
+
+def relative_workspace_path(workspace_root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(workspace_root))
+    except ValueError:
+        return str(path)
+
+
+def handle_memory_layout_dump(
+    session: zenoh.Session | None, args: argparse.Namespace
+) -> int:
+    del session
+    neurolink_root = find_neurolink_root(Path.cwd())
+    workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
+    build_dir = resolve_workspace_path(workspace_root, args.build_dir).resolve()
+    output_dir = resolve_workspace_path(workspace_root, args.output_dir).resolve()
+    collector = neurolink_root / "scripts" / "collect_neurolink_memory_evidence.py"
+
+    if not build_dir.is_dir() and not args.run_build:
+        result = {
+            "ok": False,
+            "status": "build_dir_missing",
+            "build_dir": relative_workspace_path(workspace_root, build_dir),
+            "next_action": "run workflow plan unit-build before dumping static layout",
+        }
+        if args.output == "json":
+            print_json(result)
+        else:
+            print(result["next_action"])
+        return 2
+
+    missing_inputs = []
+    for status, path in (
+        ("config_missing", build_dir / "zephyr" / ".config"),
+        ("zephyr_stat_missing", build_dir / "zephyr" / "zephyr.stat"),
+    ):
+        if not path.is_file() and not args.run_build:
+            missing_inputs.append(
+                {"status": status, "path": relative_workspace_path(workspace_root, path)}
+            )
+    if missing_inputs:
+        result = {
+            "ok": False,
+            "status": missing_inputs[0]["status"],
+            "missing_inputs": missing_inputs,
+            "build_dir": relative_workspace_path(workspace_root, build_dir),
+            "next_action": "inspect the Unit build output and rebuild if needed",
+        }
+        if args.output == "json":
+            print_json(result)
+        else:
+            print(result["next_action"])
+        return 2
+
+    command = [
+        sys.executable,
+        str(collector),
+        "--build-dir",
+        relative_workspace_path(workspace_root, build_dir),
+        "--output-dir",
+        relative_workspace_path(workspace_root, output_dir),
+        "--label",
+        args.label,
+    ]
+    if args.build_log:
+        command.extend(["--build-log", args.build_log])
+    if args.run_build:
+        command.append("--run-build")
+    if args.no_c_style_check:
+        command.append("--no-c-style-check")
+
+    proc = subprocess.run(
+        command,
+        cwd=workspace_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0:
+        result = {
+            "ok": False,
+            "status": "collector_failed",
+            "returncode": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+        }
+        if args.output == "json":
+            print_json(result)
+        else:
+            print(proc.stderr or proc.stdout)
+        return proc.returncode
+
+    artifact_paths: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        key, _, value = line.partition("=")
+        if key == "memory_evidence_json":
+            artifact_paths["json"] = value
+        elif key == "memory_evidence_summary":
+            artifact_paths["summary"] = value
+
+    json_path_value = artifact_paths.get("json")
+    if not json_path_value:
+        result = {"ok": False, "status": "collector_output_missing", "stdout": proc.stdout}
+        if args.output == "json":
+            print_json(result)
+        else:
+            print("collector did not report memory_evidence_json")
+        return 2
+
+    json_path = Path(json_path_value)
+    evidence = json.loads(json_path.read_text(encoding="utf-8"))
+    result = {
+        "ok": True,
+        "status": "ok",
+        "label": evidence.get("label"),
+        "release_target": evidence.get("release_target"),
+        "build_dir": evidence.get("build_dir"),
+        "platform": evidence.get("platform", {}),
+        "memory_capability": evidence.get("memory_capability", {}),
+        "section_totals": evidence.get("section_totals", {}),
+        "section_count": len(evidence.get("sections", [])),
+        "artifacts": {
+            name: relative_workspace_path(workspace_root, Path(path))
+            for name, path in artifact_paths.items()
+        },
+    }
+    if args.output == "json":
+        print_json(result)
+    else:
+        print(f"memory layout: {result['status']}")
+        print(f"json: {result['artifacts'].get('json')}")
+        print(f"summary: {result['artifacts'].get('summary')}")
+    return 0
+
+
+def load_memory_evidence_json(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"parse_failed:{path}:{exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"parse_failed:{path}:expected object")
+    return payload
+
+
+def memory_section_deltas(
+    baseline_totals: dict[str, Any], candidate_totals: dict[str, Any]
+) -> dict[str, dict[str, int]]:
+    deltas: dict[str, dict[str, int]] = {}
+    for region in sorted(set(baseline_totals) | set(candidate_totals)):
+        baseline_value = int(baseline_totals.get(region, 0) or 0)
+        candidate_value = int(candidate_totals.get(region, 0) or 0)
+        deltas[region] = {
+            "baseline_bytes": baseline_value,
+            "candidate_bytes": candidate_value,
+            "delta_bytes": candidate_value - baseline_value,
+        }
+    return deltas
+
+
+def build_llext_memory_config_plan(
+    baseline: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    baseline_totals = baseline.get("section_totals", {})
+    candidate_totals = candidate.get("section_totals", {})
+    if not isinstance(baseline_totals, dict) or not isinstance(candidate_totals, dict):
+        raise ValueError("parse_failed:section_totals must be objects")
+
+    deltas = memory_section_deltas(baseline_totals, candidate_totals)
+    internal_regions = ("dram0", "iram0")
+    regressions = [
+        {
+            "region": region,
+            "delta_bytes": deltas[region]["delta_bytes"],
+            "status": "memory_regression",
+        }
+        for region in internal_regions
+        if deltas.get(region, {}).get("delta_bytes", 0) > 0
+    ]
+    runtime_gate = candidate.get("runtime_evidence_gate", {})
+    runtime_gate_passed = (
+        isinstance(runtime_gate, dict) and runtime_gate.get("passed") is True
+    )
+    candidate_config = candidate.get("config", {})
+    if not isinstance(candidate_config, dict):
+        candidate_config = {}
+    dynamic_heap_enabled = candidate_config.get("CONFIG_LLEXT_HEAP_DYNAMIC") == "y"
+    static_layout_ok = len(regressions) == 0
+    dynamic_heap_safe = not dynamic_heap_enabled or runtime_gate_passed
+    promotion_allowed = static_layout_ok and runtime_gate_passed and dynamic_heap_safe
+    status = "ok"
+    if not static_layout_ok:
+        status = "memory_regression"
+    elif dynamic_heap_enabled and not runtime_gate_passed:
+        status = "runtime_heap_dynamic_unsafe"
+
+    if dynamic_heap_enabled and not runtime_gate_passed:
+        next_action = "add explicit llext_heap_init wiring before hardware promotion"
+    elif static_layout_ok:
+        next_action = "candidate can proceed to hardware runtime validation"
+    else:
+        next_action = "reject or revise the candidate before hardware runtime validation"
+
+    return {
+        "ok": True,
+        "status": status,
+        "baseline_layout": {
+            "status": "ok",
+            "label": baseline.get("label"),
+            "release_target": baseline.get("release_target"),
+        },
+        "candidate_layout": {
+            "status": "ok",
+            "label": candidate.get("label"),
+            "release_target": candidate.get("release_target"),
+        },
+        "section_deltas": deltas,
+        "static_regressions": regressions,
+        "memory_capability": candidate.get("memory_capability", {}),
+        "config": candidate_config,
+        "dynamic_heap_enabled": dynamic_heap_enabled,
+        "runtime_evidence_gate": runtime_gate,
+        "promotion_allowed": promotion_allowed,
+        "promotion_blockers": [] if promotion_allowed else [
+            blocker
+            for blocker in (
+                None if static_layout_ok else "memory_regression",
+                None if dynamic_heap_safe else "runtime_heap_dynamic_unsafe",
+                None if runtime_gate_passed else "runtime_evidence_required",
+            )
+            if blocker is not None
+        ],
+        "next_action": next_action,
+    }
+
+
+def handle_llext_memory_config_plan(
+    session: zenoh.Session | None, args: argparse.Namespace
+) -> int:
+    del session
+    neurolink_root = find_neurolink_root(Path.cwd())
+    workspace_root = neurolink_root.parent.parent if neurolink_root else Path.cwd()
+    baseline_path = resolve_workspace_path(workspace_root, args.baseline_json).resolve()
+    candidate_path = resolve_workspace_path(workspace_root, args.candidate_json).resolve()
+
+    for status, path in (
+        ("baseline_layout_missing", baseline_path),
+        ("candidate_layout_missing", candidate_path),
+    ):
+        if not path.is_file():
+            result = {
+                "ok": False,
+                "status": status,
+                "path": relative_workspace_path(workspace_root, path),
+                "next_action": "run memory layout-dump for the missing layout evidence",
+            }
+            if args.output == "json":
+                print_json(result)
+            else:
+                print(result["next_action"])
+            return 2
+
+    try:
+        baseline = load_memory_evidence_json(baseline_path)
+        candidate = load_memory_evidence_json(candidate_path)
+        result = build_llext_memory_config_plan(baseline, candidate)
+    except ValueError as exc:
+        result = {"ok": False, "status": "parse_failed", "error": str(exc)}
+        if args.output == "json":
+            print_json(result)
+        else:
+            print(f"parse failed: {exc}")
+        return 2
+
+    result["artifacts"] = {
+        "baseline_json": relative_workspace_path(workspace_root, baseline_path),
+        "candidate_json": relative_workspace_path(workspace_root, candidate_path),
+    }
+    if args.output == "json":
+        print_json(result)
+    else:
+        print(f"llext memory config: {result['status']}")
+        print(f"promotion_allowed: {result['promotion_allowed']}")
+    return 0 if result["status"] == "ok" else 2
 
 
 def validate_payload(payload: dict, mode: str) -> None:
@@ -2042,7 +2869,7 @@ def handle_update(session: zenoh.Session, args: argparse.Namespace) -> int:
     mode = "common"
     if args.stage == "prepare":
         mode = "write"
-    elif args.stage in ("activate", "rollback"):
+    elif args.stage in ("activate", "rollback", "delete"):
         mode = "protected"
 
     if mode == "write":
@@ -2858,6 +3685,83 @@ def handle_capabilities(session: zenoh.Session, args: argparse.Namespace) -> int
     return 0
 
 
+def handle_serial_list(session: zenoh.Session | None, args: argparse.Namespace) -> int:
+    del session
+    devices = discover_serial_devices()
+    result = {
+        "ok": bool(devices),
+        "status": "ok" if devices else "serial_device_missing",
+        "devices": devices,
+    }
+    if not devices:
+        result["error"] = "no serial devices found"
+    return emit_result(args, result, "\n".join(device["device"] for device in devices))
+
+
+def handle_serial_zenoh(session: zenoh.Session | None, args: argparse.Namespace) -> int:
+    del session
+    action = args.serial_zenoh_command
+    if action == "show":
+        command = "app zenoh_connect_show"
+    elif action == "set":
+        command = f"app zenoh_connect_set {args.endpoint}"
+    elif action == "clear":
+        command = "app zenoh_connect_clear"
+    else:
+        raise ValueError(f"unsupported serial zenoh action: {action}")
+
+    result = run_serial_shell_command(args, command)
+    if result.get("ok"):
+        endpoint = parse_zenoh_endpoint_from_shell(str(result.get("output", "")))
+        result["endpoint"] = endpoint
+        if action == "set" and endpoint != args.endpoint:
+            result.update(
+                {
+                    "ok": False,
+                    "status": "endpoint_verify_failed",
+                    "expected_endpoint": args.endpoint,
+                    "error": "serial shell output did not confirm the requested endpoint",
+                }
+            )
+        elif action in ("show", "clear") and not endpoint:
+            result.update(
+                {
+                    "ok": False,
+                    "status": "endpoint_verify_failed",
+                    "error": "serial shell output did not include a Zenoh endpoint",
+                }
+            )
+
+    message = str(result.get("endpoint") or result.get("output") or "ok")
+    return emit_result(args, result, message)
+
+
+def add_serial_parser_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--port",
+        default="",
+        help="serial device path, for example /dev/ttyACM0 or COM3; defaults to first discovered port",
+    )
+    parser.add_argument(
+        "--baudrate",
+        type=int,
+        default=DEFAULT_SERIAL_BAUDRATE,
+        help="serial baud rate for the Unit shell",
+    )
+    parser.add_argument(
+        "--serial-timeout",
+        type=float,
+        default=DEFAULT_SERIAL_TIMEOUT_SEC,
+        help="seconds to wait for shell output",
+    )
+    parser.add_argument(
+        "--serial-settle-sec",
+        type=float,
+        default=DEFAULT_SERIAL_SETTLE_SEC,
+        help="seconds to wait after opening the serial port before writing",
+    )
+
+
 def add_common_parser_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--node", default="unit-01", help="target NeuroLink node id")
     parser.add_argument("--source-core", default="core-cli", help="source_core metadata")
@@ -3086,6 +3990,33 @@ def add_legacy_commands(subparsers: argparse._SubParsersAction) -> None:
     workflow_plan.add_argument("workflow", choices=sorted(WORKFLOW_PLANS.keys()))
     workflow_plan.set_defaults(handler=handle_workflow_plan, requires_session=False)
 
+    memory_layout_dump = subparsers.add_parser(
+        "memory-layout-dump", help="dump static memory layout from Unit build artifacts"
+    )
+    memory_layout_dump.add_argument("--build-dir", default="build/neurolink_unit")
+    memory_layout_dump.add_argument(
+        "--output-dir", default="applocation/NeuroLink/memory-evidence"
+    )
+    memory_layout_dump.add_argument(
+        "--label", default=release_label("static-layout-baseline")
+    )
+    memory_layout_dump.add_argument("--build-log", default="")
+    memory_layout_dump.add_argument("--run-build", action="store_true")
+    memory_layout_dump.add_argument("--no-c-style-check", action="store_true")
+    memory_layout_dump.set_defaults(
+        handler=handle_memory_layout_dump, requires_session=False
+    )
+
+    memory_config_plan = subparsers.add_parser(
+        "llext-memory-config-plan",
+        help="compare LLEXT memory candidate layout evidence against a baseline",
+    )
+    memory_config_plan.add_argument("--baseline-json", required=True)
+    memory_config_plan.add_argument("--candidate-json", required=True)
+    memory_config_plan.set_defaults(
+        handler=handle_llext_memory_config_plan, requires_session=False
+    )
+
     recovery = subparsers.add_parser("recovery", help="recovery operation placeholder")
     recovery.set_defaults(
         handler=handle_placeholder,
@@ -3164,6 +4095,14 @@ def add_grouped_alias_commands(subparsers: argparse._SubParsersAction) -> None:
     app_stop_v2.add_argument("--app-id", required=True)
     app_stop_v2.add_argument("--lease-id", required=True)
     app_stop_v2.set_defaults(handler=handle_app_control, action="stop")
+    app_unload_v2 = app_sub.add_parser("unload", help="unload app runtime")
+    app_unload_v2.add_argument("--app-id", required=True)
+    app_unload_v2.add_argument("--lease-id", required=True)
+    app_unload_v2.set_defaults(handler=handle_app_control, action="unload")
+    app_delete_v2 = app_sub.add_parser("delete", help="delete inactive app artifact")
+    app_delete_v2.add_argument("--app-id", required=True)
+    app_delete_v2.add_argument("--lease-id", required=True)
+    app_delete_v2.set_defaults(handler=handle_update, stage="delete")
     app_invoke_v2 = app_sub.add_parser("invoke", help="invoke app callback command")
     app_invoke_v2.add_argument("--app-id", required=True)
     app_invoke_v2.add_argument("--lease-id", required=True)
@@ -3216,6 +4155,63 @@ def add_grouped_alias_commands(subparsers: argparse._SubParsersAction) -> None:
     monitor_app_events.add_argument("--ready-file", default="")
     add_event_handler_arguments(monitor_app_events)
     monitor_app_events.set_defaults(handler=handle_app_events)
+
+    serial_parser = subparsers.add_parser("serial", help="UART serial recovery")
+    serial_sub = serial_parser.add_subparsers(dest="serial_command", required=True)
+    serial_list = serial_sub.add_parser("list", help="list candidate Unit serial ports")
+    serial_list.set_defaults(handler=handle_serial_list, requires_session=False)
+    serial_zenoh = serial_sub.add_parser(
+        "zenoh", help="configure Unit Zenoh endpoint over UART"
+    )
+    serial_zenoh_sub = serial_zenoh.add_subparsers(
+        dest="serial_zenoh_command", required=True
+    )
+    serial_zenoh_show = serial_zenoh_sub.add_parser(
+        "show", help="show Unit Zenoh endpoint"
+    )
+    add_serial_parser_arguments(serial_zenoh_show)
+    serial_zenoh_show.set_defaults(handler=handle_serial_zenoh, requires_session=False)
+    serial_zenoh_set = serial_zenoh_sub.add_parser(
+        "set", help="set Unit Zenoh endpoint"
+    )
+    serial_zenoh_set.add_argument(
+        "endpoint", help="Zenoh locator, for example tcp/192.168.2.94:7447"
+    )
+    add_serial_parser_arguments(serial_zenoh_set)
+    serial_zenoh_set.set_defaults(handler=handle_serial_zenoh, requires_session=False)
+    serial_zenoh_clear = serial_zenoh_sub.add_parser(
+        "clear", help="clear Unit Zenoh endpoint override"
+    )
+    add_serial_parser_arguments(serial_zenoh_clear)
+    serial_zenoh_clear.set_defaults(handler=handle_serial_zenoh, requires_session=False)
+
+    memory = subparsers.add_parser("memory", help="memory evidence commands")
+    memory_sub = memory.add_subparsers(dest="memory_command", required=True)
+    memory_layout_dump_v2 = memory_sub.add_parser(
+        "layout-dump", help="dump static memory layout from Unit build artifacts"
+    )
+    memory_layout_dump_v2.add_argument("--build-dir", default="build/neurolink_unit")
+    memory_layout_dump_v2.add_argument(
+        "--output-dir", default="applocation/NeuroLink/memory-evidence"
+    )
+    memory_layout_dump_v2.add_argument(
+        "--label", default=release_label("static-layout-baseline")
+    )
+    memory_layout_dump_v2.add_argument("--build-log", default="")
+    memory_layout_dump_v2.add_argument("--run-build", action="store_true")
+    memory_layout_dump_v2.add_argument("--no-c-style-check", action="store_true")
+    memory_layout_dump_v2.set_defaults(
+        handler=handle_memory_layout_dump, requires_session=False
+    )
+    memory_config_plan_v2 = memory_sub.add_parser(
+        "config-plan",
+        help="compare LLEXT memory candidate layout evidence against a baseline",
+    )
+    memory_config_plan_v2.add_argument("--baseline-json", required=True)
+    memory_config_plan_v2.add_argument("--candidate-json", required=True)
+    memory_config_plan_v2.set_defaults(
+        handler=handle_llext_memory_config_plan, requires_session=False
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

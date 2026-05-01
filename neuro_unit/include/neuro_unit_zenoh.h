@@ -7,7 +7,17 @@
 
 #include <zephyr/kernel.h>
 
+#ifdef NEURO_UNIT_OPAQUE_ZENOH_TYPES
+typedef struct z_loaned_query_t z_loaned_query_t;
+typedef struct {
+	uintptr_t opaque;
+} z_owned_session_t;
+typedef struct {
+	uintptr_t opaque;
+} z_owned_queryable_t;
+#else
 #include <zenoh-pico.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

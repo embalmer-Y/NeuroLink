@@ -88,5 +88,9 @@ uint32_t neuro_request_policy_required_fields_for_update_action(
 		return NEURO_REQ_FLAGS_PROTECTED_WRITE;
 	}
 
+	if (strcmp(action, "delete") == 0) {
+		return NEURO_REQ_FLAGS_PROTECTED_WRITE;
+	}
+
 	return 0U;
 }

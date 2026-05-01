@@ -31,6 +31,7 @@ CONFIG_ESP_SPIRAM_HEAP_SIZE=2097152
 CONFIG_ESP_WIFI_HEAP_SPIRAM=y
 CONFIG_ESP32_WIFI_NET_ALLOC_SPIRAM=y
 CONFIG_SHARED_MULTI_HEAP=y
+CONFIG_LLEXT_HEAP_DYNAMIC=y
 CONFIG_SYS_HEAP_RUNTIME_STATS=y
 CONFIG_NEUROLINK_ZENOH_PICO_DEBUG_LEVEL=0
 CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576
@@ -75,7 +76,7 @@ output="$(${PYTHON_BIN} "${SCRIPT}" \
   --require-runtime-evidence \
   --label test-baseline)"
 
-[[ "${output}" == *"release_target=1.1.8"* ]] || {
+[[ "${output}" == *"release_target=1.1.9"* ]] || {
   printf '%s\n' "${output}" >&2
   exit 1
 }
@@ -97,6 +98,7 @@ assert payload["config"]["CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER"] == "
 assert payload["config"]["CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER"] == "n"
 assert payload["config"]["CONFIG_NEUROLINK_ZENOH_PICO_DEBUG"] == "n"
 assert payload["config"]["CONFIG_NEUROLINK_ZENOH_PICO_DEBUG_LEVEL"] == 0
+assert payload["config"]["CONFIG_LLEXT_HEAP_DYNAMIC"] == "y"
 assert payload["platform"]["board"] == "dnesp32s3b"
 assert payload["platform"]["soc"] == "esp32s3"
 assert payload["memory_capability"]["provider"] == "esp-spiram"
@@ -129,6 +131,7 @@ assert payload["external_staging_candidate_gate"]["missing"] == [
 PY
 
 grep -q "CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576" "${summary_file}"
+grep -q "CONFIG_LLEXT_HEAP_DYNAMIC=y" "${summary_file}"
 grep -q "CONFIG_NEUROLINK_ZENOH_PICO_DEBUG=n" "${summary_file}"
 grep -q "CONFIG_NEUROLINK_ZENOH_PICO_DEBUG_LEVEL=0" "${summary_file}"
 grep -q "\[platform\]" "${summary_file}"
@@ -180,7 +183,7 @@ external_output="$(${PYTHON_BIN} "${SCRIPT}" \
   --require-external-staging-evidence \
   --label test-external-candidate)"
 
-[[ "${external_output}" == *"release_target=1.1.8"* ]] || {
+[[ "${external_output}" == *"release_target=1.1.9"* ]] || {
   printf '%s\n' "${external_output}" >&2
   exit 1
 }

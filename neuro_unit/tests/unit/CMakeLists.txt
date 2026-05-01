@@ -23,6 +23,7 @@ target_sources(app PRIVATE
   ../../src/neuro_protocol_codec.c
   ../../src/neuro_unit_event.c
   ../../src/neuro_network_manager.c
+  ../../src/zenoh/neuro_unit_zenoh_config.c
   ../../src/runtime/app_runtime_cmd.c
   ../../src/runtime/app_runtime_exception.c
   ../../src/runtime/app_runtime_elf_staging.c
@@ -35,6 +36,7 @@ target_sources(app PRIVATE
   src/lifecycle/test_neuro_unit_dispatch.c
   src/lifecycle/test_neuro_unit_diag.c
   src/lifecycle/test_neuro_unit_response.c
+  src/lifecycle/test_neuro_unit_zenoh_config.c
   src/lifecycle/test_neuro_state_registry.c
   src/lifecycle/test_neuro_unit_update_service.c
   src/recovery/test_neuro_recovery_seed_store.c
