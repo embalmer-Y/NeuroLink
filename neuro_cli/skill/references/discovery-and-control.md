@@ -110,6 +110,7 @@ python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan control-callback
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan control-monitor
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan control-cleanup
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan demo-net-event-smoke
 ```
 
 Every protected control plan reports whether it is destructive, what leases it
@@ -152,6 +153,23 @@ failures, not warnings.
 Cleanup control releases known workflow lease ids and then queries leases. A
 missing known lease may mean it was already cleaned up, but final closure still
 requires a successful `query leases` response with no unexpected active leases.
+
+## Demo Workflow Plans
+
+For release 1.1.10 demo rollout, ask for `workflow plan demo-build` before any
+selected demo artifact build. This keeps Agents on the catalog-backed wrapper
+surface instead of hand-assembling `build_neurolink.sh --app ...` commands.
+
+Ask for `workflow plan demo-net-event-smoke` before running the first network
+demo on hardware. The plan keeps the same discovery/control discipline: it
+starts from a reviewed build plan, runs preflight with an explicit
+`--artifact-file build/neurolink_unit/llext/neuro_demo_net_event.llext`, then
+documents protected deploy, `action=capability`, `action=publish`,
+`monitor app-events`, and explicit lease cleanup for `neuro_demo_net_event`.
+
+Treat nested `payload.status: error`, `lease_conflict`, `app_not_running`,
+`not_implemented`, `serial_device_missing`, and `no_reply_board_unreachable`
+as blocking workflow failures, not warnings.
 
 ## Current Wrapper Examples
 

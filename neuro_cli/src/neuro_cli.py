@@ -19,7 +19,7 @@ import neuro_protocol as protocol
 
 DEFAULT_CHUNK_SIZE = 1024
 DEFAULT_PRIORITY = 50
-RELEASE_TARGET = "1.1.9"
+RELEASE_TARGET = "1.1.10"
 EVENT_SUBSCRIPTION_READY_DELAY_SEC = 1.0
 EVENT_SUBSCRIPTION_PUMP_INTERVAL_SEC = 1.0
 DEFAULT_SESSION_OPEN_RETRIES = 3
@@ -1106,6 +1106,18 @@ WORKFLOW_PLANS = {
         ],
         "artifacts": ["build/neurolink_unit_app/neuro_unit_app.llext"],
     },
+    "demo-build": {
+        "category": "app_development",
+        "description": "build the first release-1.1.10 demo artifact through the catalog-backed wrapper",
+        "commands": [
+            "bash applocation/NeuroLink/scripts/build_neurolink_demo.sh --demo neuro_demo_net_event --no-c-style-check",
+            "bash applocation/NeuroLink/scripts/build_neurolink_demo.sh --demo neuro_demo_net_event --print-artifact-path --no-c-style-check",
+        ],
+        "artifacts": [
+            "build/neurolink_unit/llext/neuro_demo_net_event.llext",
+            "applocation/NeuroLink/subprojects/demo_catalog.json",
+        ],
+    },
     "unit-build": {
         "category": "board_operation",
         "description": "build Neuro Unit firmware",
@@ -1253,6 +1265,57 @@ WORKFLOW_PLANS = {
             "--invoke-count 2",
         ],
         "artifacts": [],
+    },
+    "demo-net-event-smoke": {
+        "category": "board_operation",
+        "description": "review the first network event demo smoke path without executing it",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan demo-build",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases",
+            "bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --artifact-file build/neurolink_unit/llext/neuro_demo_net_event.llext --auto-start-router --require-serial --install-missing-cli-deps --output text",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource update/app/neuro_demo_net_event/activate --lease-id "
+            f"{release_label('demo-net-event-deploy')}-lease --ttl-ms 120000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy prepare --app-id neuro_demo_net_event --file build/neurolink_unit/llext/neuro_demo_net_event.llext",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy verify --app-id neuro_demo_net_event",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy activate --app-id neuro_demo_net_event --lease-id "
+            f"{release_label('demo-net-event-deploy')}-lease --start-args mode=demo,profile=event_bridge",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource app/neuro_demo_net_event/control --lease-id "
+            f"{release_label('demo-net-event-control')}-lease --ttl-ms 60000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app invoke --app-id neuro_demo_net_event --lease-id "
+            f"{release_label('demo-net-event-control')}-lease --command invoke --args-json '{{\"action\": \"capability\"}}'",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app invoke --app-id neuro_demo_net_event --lease-id "
+            f"{release_label('demo-net-event-control')}-lease --command invoke --args-json '{{\"action\": \"publish\", \"detail\": \"workflow-plan\"}}'",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py monitor app-events --app-id neuro_demo_net_event --duration 10 --max-events 1",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('demo-net-event-control')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('demo-net-event-deploy')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+        ],
+        "artifacts": [
+            "build/neurolink_unit/llext/neuro_demo_net_event.llext",
+            "applocation/NeuroLink/smoke-evidence",
+        ],
+        "json_contract": {
+            "success": {
+                "deploy_activate": {"status": "ok", "app_id": "neuro_demo_net_event"},
+                "capability_invoke": {"status": "ok", "app_id": "neuro_demo_net_event"},
+                "publish_invoke": {"status": "ok", "app_id": "neuro_demo_net_event"},
+                "event": {"keyexpr": "neuro/unit-01/event/app/neuro_demo_net_event/demo_event"},
+                "lease_cleanup": {"leases": []},
+            },
+            "failure_statuses": [
+                "serial_device_missing",
+                "no_reply_board_unreachable",
+                "lease_conflict",
+                "app_not_running",
+                "not_implemented",
+                "payload.status:error",
+            ],
+        },
     },
     "release-closure": {
         "category": "verification",
@@ -1866,6 +1929,38 @@ WORKFLOW_PLAN_METADATA = {
             "build/neurolink_unit_app/neuro_unit_app.llext exists",
         ],
     },
+    "demo-build": {
+        "requires_hardware": False,
+        "requires_serial": False,
+        "requires_router": False,
+        "requires_network": False,
+        "destructive": False,
+        "preconditions": [
+            "subprojects/demo_catalog.json contains the selected demo app id",
+            "build_neurolink_demo.sh is available and the Zephyr build toolchain is configured",
+            "the selected demo source directory has a valid CMakeLists.txt and toolchain.cmake",
+        ],
+        "expected_success": [
+            "catalog-backed wrapper exits 0",
+            "wrapper reports demo_app_id=neuro_demo_net_event and artifact_file for the staged output",
+            "build/neurolink_unit/llext/neuro_demo_net_event.llext exists after the build",
+        ],
+        "failure_statuses": [
+            {
+                "status": "demo_not_defined",
+                "next_action": "choose an app id that exists in subprojects/demo_catalog.json",
+            },
+            {
+                "status": "app source dir not found",
+                "next_action": "restore the selected demo subproject or correct the catalog source_dir",
+            },
+            {
+                "status": "artifact missing or empty",
+                "next_action": "inspect the selected demo build log and rebuild after fixing the compile failure",
+            },
+        ],
+        "cleanup": [],
+    },
     "unit-build": {
         "preconditions": [
             "Zephyr SDK or compatible toolchain is installed",
@@ -2058,6 +2153,52 @@ WORKFLOW_PLAN_METADATA = {
             },
         ],
         "cleanup": ["release callback smoke lease when acquired"],
+    },
+    "demo-net-event-smoke": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": True,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "workflow plan demo-build succeeds and build/neurolink_unit/llext/neuro_demo_net_event.llext is fresh",
+            "preflight passes for the target Unit when artifact_file points at neuro_demo_net_event.llext",
+            "discover-leases shows no conflicting update or app-control lease for neuro_demo_net_event",
+        ],
+        "expected_success": [
+            "deploy prepare, verify, and activate return status=ok for neuro_demo_net_event",
+            "capability and publish invoke commands return status=ok without nested payload.status:error",
+            "monitor app-events captures a fresh demo_event for neuro_demo_net_event",
+            "cleanup releases both demo leases and query leases is empty",
+        ],
+        "failure_statuses": [
+            {
+                "status": "serial_device_missing",
+                "next_action": "restore Unit USB serial visibility before claiming hardware readiness",
+            },
+            {
+                "status": "no_reply_board_unreachable",
+                "next_action": "check board network readiness, UART logs, and router reachability before deploy",
+            },
+            {
+                "status": "lease_conflict",
+                "next_action": "release the stale deploy/app-control lease or wait for TTL expiry before retrying",
+            },
+            {
+                "status": "not_implemented",
+                "next_action": "treat this as unsupported runtime capability and collect capability reply evidence instead of smoke closure",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "stop the demo smoke flow and preserve the failing Unit reply payload",
+            },
+        ],
+        "cleanup": [
+            f"release lease {release_label('demo-net-event-control')}-lease",
+            f"release lease {release_label('demo-net-event-deploy')}-lease",
+            "query leases until both demo lease ids are absent",
+        ],
     },
     "release-closure": {
         "requires_hardware": True,
@@ -3463,6 +3604,7 @@ def subscribe_to_events(
     keyexpr: str,
     args: argparse.Namespace,
     label: str,
+    prefer_callback: bool = False,
 ) -> int:
     event_rows: list[dict] = []
     listener_mode = "unknown"
@@ -3479,6 +3621,7 @@ def subscribe_to_events(
             event_rows,
             args,
             label,
+            prefer_callback=prefer_callback,
         )
         run_event_subscription(
             session,
@@ -3511,6 +3654,7 @@ def handle_app_events(session: zenoh.Session, args: argparse.Namespace) -> int:
         protocol.app_event_subscription_route(args.node, args.app_id),
         args,
         "APP_EVT",
+        prefer_callback=True,
     )
 
 

@@ -7,6 +7,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 scripts=(
   "applocation/NeuroLink/scripts/build_neurolink.sh"
+  "applocation/NeuroLink/scripts/build_neurolink_demo.sh"
   "applocation/NeuroLink/scripts/check_neurolink_linux_c_style.sh"
   "applocation/NeuroLink/scripts/clean_zone_identifier.sh"
   "applocation/NeuroLink/scripts/format_neurolink_c_style.sh"

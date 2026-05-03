@@ -17,6 +17,7 @@
  */
 struct neuro_unit_request_fields {
 	char resource[64];
+	char args_json[256];
 	uint32_t ttl_ms;
 	char start_args[96];
 	char reason[64];

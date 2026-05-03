@@ -264,6 +264,7 @@ static void copy_cbor_request_fields(
 {
 	memset(dst, 0, sizeof(*dst));
 	snprintk(dst->resource, sizeof(dst->resource), "%s", src->resource);
+	snprintk(dst->args_json, sizeof(dst->args_json), "%s", src->args_json);
 	dst->ttl_ms = src->ttl_ms;
 	snprintk(dst->start_args, sizeof(dst->start_args), "%s",
 		src->start_args);
@@ -342,6 +343,18 @@ static int cbor_request_to_internal_json(const char *route,
 		ret = snprintk(json + used, json_len - (size_t)used,
 			",\"callback_enabled\":%s",
 			fields.callback_enabled ? "true" : "false");
+		if (ret < 0 || ret >= (int)(json_len - (size_t)used)) {
+			neuro_unit_diag_protocol_failure(route, "json_bridge",
+				metadata->request_id, -ENAMETOOLONG,
+				payload_len);
+			return -ENAMETOOLONG;
+		}
+		used += ret;
+	}
+
+	if (fields.args_json[0] != '\0') {
+		ret = snprintk(json + used, json_len - (size_t)used,
+			",\"args\":%s", fields.args_json);
 		if (ret < 0 || ret >= (int)(json_len - (size_t)used)) {
 			neuro_unit_diag_protocol_failure(route, "json_bridge",
 				metadata->request_id, -ENAMETOOLONG,

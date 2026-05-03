@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.1.10-demo-catalog-v1",
+  "release_series": "1.1.10",
+  "status": "closed",
+  "entries": [
+    {
+      "app_id": "neuro_demo_i2c",
+      "category": "hardware",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_i2c.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_i2c",
+      "commands": ["capability", "scan", "ap3216c_read"],
+      "events": ["scan_result", "ap3216c_sample", "callback"],
+      "required_capabilities": ["i2c"],
+      "manifest_capabilities": ["sensor"],
+      "hardware_required": false,
+      "status": "implemented_local"
+    },
+    {
+      "app_id": "neuro_demo_spi",
+      "category": "hardware",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_spi.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_spi",
+      "commands": ["capability", "probe", "transfer"],
+      "events": ["spi_probe", "callback"],
+      "required_capabilities": ["spi"],
+      "manifest_capabilities": ["sensor", "actuator"],
+      "hardware_required": false,
+      "status": "implemented_local"
+    },
+    {
+      "app_id": "neuro_demo_gpio",
+      "category": "hardware",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_gpio.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_gpio",
+      "commands": ["capability", "read", "write", "toggle"],
+      "events": ["gpio_state", "callback"],
+      "required_capabilities": ["gpio"],
+      "manifest_capabilities": ["actuator", "ui"],
+      "hardware_required": false,
+      "status": "implemented_local"
+    },
+    {
+      "app_id": "neuro_demo_uart",
+      "category": "hardware",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_uart.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_uart",
+      "commands": ["capability", "probe", "echo", "loopback"],
+      "events": ["uart_probe"],
+      "required_capabilities": ["uart"],
+      "manifest_capabilities": ["sensor"],
+      "hardware_required": false,
+      "status": "implemented_local"
+    },
+    {
+      "app_id": "neuro_demo_adc_pwm",
+      "category": "hardware",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_adc_pwm.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_adc_pwm",
+      "commands": ["capability", "adc_read", "pwm_set"],
+      "events": ["adc_sample", "callback"],
+      "required_capabilities": ["adc", "pwm"],
+      "manifest_capabilities": ["sensor", "actuator"],
+      "hardware_required": false,
+      "status": "implemented_local"
+    },
+    {
+      "app_id": "neuro_demo_net_event",
+      "category": "network",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_net_event.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_net_event",
+      "commands": ["capability", "publish", "selftest"],
+      "events": ["demo_event"],
+      "required_capabilities": ["event_bridge"],
+      "manifest_capabilities": ["network"],
+      "hardware_required": false,
+      "status": "implemented_local"
+    },
+    {
+      "app_id": "neuro_demo_net_udp",
+      "category": "network",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_net_udp.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_net_udp",
+      "commands": ["capability", "probe", "send"],
+      "events": ["udp_result"],
+      "required_capabilities": ["udp"],
+      "manifest_capabilities": ["network"],
+      "hardware_required": false,
+      "status": "deferred_next_release"
+    },
+    {
+      "app_id": "neuro_demo_integrated",
+      "category": "integrated",
+      "artifact": "build/neurolink_unit/llext/neuro_demo_integrated.llext",
+      "source_dir": "applocation/NeuroLink/subprojects/neuro_demo_integrated",
+      "commands": ["capability", "run", "selftest"],
+      "events": ["integrated_result"],
+      "required_capabilities": ["event_bridge"],
+      "manifest_capabilities": ["network", "sensor", "actuator"],
+      "hardware_required": false,
+      "status": "deferred_next_release"
+    }
+  ]
+}

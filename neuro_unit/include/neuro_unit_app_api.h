@@ -56,12 +56,47 @@ struct neuro_unit_app_command_reply {
 	const char *echo;
 };
 
+/**
+ * Capability discovery reply DTO for cross-board LLEXT demos.
+ *
+ * String pointers are borrowed for the duration of the helper call. The writer
+ * copies them into caller-owned JSON output storage and returns a negative
+ * errno when the contract is invalid or the output buffer is too small.
+ */
+typedef struct neuro_unit_app_capability_report {
+	const char *capability;
+	bool available;
+	const char *interface_name;
+	const char *detail;
+} neuro_unit_app_capability_report_t;
+
+/**
+ * Unsupported-result DTO for demos that gracefully degrade on boards that lack
+ * a requested interface or runtime capability.
+ *
+ * `status` is expected to be a stable machine-friendly token such as
+ * `unsupported` or `capability_missing`.
+ */
+typedef struct neuro_unit_app_unsupported_result {
+	const char *status;
+	const char *command_name;
+	const char *capability;
+	const char *detail;
+} neuro_unit_app_unsupported_result_t;
+
 /** Publish a typed callback event through the configured Unit event bridge. */
 int neuro_unit_publish_callback_event(
 	const struct neuro_unit_app_callback_event *event);
 /** Serialize an app command reply into caller-owned JSON storage. */
 int neuro_unit_write_command_reply_json(char *reply_buf, size_t reply_buf_len,
 	const struct neuro_unit_app_command_reply *reply);
+/** Serialize a demo capability report into caller-owned JSON storage. */
+int neuro_unit_write_capability_report_json(char *reply_buf,
+	size_t reply_buf_len, const neuro_unit_app_capability_report_t *report);
+/** Serialize a demo unsupported result into caller-owned JSON storage. */
+int neuro_unit_write_unsupported_result_json(char *reply_buf,
+	size_t reply_buf_len,
+	const neuro_unit_app_unsupported_result_t *result);
 /** Publish an app-owned JSON event payload. */
 int neuro_unit_publish_app_event(
 	const char *app_id, const char *event_name, const char *payload_json);

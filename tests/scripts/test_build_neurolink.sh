@@ -43,8 +43,22 @@ assert_contains "${invalid_preset_output}" "invalid preset 'invalid'"
 invalid_build_dir_output="$(run_expect_fail 2 --build-dir ../oops --no-c-style-check)"
 assert_contains "${invalid_build_dir_output}" "parent traversal is not allowed"
 
+invalid_app_output="$(run_expect_fail 2 --app '../bad' --no-c-style-check)"
+assert_contains "${invalid_app_output}" "invalid app id '../bad'"
+
+missing_app_output="$(run_expect_fail 2 --app neuro_demo_missing --no-c-style-check)"
+assert_contains "${missing_app_output}" "app source dir not found"
+
+invalid_app_source_output="$(run_expect_fail 2 --app-source-dir ../bad --no-c-style-check)"
+assert_contains "${invalid_app_source_output}" "parent traversal is not allowed"
+
 script_text="$(<"${SCRIPT}")"
 assert_contains "${script_text}" "--overlay-config <path>"
+assert_contains "${script_text}" "--strip-llext-debug"
+assert_contains "${script_text}" "--app <app-id>"
+assert_contains "${script_text}" "--app-source-dir <path>"
+assert_contains "${script_text}" "subprojects/\${UNIT_APP_ID}"
+assert_contains "${script_text}" "\${UNIT_APP_ID}.llext"
 assert_contains "${script_text}" "-DEXTRA_CONF_FILE="
 assert_contains "${script_text}" "parent traversal is not allowed"
 
@@ -55,6 +69,46 @@ candidate_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/externa
 }
 grep -q "CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y" "${candidate_overlay}"
 grep -q "CONFIG_NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER=n" "${candidate_overlay}"
+
+gpio_internal_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/gpio_internal_staging_candidate.conf"
+[[ -f "${gpio_internal_overlay}" ]] || {
+  echo "missing GPIO internal staging candidate overlay: ${gpio_internal_overlay}" >&2
+  exit 1
+}
+grep -q "CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=n" "${gpio_internal_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=28672" "${gpio_internal_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_MAX_LOADED=1" "${gpio_internal_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_MAX_RUNNING=1" "${gpio_internal_overlay}"
+grep -q "CONFIG_LLEXT_EXPORT_DEVICES=y" "${gpio_internal_overlay}"
+
+gpio_heap_trim_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/gpio_llext_heap_trim_candidate.conf"
+[[ -f "${gpio_heap_trim_overlay}" ]] || {
+  echo "missing GPIO LLEXT heap trim candidate overlay: ${gpio_heap_trim_overlay}" >&2
+  exit 1
+}
+grep -q "CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=28672" "${gpio_heap_trim_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_MAX_LOADED=1" "${gpio_heap_trim_overlay}"
+grep -q "CONFIG_LLEXT_HEAP_SIZE=32" "${gpio_heap_trim_overlay}"
+grep -q "CONFIG_LLEXT_EXPORT_DEVICES=y" "${gpio_heap_trim_overlay}"
+
+gpio_exec_guard_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/gpio_exec_guard_candidate.conf"
+[[ -f "${gpio_exec_guard_overlay}" ]] || {
+  echo "missing GPIO executable guard candidate overlay: ${gpio_exec_guard_overlay}" >&2
+  exit 1
+}
+grep -q "CONFIG_NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC=y" "${gpio_exec_guard_overlay}"
+grep -q "CONFIG_LLEXT_HEAP_SIZE=32" "${gpio_exec_guard_overlay}"
+grep -q "CONFIG_LLEXT_EXPORT_DEVICES=y" "${gpio_exec_guard_overlay}"
+
+gpio_exec_alias_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/gpio_exec_alias_candidate.conf"
+[[ -f "${gpio_exec_alias_overlay}" ]] || {
+  echo "missing GPIO executable alias candidate overlay: ${gpio_exec_alias_overlay}" >&2
+  exit 1
+}
+grep -q "CONFIG_NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC=y" "${gpio_exec_alias_overlay}"
+grep -q "CONFIG_NEUROLINK_APP_FIXUP_STAGING_TEXT_ALIAS=y" "${gpio_exec_alias_overlay}"
+grep -q "CONFIG_LLEXT_HEAP_SIZE=32" "${gpio_exec_alias_overlay}"
+grep -q "CONFIG_LLEXT_EXPORT_DEVICES=y" "${gpio_exec_alias_overlay}"
 
 dynamic_heap_overlay="${ROOT_DIR}/applocation/NeuroLink/neuro_unit/overlays/llext_dynamic_heap_candidate.conf"
 [[ -f "${dynamic_heap_overlay}" ]] || {

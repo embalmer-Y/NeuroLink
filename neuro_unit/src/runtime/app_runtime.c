@@ -401,8 +401,8 @@ static int app_runtime_read_priority(struct app_runtime_app *app)
 	int *priority_sym;
 
 	app->priority = APP_RT_DEFAULT_PRIORITY;
-	priority_sym = (int *)app_runtime_exec_addr_fixup(
-		llext_find_sym(&app->ext->exp_tab, "app_runtime_priority"));
+	priority_sym = (int *)llext_find_sym(
+		&app->ext->exp_tab, "app_runtime_priority");
 	if (priority_sym == NULL) {
 		return 0;
 	}
@@ -426,9 +426,8 @@ static int app_runtime_read_manifest(struct app_runtime_app *app)
 	app_runtime_manifest_fill_default(&app->manifest);
 	app->manifest_present = false;
 
-	manifest_sym = (const struct app_runtime_manifest *)
-		app_runtime_exec_addr_fixup(llext_find_sym(
-			&app->ext->exp_tab, "app_runtime_manifest"));
+	manifest_sym = (const struct app_runtime_manifest *)llext_find_sym(
+		&app->ext->exp_tab, "app_runtime_manifest");
 	if (manifest_sym == NULL) {
 		return 0;
 	}
@@ -635,6 +634,141 @@ static void app_runtime_cleanup_app(struct app_runtime_app *app)
 	app->elf_buf_source = APP_RUNTIME_ELF_BUFFER_MALLOC;
 }
 
+static bool app_runtime_ptr_is_inside_range(
+	const void *ptr, const void *base, size_t len)
+{
+	uintptr_t addr = (uintptr_t)ptr;
+	uintptr_t start = (uintptr_t)base;
+
+	if (ptr == NULL || base == NULL || len == 0U) {
+		return false;
+	}
+
+	return addr >= start && addr < (start + len);
+}
+
+static void app_runtime_fixup_symtable_text_alias(
+	struct llext_symtable *table, uintptr_t text_start, uintptr_t text_end)
+{
+	uintptr_t addr;
+
+	if (table == NULL || table->syms == NULL) {
+		return;
+	}
+
+	for (size_t i = 0; i < table->sym_cnt; i++) {
+		addr = (uintptr_t)table->syms[i].addr;
+		if (addr >= text_start && addr < text_end) {
+			table->syms[i].addr =
+				(const void *)APP_RT_EXEC_ADDR_FIXUP(addr);
+		}
+	}
+}
+
+static size_t app_runtime_fixup_text_literals(
+	void *text, size_t text_size, uintptr_t text_start, uintptr_t text_end)
+{
+	uint32_t *word;
+	size_t patched = 0U;
+	size_t word_count;
+	uintptr_t value;
+
+	if (text == NULL || text_size < sizeof(uint32_t)) {
+		return 0U;
+	}
+
+	word = text;
+	word_count = text_size / sizeof(uint32_t);
+	for (size_t i = 0; i < word_count; i++) {
+		value = (uintptr_t)word[i];
+		if (value >= text_start && value < text_end) {
+			word[i] = (uint32_t)APP_RT_EXEC_ADDR_FIXUP(value);
+			patched++;
+		}
+	}
+
+	return patched;
+}
+
+static int app_runtime_fixup_text_region_alias(struct app_runtime_app *app)
+{
+	void *text;
+	uintptr_t text_start;
+	uintptr_t text_end;
+	void *fixed_text;
+	bool text_reuses_staging;
+	size_t patched_literals;
+
+	if (app == NULL || app->ext == NULL) {
+		return -EINVAL;
+	}
+
+	if (!IS_ENABLED(CONFIG_NEUROLINK_APP_FIXUP_STAGING_TEXT_ALIAS)) {
+		return 0;
+	}
+
+	text = app->ext->mem[LLEXT_MEM_TEXT];
+	text_reuses_staging = app_runtime_ptr_is_inside_range(
+		text, app->elf_buf, app->elf_size);
+	if (!text_reuses_staging) {
+		return 0;
+	}
+
+	if (!app_runtime_exec_range_has_alias(
+		    text, app->ext->mem_size[LLEXT_MEM_TEXT])) {
+		LOG_ERR("app '%s' LLEXT text has no executable alias: text=%p size=%zu",
+			app->name[0] != '\0' ? app->name : "-", text,
+			app->ext->mem_size[LLEXT_MEM_TEXT]);
+		return -ENOEXEC;
+	}
+
+	text_start = (uintptr_t)text;
+	text_end = text_start + app->ext->mem_size[LLEXT_MEM_TEXT];
+	fixed_text = (void *)APP_RT_EXEC_ADDR_FIXUP(text_start);
+	patched_literals = app_runtime_fixup_text_literals(
+		text, app->ext->mem_size[LLEXT_MEM_TEXT], text_start, text_end);
+	app_runtime_fixup_symtable_text_alias(
+		&app->ext->sym_tab, text_start, text_end);
+	app_runtime_fixup_symtable_text_alias(
+		&app->ext->exp_tab, text_start, text_end);
+	app->ext->mem[LLEXT_MEM_TEXT] = fixed_text;
+
+	LOG_INF("app '%s' LLEXT text alias fixup text=%p fixed=%p size=%zu literals=%zu",
+		app->name[0] != '\0' ? app->name : "-", text, fixed_text,
+		app->ext->mem_size[LLEXT_MEM_TEXT], patched_literals);
+	return 0;
+}
+
+static int app_runtime_guard_text_region(struct app_runtime_app *app)
+{
+	void *text = NULL;
+	size_t text_size = 0U;
+	bool text_reuses_staging = false;
+
+	if (app == NULL || app->ext == NULL) {
+		return -EINVAL;
+	}
+
+	text = app->ext->mem[LLEXT_MEM_TEXT];
+	text_size = app->ext->mem_size[LLEXT_MEM_TEXT];
+	text_reuses_staging = app_runtime_ptr_is_inside_range(
+		text, app->elf_buf, app->elf_size);
+
+	LOG_INF("app '%s' LLEXT text=%p size=%zu on_heap=%d staging=%p staging_size=%zu reuses_staging=%d",
+		app->name[0] != '\0' ? app->name : "-", text, text_size,
+		app->ext->mem_on_heap[LLEXT_MEM_TEXT], app->elf_buf,
+		app->elf_size, text_reuses_staging);
+
+	if (!IS_ENABLED(CONFIG_NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC) ||
+		!text_reuses_staging) {
+		return 0;
+	}
+
+	LOG_ERR("app '%s' LLEXT text maps to ELF staging buffer; rejecting before callback execution",
+		app->name[0] != '\0' ? app->name : "-");
+	return -ENOEXEC;
+}
+
 static void app_runtime_release_app_locked(struct app_runtime_app *app)
 {
 	if (app == NULL) {
@@ -768,6 +902,25 @@ int app_runtime_load(const char *name, const char *path)
 
 	snprintk(app->name, sizeof(app->name), "%s", name);
 	snprintk(app->path, sizeof(app->path), "%s", path);
+
+	ret = app_runtime_fixup_text_region_alias(app);
+	if (ret) {
+		app_runtime_cleanup_app(app);
+		free(app);
+		k_mutex_unlock(&g_ctx.lock);
+		return app_runtime_fail(
+			"llext_text_alias", APP_RT_EX_LOAD_FAILURE, ret);
+	}
+
+	ret = app_runtime_guard_text_region(app);
+	if (ret) {
+		app_runtime_cleanup_app(app);
+		free(app);
+		k_mutex_unlock(&g_ctx.lock);
+		return app_runtime_fail(
+			"llext_text_guard", APP_RT_EX_LOAD_FAILURE, ret);
+	}
+
 	LOG_INF("%s: binding symbols name=%s", __func__, name);
 
 	ret = app_runtime_bind_symbols(app);

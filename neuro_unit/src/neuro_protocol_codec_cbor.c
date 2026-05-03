@@ -86,6 +86,176 @@ static bool cbor_decode_tstr_to_buf(
 	return true;
 }
 
+static bool json_fragment_is_safe(const struct zcbor_string *value)
+{
+	const uint8_t *ptr;
+
+	if (value == NULL || value->value == NULL || value->len == 0U) {
+		return false;
+	}
+
+	ptr = value->value;
+	for (size_t i = 0; i < value->len; i++) {
+		if (ptr[i] == '"' || ptr[i] == '\\' || ptr[i] < 0x20U) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool json_append(
+	char *buf, size_t buf_len, size_t *used, const char *fragment)
+{
+	int written;
+
+	if (buf == NULL || used == NULL || fragment == NULL ||
+		*used >= buf_len) {
+		return false;
+	}
+
+	written = snprintk(buf + *used, buf_len - *used, "%s", fragment);
+	if (written < 0 || written >= (int)(buf_len - *used)) {
+		return false;
+	}
+
+	*used += (size_t)written;
+	return true;
+}
+
+static bool json_append_tstr(char *buf, size_t buf_len, size_t *used,
+	const struct zcbor_string *value)
+{
+	int written;
+
+	if (!json_fragment_is_safe(value) || *used >= buf_len) {
+		return false;
+	}
+
+	written = snprintk(buf + *used, buf_len - *used, "\"%.*s\"",
+		(int)value->len, value->value);
+	if (written < 0 || written >= (int)(buf_len - *used)) {
+		return false;
+	}
+
+	*used += (size_t)written;
+	return true;
+}
+
+static bool json_append_u32(
+	char *buf, size_t buf_len, size_t *used, uint32_t value)
+{
+	int written;
+
+	if (buf == NULL || used == NULL || *used >= buf_len) {
+		return false;
+	}
+
+	written = snprintk(buf + *used, buf_len - *used, "%u", value);
+	if (written < 0 || written >= (int)(buf_len - *used)) {
+		return false;
+	}
+
+	*used += (size_t)written;
+	return true;
+}
+
+static bool json_append_i32(
+	char *buf, size_t buf_len, size_t *used, int32_t value)
+{
+	int written;
+
+	if (buf == NULL || used == NULL || *used >= buf_len) {
+		return false;
+	}
+
+	written = snprintk(buf + *used, buf_len - *used, "%d", value);
+	if (written < 0 || written >= (int)(buf_len - *used)) {
+		return false;
+	}
+
+	*used += (size_t)written;
+	return true;
+}
+
+static bool cbor_decode_args_json(
+	zcbor_state_t *state, char *buf, size_t buf_len)
+{
+	struct zcbor_string key;
+	struct zcbor_string text_value;
+	size_t used = 0U;
+	bool bool_value;
+	int32_t int_value;
+	uint32_t uint_value;
+	uint8_t major;
+
+	if (buf == NULL || buf_len == 0U) {
+		return false;
+	}
+
+	buf[0] = '\0';
+	if (!zcbor_map_start_decode(state) ||
+		!json_append(buf, buf_len, &used, "{")) {
+		return false;
+	}
+
+	while (state->elem_count > 0U) {
+		if (!zcbor_tstr_decode(state, &key) ||
+			!json_fragment_is_safe(&key)) {
+			return false;
+		}
+
+		if (used > 1U && !json_append(buf, buf_len, &used, ",")) {
+			return false;
+		}
+
+		if (!json_append_tstr(buf, buf_len, &used, &key) ||
+			!json_append(buf, buf_len, &used, ":")) {
+			return false;
+		}
+
+		if (state->payload >= state->payload_end) {
+			return false;
+		}
+
+		major = (uint8_t)(*state->payload >> 5);
+		if (major == 3U) {
+			if (!zcbor_tstr_decode(state, &text_value) ||
+				!json_append_tstr(
+					buf, buf_len, &used, &text_value)) {
+				return false;
+			}
+		} else if (major == 0U) {
+			if (!zcbor_uint32_decode(state, &uint_value)) {
+				return false;
+			}
+			if (!json_append_u32(buf, buf_len, &used, uint_value)) {
+				return false;
+			}
+		} else if (major == 1U) {
+			if (!zcbor_int32_decode(state, &int_value)) {
+				return false;
+			}
+			if (!json_append_i32(buf, buf_len, &used, int_value)) {
+				return false;
+			}
+		} else if (major == 7U) {
+			if (!zcbor_bool_decode(state, &bool_value)) {
+				return false;
+			}
+			if (!json_append(buf, buf_len, &used,
+				    bool_value ? "true" : "false")) {
+				return false;
+			}
+		} else {
+			return false;
+		}
+	}
+
+	return zcbor_map_end_decode(state) &&
+	       json_append(buf, buf_len, &used, "}");
+}
+
 bool neuro_protocol_cbor_message_kind_is_valid(uint32_t message_kind)
 {
 	switch (message_kind) {
@@ -1007,7 +1177,7 @@ int neuro_protocol_decode_request_fields_cbor(const uint8_t *payload,
 
 	memset(fields, 0, sizeof(*fields));
 
-	ZCBOR_STATE_D(state, 1, payload, payload_len, 1, 0);
+	ZCBOR_STATE_D(state, 2, payload, payload_len, 1, 0);
 	if (!zcbor_map_start_decode(state)) {
 		return -EBADMSG;
 	}
@@ -1035,6 +1205,12 @@ int neuro_protocol_decode_request_fields_cbor(const uint8_t *payload,
 		case NEURO_PROTOCOL_CBOR_KEY_RESOURCE:
 			if (!cbor_decode_tstr_to_buf(state, fields->resource,
 				    sizeof(fields->resource))) {
+				return -EBADMSG;
+			}
+			break;
+		case NEURO_PROTOCOL_CBOR_KEY_ARGS:
+			if (!cbor_decode_args_json(state, fields->args_json,
+				    sizeof(fields->args_json))) {
 				return -EBADMSG;
 			}
 			break;

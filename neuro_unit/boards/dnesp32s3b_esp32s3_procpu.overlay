@@ -1,8 +1,23 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
 &wifi {
 	status = "okay";
 };
 
 &pinctrl {
+	uart1_j3_default: uart1_j3_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO5>;
+			output-high;
+		};
+
+		group2 {
+			pinmux = <UART1_RX_GPIO6>;
+			bias-pull-up;
+		};
+	};
+
 	spim3_default: spim3_default {
 		group1 {
 			pinmux = <SPIM3_SCLK_GPIO7>,
@@ -14,6 +29,25 @@
 			output-low;
 		};
 	};
+
+	ledc0_neurolink_default: ledc0_neurolink_default {
+		group1 {
+			pinmux = <LEDC_CH0_GPIO4>;
+			output-enable;
+			bias-disable;
+		};
+	};
+};
+
+&{/chosen} {
+	neurolink,uart-loopback = &uart1;
+};
+
+&uart1 {
+	status = "okay";
+	pinctrl-0 = <&uart1_j3_default>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
 };
 
 &spi3 {
@@ -36,5 +70,39 @@
 			disk-name = "SD";
 			status = "okay";
 		};
+	};
+};
+
+&adc0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@7 {
+		reg = <7>;
+		zephyr,gain = "ADC_GAIN_1_4";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
+
+&ledc0 {
+	status = "okay";
+	pinctrl-0 = <&ledc0_neurolink_default>;
+	pinctrl-names = "default";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel0@0 {
+		reg = <0>;
+		timer = <0>;
+	};
+};
+
+/ {
+	zephyr,user {
+		io-channels = <&adc0 7>;
+		pwms = <&ledc0 0 PWM_HZ(1000) PWM_POLARITY_INVERTED>;
 	};
 };

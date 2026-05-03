@@ -67,6 +67,7 @@ struct neuro_protocol_update_prepare_request_cbor {
 
 struct neuro_protocol_request_fields_cbor {
 	char resource[64];
+	char args_json[256];
 	uint32_t ttl_ms;
 	char start_args[96];
 	char reason[64];

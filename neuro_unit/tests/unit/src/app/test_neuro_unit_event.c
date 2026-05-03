@@ -68,6 +68,29 @@ ZTEST(neuro_unit_event, test_publish_app_event_forwards_topic_and_payload)
 		"unexpected payload forwarded to publisher");
 }
 
+ZTEST(neuro_unit_event,
+	test_publish_app_event_forwards_json_payload_through_binary_sink)
+{
+	int ret;
+
+	ret = neuro_unit_event_configure_bytes(
+		"unit-01", mock_publish_bytes, NULL);
+	zassert_equal(ret, 0, "binary event configure should succeed");
+
+	ret = neuro_unit_publish_app_event(
+		"demo_app", "gpio_state", "{\"value\":1}");
+	zassert_equal(ret, 0, "app event publish should succeed through bytes");
+	zassert_equal(g_publish_calls, 1, "publish callback should run once");
+	zassert_true(
+		strcmp(g_last_keyexpr,
+			"neuro/unit-01/event/app/demo_app/gpio_state") == 0,
+		"unexpected app event keyexpr");
+	zassert_equal(g_last_bytes_len, strlen("{\"value\":1}"),
+		"JSON payload byte length should be preserved");
+	zassert_equal(memcmp(g_last_bytes, "{\"value\":1}", g_last_bytes_len),
+		0, "JSON payload bytes should be forwarded unchanged");
+}
+
 ZTEST(neuro_unit_event, test_publish_app_event_requires_valid_contract)
 {
 	int ret;

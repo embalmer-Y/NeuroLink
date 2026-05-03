@@ -7,12 +7,18 @@
 
 LOG_MODULE_REGISTER(neurolink_unit_main, LOG_LEVEL_INF);
 
+static size_t app_policy_limit_from_config(int limit)
+{
+	return limit == 0 ? APP_RT_POLICY_NO_LIMIT : (size_t)limit;
+}
+
 int main(void)
 {
 	int ret;
 	struct app_runtime_policy policy = {
-		.max_loaded_apps = APP_RT_POLICY_NO_LIMIT,
-		.max_running_apps = 2,
+		.max_loaded_apps = app_policy_limit_from_config(
+			CONFIG_NEUROLINK_APP_MAX_LOADED),
+		.max_running_apps = (size_t)CONFIG_NEUROLINK_APP_MAX_RUNNING,
 		.allow_preemptive_suspend = true,
 	};
 

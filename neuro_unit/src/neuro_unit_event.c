@@ -81,6 +81,40 @@ static bool reply_contract_is_valid(
 	       token_is_valid(reply->event_name) && token_is_valid(reply->echo);
 }
 
+static bool json_fragment_is_valid(const char *value)
+{
+	const unsigned char *ptr = (const unsigned char *)value;
+
+	if (value == NULL || value[0] == '\0') {
+		return false;
+	}
+
+	for (; *ptr != '\0'; ptr++) {
+		if (*ptr == '"' || *ptr == '\\' || *ptr < 0x20U) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool capability_report_is_valid(
+	const neuro_unit_app_capability_report_t *report)
+{
+	return report != NULL && token_is_valid(report->capability) &&
+	       json_fragment_is_valid(report->interface_name) &&
+	       json_fragment_is_valid(report->detail);
+}
+
+static bool unsupported_result_is_valid(
+	const neuro_unit_app_unsupported_result_t *result)
+{
+	return result != NULL && token_is_valid(result->status) &&
+	       token_is_valid(result->command_name) &&
+	       token_is_valid(result->capability) &&
+	       json_fragment_is_valid(result->detail);
+}
+
 int neuro_unit_event_configure(
 	const char *node_id, neuro_unit_event_publish_fn publish_fn, void *ctx)
 {
@@ -182,17 +216,23 @@ int neuro_unit_event_publish(const char *keyexpr, const char *payload_json)
 {
 	int ret;
 
-	if (g_event_ctx.publish_fn == NULL) {
-		neuro_unit_diag_contract_error(
-			"event.publish", "publish_fn", -ENOSYS);
-		return -ENOSYS;
-	}
-
 	if (keyexpr == NULL || keyexpr[0] == '\0' || payload_json == NULL ||
 		payload_json[0] == '\0') {
 		neuro_unit_diag_contract_error(
 			"event.publish", "keyexpr/payload_json", -EINVAL);
 		return -EINVAL;
+	}
+
+	if (g_event_ctx.publish_fn == NULL) {
+		if (g_event_ctx.publish_bytes_fn != NULL) {
+			return neuro_unit_event_publish_bytes_now(keyexpr,
+				(const uint8_t *)payload_json,
+				strlen(payload_json));
+		}
+
+		neuro_unit_diag_contract_error(
+			"event.publish", "publish_fn", -ENOSYS);
+		return -ENOSYS;
 	}
 
 	neuro_unit_diag_event_attempt(keyexpr, strlen(payload_json));
@@ -383,8 +423,68 @@ int neuro_unit_write_command_reply_json(char *reply_buf, size_t reply_buf_len,
 	return 0;
 }
 
+int neuro_unit_write_capability_report_json(char *reply_buf,
+	size_t reply_buf_len, const neuro_unit_app_capability_report_t *report)
+{
+	int written;
+
+	if (reply_buf == NULL || reply_buf_len == 0U) {
+		return 0;
+	}
+
+	if (!capability_report_is_valid(report)) {
+		neuro_unit_diag_contract_error("event.write_capability_report",
+			"report_contract", -EINVAL);
+		return -EINVAL;
+	}
+
+	written = snprintk(reply_buf, reply_buf_len,
+		"{\"status\":\"ok\",\"capability\":\"%s\","
+		"\"available\":%s,\"interface\":\"%s\",\"detail\":\"%s\"}",
+		report->capability, report->available ? "true" : "false",
+		report->interface_name, report->detail);
+	if (written < 0 || (size_t)written >= reply_buf_len) {
+		neuro_unit_diag_contract_error("event.write_capability_report",
+			"reply_buf_len", -ENOSPC);
+		return -ENOSPC;
+	}
+
+	return 0;
+}
+
+int neuro_unit_write_unsupported_result_json(char *reply_buf,
+	size_t reply_buf_len, const neuro_unit_app_unsupported_result_t *result)
+{
+	int written;
+
+	if (reply_buf == NULL || reply_buf_len == 0U) {
+		return 0;
+	}
+
+	if (!unsupported_result_is_valid(result)) {
+		neuro_unit_diag_contract_error("event.write_unsupported_result",
+			"result_contract", -EINVAL);
+		return -EINVAL;
+	}
+
+	written = snprintk(reply_buf, reply_buf_len,
+		"{\"status\":\"%s\",\"command\":\"%s\","
+		"\"capability\":\"%s\",\"detail\":\"%s\"}",
+		result->status, result->command_name, result->capability,
+		result->detail);
+	if (written < 0 || (size_t)written >= reply_buf_len) {
+		neuro_unit_diag_contract_error("event.write_unsupported_result",
+			"reply_buf_len", -ENOSPC);
+		return -ENOSPC;
+	}
+
+	return 0;
+}
+
 EXPORT_SYMBOL(neuro_unit_publish_callback_event);
 EXPORT_SYMBOL(neuro_unit_write_command_reply_json);
+EXPORT_SYMBOL(neuro_unit_write_capability_report_json);
+EXPORT_SYMBOL(neuro_unit_write_unsupported_result_json);
 EXPORT_SYMBOL(neuro_unit_publish_app_event);
 EXPORT_SYMBOL(neuro_unit_publish_app_event_bytes);
 EXPORT_SYMBOL(neuro_unit_event_configure_bytes);

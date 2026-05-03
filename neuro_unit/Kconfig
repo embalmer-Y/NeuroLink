@@ -99,4 +99,42 @@ config NEUROLINK_APP_PREFER_PSRAM_ELF_BUFFER
 	  expressed through the port memory provider contract rather than through
 	  an ESP-specific runtime policy name.
 
+config NEUROLINK_APP_MAX_LOADED
+	int "Maximum loaded LLEXT apps"
+	range 0 16
+	default 2
+	help
+	  Maximum number of apps that may be loaded at the same time. Use 0 for
+	  no explicit Unit policy limit. Low-memory boards should keep this bounded
+	  so LLEXT heap pressure fails predictably instead of growing until runtime
+	  allocation fails.
+
+config NEUROLINK_APP_MAX_RUNNING
+	int "Maximum running LLEXT apps"
+	range 1 16
+	default 2
+	help
+	  Maximum number of apps that may be running at the same time. This value
+	  must not exceed NEUROLINK_APP_MAX_LOADED when the loaded limit is nonzero.
+
+config NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC
+	bool "Reject LLEXT text mapped directly from the ELF staging buffer"
+	default n
+	help
+	  Fail app load if the loaded LLEXT text region points inside the ELF file
+	  staging buffer. This protects targets such as ESP32-S3 from entering app
+	  callbacks when writable LLEXT storage reuses a DRAM staging alias for
+	  executable text.
+
+config NEUROLINK_APP_FIXUP_STAGING_TEXT_ALIAS
+	bool "Map staged LLEXT text metadata to the executable address alias"
+	default n
+	depends on NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC
+	help
+	  After a successful LLEXT load, rewrite NeuroLink-visible extension text
+	  metadata from a writable staging-buffer data alias to the architecture's
+	  executable alias when such an alias is defined. This is an isolated
+	  candidate for ESP32-S3 style IRAM/DRAM aliases and keeps Zephyr LLEXT
+	  source unchanged.
+
 endmenu

@@ -428,7 +428,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.1.9")
+        self.assertEqual(payload["release_target"], "1.1.10")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -581,6 +581,18 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
             "llext-lifecycle",
             "callback-smoke",
             "release-closure",
+        ):
+            args = parser.parse_args(["--output", "json", "workflow", "plan", workflow])
+            self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
+            self.assertFalse(args.requires_session)
+            self.assertEqual(args.workflow, workflow)
+
+    def test_parser_accepts_release_1_1_10_demo_workflow_plans(self) -> None:
+        parser = neuro_cli.build_parser()
+
+        for workflow in (
+            "demo-build",
+            "demo-net-event-smoke",
         ):
             args = parser.parse_args(["--output", "json", "workflow", "plan", workflow])
             self.assertIs(args.handler, neuro_cli.handle_workflow_plan)
@@ -1197,6 +1209,24 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertIn("execution_policy_blocked", str(payload["failure_statuses"]))
         self.assertIn("wsl_usb_required", str(payload["failure_statuses"]))
 
+    def test_demo_build_workflow_plan_documents_catalog_backed_wrapper(self) -> None:
+        payload = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="demo-build")
+        )
+        commands = "\n".join(payload["commands"])
+
+        self.assertEqual(payload["category"], "app_development")
+        self.assertFalse(payload["requires_hardware"])
+        self.assertFalse(payload["requires_serial"])
+        self.assertFalse(payload["requires_router"])
+        self.assertFalse(payload["requires_network"])
+        self.assertFalse(payload["destructive"])
+        self.assertIn("build_neurolink_demo.sh --demo neuro_demo_net_event", commands)
+        self.assertIn("--print-artifact-path", commands)
+        self.assertIn("demo_catalog.json", "\n".join(payload["artifacts"]))
+        self.assertIn("catalog-backed wrapper exits 0", " ".join(payload["expected_success"]))
+        self.assertIn("demo_not_defined", str(payload["failure_statuses"]))
+
     def test_discovery_workflow_plans_document_json_contracts(self) -> None:
         expected = {
             "discover-host": {
@@ -1360,6 +1390,29 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertIn("--handler-python", monitor_commands)
         self.assertIn("callback_handler.py", monitor_commands)
         self.assertIn("handler audit", " ".join(monitor["expected_success"]))
+
+    def test_demo_net_event_smoke_workflow_plan_documents_first_demo_contract(self) -> None:
+        payload = neuro_cli.build_workflow_plan(
+            Namespace(output="json", workflow="demo-net-event-smoke")
+        )
+        commands = "\n".join(payload["commands"])
+
+        self.assertEqual(payload["category"], "board_operation")
+        self.assertTrue(payload["requires_hardware"])
+        self.assertTrue(payload["requires_serial"])
+        self.assertTrue(payload["requires_router"])
+        self.assertFalse(payload["requires_network"])
+        self.assertTrue(payload["destructive"])
+        self.assertIn("workflow plan demo-build", commands)
+        self.assertIn("preflight_neurolink_linux.sh", commands)
+        self.assertIn("--artifact-file build/neurolink_unit/llext/neuro_demo_net_event.llext", commands)
+        self.assertIn("update/app/neuro_demo_net_event/activate", commands)
+        self.assertIn("app/neuro_demo_net_event/control", commands)
+        self.assertIn("app invoke --app-id neuro_demo_net_event", commands)
+        self.assertIn('"action": "publish"', commands)
+        self.assertIn("monitor app-events --app-id neuro_demo_net_event", commands)
+        self.assertIn("demo_event", str(payload["json_contract"]))
+        self.assertIn("not_implemented", str(payload["failure_statuses"]))
 
     def test_memory_evidence_workflow_plan_outputs_collector_command(self) -> None:
         args = Namespace(output="json", workflow="memory-evidence")
@@ -1777,6 +1830,31 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertIn("nested `payload.status: error`", reference)
         self.assertIn("Callback handler execution", reference)
         self.assertIn("query leases", reference)
+
+    def test_demo_workflow_references_include_release_1_1_10_demo_plans(self) -> None:
+        project_root = NEURO_CLI_DIR.parent
+        canonical_workflows = (
+            NEURO_CLI_DIR / "skill" / "references" / "workflows.md"
+        ).read_text(encoding="utf-8")
+        shared_workflows = (
+            project_root
+            / ".github"
+            / "skills"
+            / "neuro-cli"
+            / "references"
+            / "workflows.md"
+        ).read_text(encoding="utf-8")
+        discovery_control = (
+            NEURO_CLI_DIR / "skill" / "references" / "discovery-and-control.md"
+        ).read_text(encoding="utf-8")
+
+        for text in (canonical_workflows, shared_workflows):
+            self.assertIn("workflow plan demo-build", text)
+            self.assertIn("workflow plan demo-net-event-smoke", text)
+
+        self.assertIn("workflow plan demo-build", discovery_control)
+        self.assertIn("workflow plan demo-net-event-smoke", discovery_control)
+        self.assertIn("neuro_demo_net_event", discovery_control)
 
     def test_project_shared_skill_mirrors_canonical_resources(self) -> None:
         project_root = NEURO_CLI_DIR.parent
@@ -2426,7 +2504,14 @@ class TestNeuroCliResultClassification(unittest.TestCase):
             code = neuro_cli.handle_app_events(session, args)
 
         self.assertEqual(code, 0)
-        declare_subscriber.assert_called_once()
+        declare_subscriber.assert_called_once_with(
+            session,
+            "neuro/unit-01/event/app/neuro_demo_app/**",
+            [],
+            args,
+            "APP_EVT",
+            prefer_callback=True,
+        )
         collect_threaded.assert_called_once_with(
             subscriber,
             [],
@@ -2926,7 +3011,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertIn("event_stream", names)
         self.assertIn("app_event_stream", names)
 
-    def test_capabilities_reports_release_1_1_9(self) -> None:
+    def test_capabilities_reports_release_1_1_10(self) -> None:
         args = Namespace(output="json")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -2934,7 +3019,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.1.9")
+        self.assertEqual(payload["release_target"], "1.1.10")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

@@ -199,6 +199,50 @@ ZTEST(neuro_unit_app_command,
 }
 
 ZTEST(neuro_unit_app_command,
+	test_registered_callback_command_cbor_reply_preserves_long_gpio_reply)
+{
+	struct neuro_unit_app_command_ops ops = g_ops;
+	struct neuro_protocol_app_command_reply expected_reply = {
+		.command_name = "write",
+		.invoke_count = 1U,
+		.callback_enabled = false,
+		.trigger_every = 0,
+		.event_name = "callback",
+		.config_changed = false,
+		.publish_ret = 0,
+		.echo = "neuro_demo_gpio",
+	};
+	char long_reply[512];
+	uint8_t expected_cbor[256];
+	size_t expected_len = 0U;
+
+	ops.query_reply_cbor = mock_query_reply_cbor;
+	register_callback_command("neuro_demo_gpio", "invoke", true, true);
+	snprintk(long_reply, sizeof(long_reply),
+		"{\"status\":\"ok\",\"padding\":\"01234567890123456789012345678901234567890123456789012345678901234567890123456789\","
+		"\"command\":\"write\",\"capability\":\"gpio\",\"interface\":\"led1\",\"value\":1,\"invoke_count\":1,"
+		"\"callback_enabled\":false,\"trigger_every\":0,\"event_name\":\"callback\",\"config_changed\":false,"
+		"\"publish_ret\":0,\"echo\":\"neuro_demo_gpio\"}");
+	test_app_runtime_dispatch_set_result(0, long_reply);
+
+	neuro_unit_handle_app_command(&g_reply_ctx, "neuro_demo_gpio", "invoke",
+		"{\"lease_id\":\"lease-1\"}", "req-app-gpio", &ops);
+
+	zassert_equal(g_reply_error_calls, 0,
+		"long GPIO callback command should not emit reply_error");
+	zassert_equal(g_query_reply_cbor_calls, 1,
+		"long GPIO callback command should emit one CBOR reply");
+	zassert_equal(
+		neuro_protocol_encode_app_command_reply_cbor(expected_cbor,
+			sizeof(expected_cbor), &expected_reply, &expected_len),
+		0, "expected GPIO CBOR reply should encode");
+	zassert_equal(g_last_reply_cbor_len, expected_len,
+		"CBOR reply length should preserve long app callback fields");
+	zassert_equal(memcmp(g_last_reply_cbor, expected_cbor, expected_len), 0,
+		"CBOR reply should preserve command=write from a long GPIO reply");
+}
+
+ZTEST(neuro_unit_app_command,
 	test_registered_callback_command_dispatch_failure_replies_500)
 {
 	register_callback_command("demo_app", "invoke", false, true);

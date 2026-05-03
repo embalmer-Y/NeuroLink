@@ -88,7 +88,7 @@ void neuro_unit_handle_app_command(
 	char start_args[96] = "";
 	char resource[64];
 	char json[NEURO_UNIT_APP_COMMAND_JSON_LEN];
-	char callback_reply[160];
+	char callback_reply[NEURO_UNIT_APP_COMMAND_JSON_LEN];
 	int ret;
 
 	if (reply_ctx == NULL || app_id == NULL || action == NULL ||

@@ -1,3 +1,442 @@
+2026-05-03: Closed release-1.1.10 at the requested cutoff after the long demo-platform development cycle. The included scope is the completed and locally/hardware-proven demo family: `neuro_demo_net_event`, `neuro_demo_gpio`, `neuro_demo_uart`, `neuro_demo_spi`, `neuro_demo_adc_pwm`, and `neuro_demo_i2c` with AP3216C scan/sample proof. The remaining `neuro_demo_net_udp` and `neuro_demo_integrated` work is explicitly deferred to the next release in the demo catalog instead of continuing to extend this release. Promoted the canonical CLI marker to `RELEASE_TARGET = "1.1.10"`, promoted `neuro_unit_app` to `neuro_unit_app-1.1.10-cbor-v2`, promoted demo app identities from `1.1.10-dev` to `1.1.10`, marked the 1.1.10 catalog as closed, and updated the README/release plan/tests to match the cutoff. The live board state before cutoff had `neuro_demo_i2c` `RUNNING` / `ACTIVE` and `leases=[]`; final validation for the metadata cutoff is recorded with the release commit. - Copilot
+
+2026-05-03: Closed the requested `EXEC-202` DNESP32S3B IO8 ADC voltage-reading proof for `neuro_demo_adc_pwm`. Confirmed ESP32-S3 GPIO8 maps to ADC1 channel 7 and is not used by the current NeuroLink board overlay for UART1 J3 loopback, SPI3 SD, I2C0, LCD, LEDs, or buttons. Enabled Zephyr ADC support in the Unit build and added the board overlay binding for `adc0` channel 7 plus `zephyr,user` `io-channels = <&adc0 7>`, using `ADC_GAIN_1_4`, `ADC_REF_INTERNAL`, and 12-bit resolution. Added `subprojects/neuro_demo_adc_pwm` with `action=capability`, `action=adc_read`, and graceful unsupported `action=pwm_set`; `adc_read` accepts bounded `samples`, publishes compact `adc_sample` JSON events with raw/mV evidence for GPIO8/channel 7, and supports callback events through the stable public app callback API. The first hardware activate failed after prepare/verify with `runtime/llext_load LOAD_FAILURE cause=-2 ret=-20490`; symbol inspection showed non-exported helper references from `adc_raw_to_millivolts_dt`, `adc_is_ready_dt`, and `k_busy_wait`, so the app was narrowed to the exported ADC read path and an app-local 12-bit/1100 mV/`ADC_GAIN_1_4` millivolt conversion. Rebuilt artifact size dropped from 26392 to 23672 bytes, and undefined symbols now only include the ADC0 device, NeuroLink public API, and libc symbols. Hardware redeploy through `smoke_neurolink_linux.sh --app-id neuro_demo_adc_pwm` passed preflight, prepare, verify, activate, and monitor; `query apps` reports `neuro_demo_adc_pwm` `RUNNING` / `ACTIVE`. With IO8 connected to GND, protected `app invoke --args-json '{"action":"adc_read","samples":4}'` returned `command=adc_read`, `echo=io8_adc1_ch7`, and `publish_ret=0`; `monitor app-events --app-id neuro_demo_adc_pwm` captured `adc_sample` JSON on `neuro/unit-01/event/app/neuro_demo_adc_pwm/adc_sample` with `gpio=8`, `channel=7`, `raw=0`, `mv=0`, `count=4`, and `invoke_count=2`. Final lease cleanup is confirmed with `query leases` returning `leases=[]`; the ADC demo remains running intentionally for additional IO8 voltage reads. - Copilot
+
+2026-05-03: Closed the first `neuro_demo_spi` DNESP32S3B hardware smoke after the WSL restart recovery. Per the project script policy, restored the environment with existing scripts only for the WSL/router/USB portion: `run_zenoh_router_wsl.sh --listen tcp/0.0.0.0:7447 --background` confirmed an existing router already owned `0.0.0.0:7447`, `preflight_neurolink_linux.sh` showed router listening but serial missing, `prepare_dnesp32s3b_wsl.sh --attach-only` reattached BUSID `7-4` as `/dev/ttyACM0`, and the full `prepare_dnesp32s3b_wsl.sh --node unit-01 --capture-duration-sec 45` restored `NETWORK_READY` with Unit IPv4 `192.168.2.67`. Rebuilt `neuro_demo_spi` and redeployed the 18708-byte artifact through `smoke_neurolink_linux.sh` with app id `neuro_demo_spi`; preflight, deploy prepare, verify, and activate all passed. Protected app-control smoke then acquired `app/neuro_demo_spi/control` with `l-spi-ctl2`; `action=capability` and `action=probe` returned `echo=neuro_demo_spi-1.1.10-dev-cbor-v1`, `probe` returned `callback_enabled=true`, `event_name=spi_cb`, and `publish_ret=0`, and `action=transfer` returned `echo=shared_sd_spi_no_loopback_target`, confirming the demo did not touch the shared SD-card SPI bus. Callback smoke passed with expected echo `neuro_demo_spi-1.1.10-dev-cbor-v1` and captured three CBOR callback events on `neuro/unit-01/event/app/neuro_demo_spi/callback` with `invoke_count=3/4/5` and `start_count=1`. Final cleanup stopped, unloaded, and deleted `/SD:/apps/neuro_demo_spi.llext`; note that artifact delete requires lease resource `update/app/neuro_demo_spi/delete`, not the activate or control resources. Final hardware state is clean: `query apps` reports `app_count=0`, and `query leases` reports `leases=[]`. - Copilot
+
+2026-05-03: Continued release-1.1.10 `EXEC-202` after the successful J3 UART physical loopback proof by starting the next planned hardware demo, `neuro_demo_spi`. Current plan assessment: `EXEC-198`, `EXEC-199`, `EXEC-200`, `EXEC-204`, and `EXEC-201` are complete; `EXEC-202` has UART complete locally and on DNESP32S3B hardware, while SPI and ADC/PWM remained planned. The DNESP32S3B overlay already enables `spi3` for the SD card path (`SPIM3_SCLK_GPIO7`, `SPIM3_MISO_GPIO15`, `SPIM3_MOSI_GPIO16`, CS GPIO17), so the first SPI slice is intentionally safe and probe-only: it checks the `spi3` device readiness from inside the LLEXT app and does not attempt `spi_transceive()` on the shared SD bus without a dedicated loopback device/chip-select contract. Added `subprojects/neuro_demo_spi` with `capability`, `probe`, and graceful unsupported `transfer` actions; `probe` publishes `spi_probe` app events and callback events are wired for successful capability/probe actions through the existing public callback API. Updated the demo catalog so `neuro_demo_spi` is `implemented_local` with `spi_probe` and `callback` events. - Copilot
+
+2026-05-02: Extended release-1.1.10 `EXEC-202` UART proof from read-only readiness into the requested J3 physical loopback validation. The DNESP32S3B board overlay now declares `neurolink,uart-loopback = &uart1` with `uart1_j3_default` pinctrl using IO5 as board TX (`UART1_TX_GPIO5`) and IO6 as board RX (`UART1_RX_GPIO6`), leaving the Unit console/shell on `uart0`. `neuro_demo_uart` now prefers the `neurolink,uart-loopback` chosen UART when present, reports interface `j3_uart1_gpio5_tx_gpio6_rx`, and adds an `action=loopback` command that drains RX, sends bytes with `uart_poll_out()`, reads them back with `uart_poll_in()`, and publishes compact `uart_probe` JSON evidence. Local rebuild passed for the alias-candidate Unit firmware and rebuilt UART LLEXT; generated devicetree resolved `DT_CHOSEN_neurolink_uart_loopback` to `/soc/uart@60010000` (`uart1`), and the staged artifact preserved `neuro_demo_uart-1.1.10-dev-cbor-v1` plus `J3-UART-LOOPBACK`. Hardware validation flashed the updated candidate, prepared Unit back to `NETWORK_READY`, deployed the rebuilt 25408-byte UART artifact, and activated it successfully. With the user shorting J3 TX/RX, protected `app invoke --args-json '{"action":"loopback","message":"J3"}'` returned `command=loopback` and `publish_ret=0`; `monitor app-events --app-id neuro_demo_uart` captured `neuro/unit-01/event/app/neuro_demo_uart/uart_probe` with payload `interface=j3_uart1_gpio5_tx_gpio6_rx`, `ok=true`, `tx=2`, `rx=2`, `mm=-1`, `message=J3`, and `received=J3`, proving the physical TX/RX loopback path is correct. The first longer loopback attempt exposed a 256-byte app-event payload limit (`publish_ret=-12`), so the event schema was compacted before the passing proof. Final cleanup stopped, unloaded, deleted `/SD:/apps/neuro_demo_uart.llext`, released all leases, and final queries show Unit `NETWORK_READY`, `app_count=0`, and `leases=[]`. - Copilot
+
+2026-05-02: Advanced release-1.1.10 `EXEC-202` with DNESP32S3B hardware proof for the first UART demo slice. Started from a clean GPIO handoff: `query device` was ready at `192.168.2.67`, `neuro_demo_gpio` was still `RUNNING` / `ACTIVE`, and leases were empty; stopped/unloaded/deleted GPIO through protected leases so the one loaded/running app policy would not block UART. Initial serial-required preflight for `neuro_demo_uart` found the artifact but failed with `serial_device_missing`; restored WSL USB pass-through using `prepare_dnesp32s3b_wsl.sh --attach-only`, which reattached `/dev/ttyACM0`, then preflight returned `status=ready`. Protected UART deploy used `l-uart-dep`, transferred the 18364-byte artifact to `/SD:/apps/neuro_demo_uart.llext`, and `deploy prepare`, `verify`, and `activate` all returned `status: ok`; `query apps` reported `neuro_demo_uart` `RUNNING` / `ACTIVE`, and leases were empty after releasing the deploy lease. App-control smoke ran `capability`, `probe`, and `echo`; replies were ok, `probe` returned `publish_ret=0` with echo `neuro_demo_uart-1.1.10-dev-cbor-v1`, and `echo` returned `publish_ret=0` without writing to the physical UART. Callback smoke with `l-uart-cb`, `trigger_every=1`, and expected echo `neuro_demo_uart` passed and captured three CBOR callback events on `neuro/unit-01/event/app/neuro_demo_uart/callback` with `invoke_count=4/5/6` and `start_count=1`. A separate-process `monitor app-events --app-id neuro_demo_uart` remained empty even after changing app-scoped monitor collection to prefer callback subscribers, matching the known listener/session split seen in older callback work; a same-session app-event probe using the Neuro CLI event subscriber and invoke path captured both callback events and two JSON `uart_probe` events for `probe` and `echo` on `neuro/unit-01/event/app/neuro_demo_uart/uart_probe`, with `interface=zephyr_shell_uart`, `ready=true`, and `payload_encoding=json-v2`. Added focused CLI coverage that app-scoped event monitoring now asks for callback-preferred subscription, and the focused pytest subset passed (`10 passed`). Final UART cleanup stopped, unloaded, deleted `/SD:/apps/neuro_demo_uart.llext`, released all leases, and final queries show Unit `NETWORK_READY`, `app_count=0`, and `leases=[]`. - Copilot
+
+2026-05-02: Started release-1.1.10 `EXEC-202` after closing the GPIO `EXEC-201` hardware/event path. Current project status: `EXEC-198` through `EXEC-200` are locally complete, `EXEC-204` has demo build/workflow/reference support, and `EXEC-201` now has DNESP32S3B proof for GPIO activation, red LED control, callback events, and JSON `gpio_state` events. The next slice is the SPI/UART/ADC/PWM family. Chose `neuro_demo_uart` as the first low-risk `EXEC-202` implementation because DNESP32S3B declares `zephyr,shell-uart = &uart0`; the first version is intentionally read-only so it does not write to or reconfigure the Unit console. Added the `neuro_demo_uart` subproject with `capability`, `probe`, and `echo` actions, `uart_probe` app events, nested `args` support, and callback event publishing through the stable public app callback API. `echo` returns/publishes a message but does not transmit bytes on the physical UART. Updated the demo catalog status for `neuro_demo_uart` to `implemented_local`. Local validation passed for the catalog-backed alias-candidate build, `test_demo_catalog.sh`, `test_build_neurolink_demo.sh`, artifact build-id inspection for `neuro_demo_uart-1.1.10-dev-cbor-v1`, VS Code diagnostics on the new UART source/catalog files, Unit native_sim (`PROJECT EXECUTION SUCCESSFUL`), and `git diff --check`; hardware proof remains a separate non-invasive readiness/event smoke decision. - Copilot
+
+2026-05-02: Closed the `neuro_demo_gpio` JSON app-event transport follow-up for `EXEC-201`. Root cause was that the Unit runtime configures only the binary event sink through `neuro_unit_event_configure_bytes()`, while the public app helper `neuro_unit_publish_app_event()` used the JSON sink path and returned `-ENOSYS` (`publish_ret=-88`) when no JSON publisher was configured. Updated `neuro_unit_event_publish()` so JSON app events first keep the existing JSON publisher behavior, then fall back to publishing the UTF-8 JSON payload through the configured bytes sink when only binary event transport is active. Added native_sim coverage `test_publish_app_event_forwards_json_payload_through_binary_sink`, and Unit native_sim passed with `PROJECT EXECUTION SUCCESSFUL`; `git diff --check` passed before hardware rebuild. Rebuilt/flashed the GPIO executable-alias candidate (`FLASH=809636 B`) and restored DNESP32S3B `NETWORK_READY` at `192.168.2.67`. Redeployed the 27944-byte `neuro_demo_gpio` artifact, activated it successfully, then ran monitor plus red-LED actions. `write true`, `write false`, and `toggle` replies now report `publish_ret=0`, and `monitor app-events --app-id neuro_demo_gpio` captured three `gpio_state` events on `neuro/unit-01/event/app/neuro_demo_gpio/gpio_state` with `payload_encoding=json-v2`, `interface=led1`, values `1/0/1`, and `invoke_count=1/2/3`. Final control lease cleanup succeeded and `query leases` reports `leases=[]`. This closes red LED control, callback event proof, and JSON `gpio_state` event observation for the GPIO demo on DNESP32S3B. - Copilot
+
+2026-05-02: Closed the DNESP32S3B red-LED control proof for `neuro_demo_gpio`. The board DTS maps `led0` to `ledb` (blue LED) and `led1` to `ledr` (red LED through the PCA9555 IO expander), so the demo output alias was switched from `DT_ALIAS(led0)` to `DT_ALIAS(led1)` and its reported interface strings now use `led1`. Also taught the demo to read CLI `app invoke --args-json` fields from the nested `"args": {...}` object that the Unit CBOR bridge supplies, while keeping top-level compatibility for older payloads; the small parser avoids libc string dependencies so the LLEXT artifact loads cleanly. A first nested-args build exposed an unresolved-symbol `llext_load LOAD_FAILURE`, fixed by removing `strstr` / `strlen` / `memcpy` use inside the app. A second issue was that Unit-side app command reply storage was only 160 bytes, truncating GPIO action replies and collapsing CLI output back to generic `command=invoke`; expanded that storage to the command JSON limit and added native_sim coverage `test_registered_callback_command_cbor_reply_preserves_long_gpio_reply`. Native_sim passed with `PROJECT EXECUTION SUCCESSFUL`, and `git diff --check` passed. Rebuilt/flashed the Unit candidate (`FLASH=809636 B`, `dram0_0_seg=351320 / 399108`) and restored DNESP32S3B `NETWORK_READY` at `192.168.2.67`. Redeployed the 27944-byte GPIO artifact and activated it successfully. Hardware invoke proof then acquired `l-red-ctl`, ran `write true`, `write false`, and `toggle`, and the CLI replies now report `command=write`, `command=write`, and `command=toggle` with `invoke_count=1/2/3`; the user also observed the board red LED physically light when the app control command ran, confirming the GPIO output path is real. Final `query leases` reports `leases=[]`. Remaining note: these GPIO action replies carry `publish_ret=-88`, so JSON `gpio_state` app events are not currently observable through `monitor app-events`; callback CBOR events remain the verified event path, and red LED control itself is confirmed. - Copilot
+
+2026-05-02: Completed the next `EXEC-201` GPIO callback hardware closure step after the successful LLEXT activation fix exposed that app invoke `--args-json` was not preserved through the Unit CBOR-to-internal-JSON bridge. Added decoded `args_json` storage to the Unit request-field DTOs, taught `neuro_protocol_decode_request_fields_cbor()` to preserve simple app args maps as JSON, and included `"args":...` in the internal request JSON so LLEXT demo apps can read CLI-provided fields such as `action`, `value`, and future demo-specific options. Added native_sim coverage in `test_decode_request_fields_cbor_contract` for `args={"action":"read","value":true}`; Unit native_sim passed with `PROJECT EXECUTION SUCCESSFUL` and `git diff --check` passed. Updated `neuro_demo_gpio` so callback-enabled `capability` invokes also publish callback events, giving boards without safe `sw0` / `led0` wiring a real cross-board callback proof path instead of depending on a successful GPIO read/toggle. Rebuilt the GPIO artifact at 25536 bytes, redeployed and reactivated it successfully on DNESP32S3B, then `app-callback-smoke --app-id neuro_demo_gpio --lease-id l-gpio-cb --trigger-every 1 --invoke-count 2 --expected-app-echo neuro_demo_gpio` passed with three CBOR callback events on `neuro/unit-01/event/app/neuro_demo_gpio/callback` carrying `invoke_count` 1, 2, and 3 and `start_count=1`. Final hardware state is healthy: `query apps` reports `neuro_demo_gpio` `RUNNING` / `ACTIVE`, `app_count=1`, and `query leases` reports `leases=[]`. - Copilot
+
+2026-05-02: Advanced release-1.1.10 `EXEC-201` from diagnostic guard to a working ESP32-S3 executable-alias candidate for `neuro_demo_gpio` without modifying Zephyr LLEXT source. Added `CONFIG_NEUROLINK_APP_FIXUP_STAGING_TEXT_ALIAS` and `gpio_exec_alias_candidate.conf`, kept the staging-text guard enabled as a safety net, constrained the alias window to `0x3FC88000..0x3FCF0000`, and fixed only executable text/function addresses while leaving data/rodata symbols such as `app_runtime_manifest` and `app_runtime_priority` on their raw data aliases. The first metadata-only alias attempt proved symbol fixup but still crashed or mis-bound app data; the final candidate also scans 32-bit words inside the staged text region and patches text-local address literals to the executable alias before rewriting `ext->mem[LLEXT_MEM_TEXT]`. Local validation passed for `test_build_neurolink.sh`, catalog-backed `neuro_demo_gpio` build with `--strip-llext-debug`, and `git diff --check`; the final candidate firmware flashed successfully at 809612 bytes with `dram0_0_seg=351320 / 399108`, then board prepare restored `NETWORK_READY` at `192.168.2.67`. Protected deploy prepare/verify succeeded for the 25468-byte GPIO artifact, activation with lease `l-gpio-alias` returned `status: ok`, UART evidence `smoke-evidence/serial-diag/exec-201-gpio-exec-alias-literal-fix-activate-20260502T090008Z.log` shows `app_runtime_start: invoking app_start`, `start:post_app_start`, `app_runtime_start: app running`, and no fatal exception, and final `query apps` reports `neuro_demo_gpio` `RUNNING` / `ACTIVE` with `app_count=1`. App control lease smoke passed for `app/neuro_demo_gpio/control`: `app invoke` capability/read requests returned `status: ok`, and both control and activation leases were released, leaving `query leases` as `[]`. A same-session `app-callback-smoke` then acquired/released `l-gpio-cb` cleanly and all control replies were `status: ok`, but it captured no events because the current smoke helper invokes with empty args while the GPIO demo only publishes callback events on successful `read`, `write`, or `toggle` actions; treat callback event observation as the next `EXEC-201` subtask, not as an activation blocker. - Copilot
+
+2026-05-02: Re-centered `EXEC-201` on memory analysis after the user clarified that Zephyr LLEXT source must not be modified and that only migratable/dynamic memory should move toward PSRAM. Reverted the temporary loader and upstream LLEXT relocation experiments; `zephyr/subsys/llext/llext_link.c` has no remaining diff. Used the existing memory evidence tooling to compare default, external-staging, internal-staging, dynamic-heap, and heap-trim candidates. Baseline `build/neurolink_unit` reports `dram0=377188`, `ext_ram=2847776`, `CONFIG_LLEXT_HEAP_SIZE=64`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`, `CONFIG_HEAP_MEM_POOL_SIZE=53248`, `CONFIG_MAIN_STACK_SIZE=18432`, and `CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=5120`. Symbol analysis shows the largest internal RAM reservations are `thread_stack_area=73728`, `kheap_llext_heap=65536`, `_system_heap=53340`, `g_static_elf_buf=24576` or `28672` in the GPIO internal candidate, and `z_main_stack=18432`. The 64 KiB LLEXT heap is a total LLEXT extension-region pool, not a per-app allocation. Existing Unit runtime policy allowed unlimited loaded apps with only `max_running_apps=2`; added Kconfig policy knobs `CONFIG_NEUROLINK_APP_MAX_LOADED` and `CONFIG_NEUROLINK_APP_MAX_RUNNING`, set default Unit policy to `2/2`, and set the GPIO low-memory candidate to `1/1`. Added `gpio_llext_heap_trim_candidate.conf` with internal staging at 28672 bytes, device exports, `1/1` app limits, and `CONFIG_LLEXT_HEAP_SIZE=32`; it built successfully with `dram0_0_seg=351320 / 399108` and memory evidence `dram0=348536`, saving roughly 32 KiB versus the 64 KiB LLEXT heap candidate while keeping LLEXT code/execution-sensitive regions internal. Hardware deploy/verify of the heap-trim GPIO artifact passed at 25468 bytes, but activation still failed with `no_reply`; UART evidence `smoke-evidence/serial-diag/exec-201-gpio-heap-trim-activate-20260502T061127Z.log` showed `app_runtime_load ok`, then `app_runtime_start: invoking app_start`, then `EXCCAUSE 2 (instr fetch error)` with PC/VADDR `0x3fcd3650`. Symbol analysis of the heap-trim Unit image places `kheap_llext_heap` at `0x3fcc61e8` size `0x8000` and `g_static_elf_buf` at `0x3fcd30a0`, so the fatal PC is inside `g_static_elf_buf`, not the LLEXT heap. The earlier `CONFIG_LLEXT_HEAP_DYNAMIC=y` candidate measured `dram0=311672`, saving roughly 64 KiB, but `memory config-plan` classified it as `runtime_heap_dynamic_unsafe` because NeuroLink has no `llext_heap_init()` wiring or runtime evidence; additionally, placing the single LLEXT heap in external PSRAM would be unsafe on the observed Xtensa path because executable app text must not be fetched from non-executable PSRAM. Current evidence points at Xtensa writable LLEXT storage and app-internal relocations executing from the DRAM alias of the writable staging buffer; the existing exported app callback pointer fixup is insufficient because app-internal `call8` relocations still target DRAM. The board was recovered by reflashing default Unit firmware, prepare restored `NETWORK_READY` at `192.168.2.67`, and final `query apps` / `query leases` returned no apps and no leases. - Copilot
+
+2026-05-02: Added a NeuroLink-owned executable staging guard for `EXEC-201` without modifying Zephyr LLEXT source. New Kconfig `CONFIG_NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC` makes `app_runtime_load()` inspect `ext->mem[LLEXT_MEM_TEXT]` after `llext_load()` and reject the app before symbol binding/callback execution when text points inside the current ELF staging buffer. Added isolated overlay `neuro_unit/overlays/gpio_exec_guard_candidate.conf`, combining 28672-byte internal staging, one loaded/running app, 32 KiB LLEXT heap, generic device exports, and the text guard. Local build passed for `build/neurolink_unit_gpio_exec_guard_candidate`; firmware memory stayed at `dram0_0_seg=351320 / 399108`, config contains `CONFIG_NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC=y`, and the staged stripped GPIO artifact is 25468 bytes. Hardware validation flashed the candidate successfully, restored `NETWORK_READY` at `192.168.2.67`, preflight passed, deploy prepare embedded Unit reply was `status: ok` despite the known provider stdout `invalid_json_stdout` wrapper issue, deploy verify passed at size 25468, and activation now fails cleanly with `activate load failed: runtime/llext_text_guard LOAD_FAILURE cause=-8 ret=-20490` instead of crashing at `app_start`. Post-validation `query device` remained ready, `query apps` returned `app_count=0`, and `query leases` returned `leases=[]`; release of `l-gpio-deploy` returned `lease not found` because the failed activation had already cleared it. This guard is not the final GPIO execution fix, but it converts the ESP32-S3 staging-alias crash into a deterministic diagnostic gate and confirms the next real fix must make app text/internal calls execute from a safe alias rather than from `g_static_elf_buf`. - Copilot
+
+#### EXEC-201 Release-1.1.10 LLEXT Memory Analysis
+
+- Status: memory layout characterized; low-memory policy knobs and 32 KiB heap candidate added; hardware activation still blocked by Xtensa executable address placement
+- Result:
+  - confirmed current LLEXT heap reserve is 64 KiB total, not per app
+  - confirmed loaded-app policy was unbounded and made it configurable
+  - default Unit app policy is now `CONFIG_NEUROLINK_APP_MAX_LOADED=2` and `CONFIG_NEUROLINK_APP_MAX_RUNNING=2`
+  - GPIO candidate policy is now one loaded/running app for low-memory hardware debug
+  - 32 KiB LLEXT heap candidate reduces DNESP32S3B internal DRAM usage from about 96.24% to 88.03%
+  - dynamic LLEXT heap remains a measured but unsafe candidate until NeuroLink owns explicit heap initialization and executable-region placement evidence
+  - 32 KiB heap trim is useful RAM relief but is not sufficient for GPIO activation on ESP32-S3
+- Evidence:
+  - `memory-evidence/exec-201-memory-default.summary.txt` => `dram0=377188`, static ELF staging 24576, LLEXT heap 64 KiB
+  - `memory-evidence/exec-201-memory-gpio-internal-staging-limited.summary.txt` => `dram0=381304`, static ELF staging 28672, app limits `1/1`
+  - `memory-evidence/exec-201-memory-gpio-llext-heap-trim.summary.txt` => `dram0=348536`, LLEXT heap 32 KiB
+  - `memory config-plan` for dynamic heap => `runtime_heap_dynamic_unsafe`, next action `add explicit llext_heap_init wiring before hardware promotion`
+  - largest internal RAM symbols in the GPIO internal candidate: `thread_stack_area=73728`, `kheap_llext_heap=65536`, `_system_heap=53340`, `g_static_elf_buf=28672`, `z_main_stack=18432`
+  - `exec-201-gpio-internal-staging-activate-20260502T060238Z.log` => `app_runtime_load ok`, then `EXCCAUSE 2 (instr fetch error)` during `app_start`
+  - `exec-201-gpio-heap-trim-activate-20260502T061127Z.log` => `app_runtime_load ok`, then `EXCCAUSE 2` at PC/VADDR `0x3fcd3650`
+  - heap-trim symbols => `kheap_llext_heap=0x3fcc61e8+0x8000`, `g_static_elf_buf=0x3fcd30a0`; fatal PC is inside the staging buffer
+- Next action:
+  - keep Zephyr LLEXT source untouched; design a NeuroLink-owned candidate that prevents LLEXT text/app-internal calls from executing through the DRAM staging alias before any further hardware activation
+
+#### EXEC-201 Release-1.1.10 GPIO Executable Staging Guard
+
+- Status: diagnostic guard implemented and hardware-proven; functional GPIO activation still blocked
+- Result:
+  - added `CONFIG_NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC`
+  - added `gpio_exec_guard_candidate.conf` with 32 KiB LLEXT heap, 28672-byte staging, device exports, `1/1` app limits, and staging-text rejection
+  - `app_runtime_load()` now logs LLEXT text address/size/source and rejects text that aliases the current ELF staging buffer when the guard is enabled
+  - hardware activation no longer reaches `app_start` or crashes the board under the guarded candidate
+- Evidence:
+  - `build/neurolink_unit_gpio_exec_guard_candidate` => `dram0_0_seg=351320 / 399108`
+  - candidate `.config` => `CONFIG_NEUROLINK_APP_REJECT_STAGING_TEXT_EXEC=y`, `CONFIG_LLEXT_HEAP_SIZE=32`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=28672`
+  - candidate GPIO artifact => 25468 bytes
+  - flash wrote 809464 bytes and hash verified
+  - preflight ready on `/dev/ttyACM0`, `NETWORK_READY`, IPv4 `192.168.2.67`
+  - deploy prepare embedded Unit reply => `status: ok`, path `/SD:/apps/neuro_demo_gpio.llext`, size 25468
+  - deploy verify => `status: ok`, size 25468
+  - deploy activate => `runtime/llext_text_guard LOAD_FAILURE cause=-8 ret=-20490`
+  - final `query device` => `NETWORK_READY`; final `query apps` => `app_count=0`; final `query leases` => `leases=[]`
+- Next action:
+  - use the guard as a safety gate while investigating a true execution fix: app text/internal relocations must resolve to an instruction-fetchable IRAM alias or another proven executable region without modifying Zephyr source
+
+2026-05-02: Resumed `EXEC-201` hardware validation after the user reattached the DNESP32S3B and restored WSL USB pass-through with `prepare_dnesp32s3b_wsl.sh --attach-only`, exposing `/dev/ttyACM0`. Board prepare restored `NETWORK_READY` at `192.168.2.67`; serial-required preflight for `build/neurolink_unit_external_staging_candidate/llext/neuro_demo_gpio.llext` passed. Flashed the PSRAM/external staging candidate successfully and prepared it to `NETWORK_READY`. Protected deploy prepare and verify of `neuro_demo_gpio` passed for the 54692-byte artifact; wrapper still reported known `invalid_json_stdout` during prepare because provider logs share stdout, but embedded Unit reply was `status: ok`. First activate moved past the previous `runtime/load_file RESOURCE_LIMIT` blocker and failed later at `runtime/llext_load LOAD_FAILURE cause=-2 ret=-20490`. UART evidence `smoke-evidence/serial-diag/exec-201-psram-llext-load-failure-20260502T050314Z.log` showed Zephyr LLEXT relocation/link failure, and symbol inspection showed the app needed `__device_dts_ord_8` while candidate config had `CONFIG_LLEXT_EXPORT_DEVICES` and `CONFIG_LLEXT_EXPORT_SYMBOL_GROUP_DEVICE` disabled. Updated the isolated `neuro_unit/overlays/external_staging_candidate.conf` to enable generic LLEXT device exports, rebuilt the candidate, verified `__llext_sym___device_dts_ord_8` was exported, and confirmed internal DRAM changed only from 379976 to 379992 bytes. Reflashed the rebuilt candidate and prepared it successfully; the next activate no longer returned `llext_load` error but resulted in `no_reply`, with serial still enumerated and post-failure UART capture empty, so the remaining blocker is post-load/app-init runtime stability under app-owned GPIO rather than staging capacity or missing device symbol export. Restored default Unit firmware, prepared the board back to `NETWORK_READY`, deleted the stale SD artifact `/SD:/apps/neuro_demo_gpio.llext` through protected `app delete` with lease `l-gpio-del`, released the lease, and confirmed final leases empty. New hardware-debug rule: before every app hardware debug/deploy attempt, delete the old app artifact from SD with the protected delete path before `deploy prepare`, then confirm empty leases so the loaded app is known fresh. - Copilot
+
+#### EXEC-201 Release-1.1.10 GPIO PSRAM Hardware Validation
+
+- Status: PSRAM and device-export blockers advanced; remaining blocker is post-load runtime no-reply
+- Mainline alignment:
+  - keeps GPIO ownership in `neuro_demo_gpio`
+  - uses generic Zephyr LLEXT device export, not Unit-side GPIO wrappers
+  - deletes stale SD artifacts before the next hardware debug attempt
+- Result:
+  - WSL USB attach restored `/dev/ttyACM0`
+  - PSRAM candidate flash and board prepare passed
+  - 54692-byte GPIO artifact prepare/verify passed
+  - PSRAM staging moved activation past `runtime/load_file RESOURCE_LIMIT`
+  - enabling `CONFIG_LLEXT_EXPORT_DEVICES=y` exported `__device_dts_ord_8` and moved activation past `runtime/llext_load LOAD_FAILURE cause=-2`
+  - rebuilt device-export candidate then produced board `no_reply` during/after activation; default firmware restore passed
+  - stale `/SD:/apps/neuro_demo_gpio.llext` artifact was deleted successfully after restore
+- Freshness rule:
+  - before each hardware app debug, acquire a short delete lease for `update/app/<app_id>/delete`, run `app delete`, release the lease, confirm `query leases` is empty, then rebuild and `deploy prepare` the fresh artifact
+- Evidence:
+  - `prepare_dnesp32s3b_wsl.sh --attach-only` => PASS, `/dev/ttyACM0`
+  - PSRAM candidate flash wrote 809060 bytes, hash verified
+  - device-export candidate flash wrote 809348 bytes, hash verified
+  - `exec-201-psram-llext-load-failure-20260502T050314Z.log` => `llext: Failed to link, ret -2`
+  - rebuilt candidate `.config` => `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y`, `CONFIG_LLEXT_EXPORT_DEVICES=y`, `CONFIG_LLEXT_EXPORT_SYMBOL_GROUP_DEVICE=y`
+  - symbol check => `__llext_sym___device_dts_ord_8` present after rebuild
+  - default firmware restore wrote 808996 bytes, hash verified, board `NETWORK_READY`
+  - protected `app delete --app-id neuro_demo_gpio --lease-id l-gpio-del` => PASS, path `/SD:/apps/neuro_demo_gpio.llext`
+
+2026-05-02: Continued `EXEC-201` by analyzing the GPIO activation blocker as a memory/staging issue and building a PSRAM/external staging candidate without moving hardware ownership out of the app. Confirmed the existing DNESP32S3B port memory provider exposes `esp-spiram` through `shared_multi_heap_aligned_alloc(SMH_REG_ATTR_EXTERNAL, 32, size)`, and used the existing `neuro_unit/overlays/external_staging_candidate.conf` to enable `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y` with the 24576-byte internal static ELF staging buffer retained as fallback. Built `build/neurolink_unit_external_staging_candidate` successfully; static layout stayed stable with `dram0_0_seg` at 379976 / 399108 bytes and PSRAM heap configured at 2097152 bytes. Rebuilt `neuro_demo_gpio` against the candidate EDK; artifact identity remained `neuro_demo_gpio-1.1.10-dev-cbor-v1`, size 54692 bytes. Hardware validation is currently blocked before flash because Linux does not enumerate `/dev/ttyACM*` or `/dev/ttyUSB*`, serial list is empty, and `query device` returns `no_reply`. - Copilot
+
+#### EXEC-201 Release-1.1.10 PSRAM LLEXT Staging Candidate
+
+- Status: local candidate built; hardware validation blocked by missing USB serial enumeration
+- Owner: GitHub Copilot with user direction to use PSRAM for memory pressure
+- Mainline alignment:
+  - addresses the LLEXT staging resource blocker directly through memory policy
+  - keeps hardware dependencies in the app subproject and preserves app-side Zephyr devicetree usage
+  - uses the existing Unit port memory provider contract instead of adding hardware demo helpers
+  - keeps the candidate isolated in a separate build dir until hardware smoke proves it
+- Result:
+  - confirmed DNESP32S3B external memory provider label `esp-spiram`
+  - built `build/neurolink_unit_external_staging_candidate` with external ELF staging preferred
+  - preserved internal static ELF staging as fallback at 24576 bytes
+  - rebuilt candidate GPIO LLEXT artifact at 54692 bytes with expected build id
+  - stopped before flash/deploy because host serial preflight failed
+- Verification evidence:
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit --build-dir build/neurolink_unit_external_staging_candidate --overlay-config applocation/NeuroLink/neuro_unit/overlays/external_staging_candidate.conf --pristine-always --no-c-style-check` => PASS
+  - candidate `.config` => `CONFIG_NEUROLINK_APP_PREFER_EXTERNAL_ELF_BUFFER=y`, `CONFIG_SHARED_MULTI_HEAP=y`, `CONFIG_ESP_SPIRAM_HEAP_SIZE=2097152`, `CONFIG_NEUROLINK_APP_STATIC_ELF_BUFFER_SIZE=24576`
+  - `bash applocation/NeuroLink/scripts/build_neurolink_demo.sh --demo neuro_demo_gpio --build-dir build/neurolink_unit_external_staging_candidate --overlay-config applocation/NeuroLink/neuro_unit/overlays/external_staging_candidate.conf --no-c-style-check` => PASS
+  - `strings build/neurolink_unit_external_staging_candidate/llext/neuro_demo_gpio.llext | grep neuro_demo_gpio-1.1.10-dev-cbor-v1` => PASS
+  - `bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --auto-start-router --require-serial --artifact-file build/neurolink_unit_external_staging_candidate/llext/neuro_demo_gpio.llext --output text` => BLOCKED, `serial_device_missing`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --node unit-01 --timeout 5 query device` => BLOCKED, `no_reply`
+- Next action:
+  - restore `/dev/ttyACM*` or `/dev/ttyUSB*` visibility, flash the PSRAM candidate firmware, run board prepare, then repeat protected `prepare` / `verify` / `activate` for `neuro_demo_gpio` with a short lease id
+
+2026-05-02: Calibrated the release-1.1.10 hardware-demo architecture boundary after an attempted GPIO size-reduction direction drifted toward a Unit-side GPIO helper. Removed the experimental `neuro_unit_app_gpio` source, removed the GPIO-specific public app API additions, removed the temporary static-staging overlay, and restored `neuro_demo_gpio` so it owns Zephyr devicetree/GPIO usage inside the app through `DT_ALIAS(sw0)` and `DT_ALIAS(led0)`. Updated the release plan to make the boundary explicit: `neuro_unit` remains the communication, deploy, load, lifecycle, command, event, and stable ABI framework; hardware demos own their own Zephyr driver/devicetree dependencies and must not be made portable by moving hardware wrappers into Unit. Rebuilt `neuro_demo_gpio` successfully after the correction; the artifact remains about 54.5KB, so the active blocker stays the LLEXT staging/loader/resource strategy, not app ownership of GPIO. - Copilot
+
+#### EXEC-201 Release-1.1.10 Hardware Demo Architecture Recalibration
+
+- Status: completed for plan correction and removal of Unit-side GPIO helper deviation
+- Owner: GitHub Copilot with user correction
+- Mainline alignment:
+  - restores the intended framework boundary: Unit manages apps; apps own hardware
+  - keeps GPIO portability in app-side Zephyr devicetree aliases and graceful unsupported responses
+  - avoids adding hardware-specific ABI helpers to reduce app artifact size
+  - preserves callback event behavior and the existing capability/unsupported JSON contracts
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neuro_unit/CMakeLists.txt`
+  - `applocation/NeuroLink/neuro_unit/include/neuro_unit_app_api.h`
+  - `applocation/NeuroLink/subprojects/neuro_demo_gpio/src/main.c`
+- Result:
+  - removed the experimental Unit-side GPIO source and build reference
+  - removed GPIO-specific public app API additions
+  - removed the temporary GPIO static-staging candidate overlay
+  - restored `neuro_demo_gpio` to app-owned Zephyr GPIO/devicetree usage
+  - documented that future hardware demos must not move hardware dependencies into Unit
+- Verification evidence:
+  - source search excluding build outputs for `neuro_unit_gpio_`, `neuro_unit_app_gpio`, and `gpio_static_staging` => no matches
+  - `bash applocation/NeuroLink/scripts/build_neurolink_demo.sh --demo neuro_demo_gpio --no-c-style-check` => PASS
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue the blocker investigation through app-side build structure and general LLEXT staging/loader evidence, while keeping hardware ownership in the app subprojects
+
+2026-05-01: Continued release-1.1.10 `EXEC-201` with DNESP32S3B hardware closure for `neuro_demo_gpio`. Serial-required preflight and board prepare reached `NETWORK_READY` on `/dev/ttyACM0` with IPv4 `192.168.2.67`; current Unit firmware was flashed successfully. A short deploy lease id is required because the CBOR request metadata only allows `lease_id[32]`; long lease ids failed as `CBOR request decode failed`, while `l-gpio-deploy` acquired correctly. The standard GPIO artifact prepared and verified at 54472 bytes, but activation failed before app invoke with `runtime/load_file RESOURCE_LIMIT cause=-12 ret=-20486`. Follow-up artifact-shape experiments were deliberately not kept: a debug-stripped 21852-byte artifact and compile-time `-g0` 22016-byte artifact both reached `runtime/llext_load LOAD_FAILURE cause=-2 ret=-20490`, while a temporary 25596-byte `.debug_frame`-preserving artifact caused `deploy prepare` `no_reply`. The board was recovered by reflashing current Unit firmware and rerunning DNESP32S3B prepare; final `query apps` returned `app_count=0` and final `query leases` returned `[]`. `EXEC-201` hardware closure is now blocked on a safe LLEXT staging/loader strategy rather than GPIO app logic. - Copilot
+
+#### EXEC-201 Release-1.1.10 GPIO Hardware Closure Attempt
+
+- Status: blocked at LLEXT runtime staging/loader boundary after protected hardware evidence
+- Owner: GitHub Copilot with user-approved hardware testing
+- Mainline alignment:
+  - preserves protected lease workflow and does not bypass Unit update safety
+  - keeps callback event implementation in `neuro_demo_gpio` intact
+  - avoids committing artifact-shape experiments that failed loader or recovery checks
+  - keeps release identity unchanged until closure is green
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - confirmed DNESP32S3B hardware readiness and recovered board to a clean final state
+  - identified short lease ids as mandatory for current CBOR metadata limits
+  - confirmed standard GPIO deploy prepare/verify succeeds but activation fails on staging resource limit
+  - rejected simple debug stripping / `-g0` as unsafe release fixes because they fail loader or destabilize prepare
+- Verification evidence:
+  - `bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --auto-start-router --require-serial --artifact-file build/neurolink_unit/llext/neuro_demo_gpio.llext --output text` => READY before activation attempt
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset flash-unit --esp-device /dev/ttyACM0 --no-c-style-check` => PASS, firmware hash verified
+  - `deploy prepare --app-id neuro_demo_gpio --file build/neurolink_unit/llext/neuro_demo_gpio.llext` => embedded Unit reply PASS, size `54472`
+  - `deploy verify --app-id neuro_demo_gpio` => PASS, size `54472`
+  - `deploy activate --app-id neuro_demo_gpio --lease-id l-gpio-deploy` => FAIL, `RESOURCE_LIMIT cause=-12 ret=-20486`
+  - debug-stripped / `-g0` artifacts => FAIL, `LOAD_FAILURE cause=-2 ret=-20490`
+  - `prepare_dnesp32s3b_wsl.sh --device /dev/ttyACM0 --node unit-01 --capture-duration-sec 60` => PASS after recovery, `NETWORK_READY`
+  - final `query apps` => PASS, `app_count=0`
+  - final `query leases` => PASS, `leases=[]`
+- Next action:
+  - characterize the Xtensa LLEXT loader section requirements and choose either a safe bounded staging-buffer candidate or a loader-compatible artifact-size reduction before retrying GPIO invoke/callback smoke
+
+2026-05-01: Continued release-1.1.10 `EXEC-201` after the first GPIO demo build by making callback event support an explicit release rule and implementing it in `neuro_demo_gpio`. Updated `docs/project/RELEASE_1.1.10_PRE_RESEARCH.md` so every demo must implement callback events when the stable public callback API can be used safely, and any omission must be documented as a blocker. Extended `subprojects/neuro_demo_gpio/src/main.c` to parse `callback_enabled`, `trigger_every`, and `event_name` through `neuro_unit_read_callback_config_json()`, publish callback events through `neuro_unit_publish_callback_event()` on successful GPIO actions at the configured interval, and include callback state in successful action replies. The demo still publishes its `gpio_state` app event and still degrades cleanly when `sw0` / `led0` aliases are missing or not ready. Updated `subprojects/demo_catalog.json` so `neuro_demo_gpio` advertises both `gpio_state` and `callback` events. Local wrapper build and metadata checks passed; hardware proof remains pending until a tested GPIO alias/wiring contract is available. - Copilot
+
+#### EXEC-201 Release-1.1.10 GPIO Callback Event Support
+
+- Status: completed for GPIO demo callback-event implementation and local artifact validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows the first GPIO demo implementation in `EXEC-201`
+  - promotes callback event support from optional follow-up to required demo behavior when technically feasible
+  - reuses the existing public callback app API instead of adding a demo-specific callback protocol
+  - preserves Unit firmware behavior, protocol shape, hardware state, and release identity
+- Touched files:
+  - `applocation/NeuroLink/subprojects/neuro_demo_gpio/src/main.c`
+  - `applocation/NeuroLink/subprojects/demo_catalog.json`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added release-plan guidance that demos must implement callback events whenever the stable callback API can be used safely
+  - added callback config parsing to `neuro_demo_gpio` through `neuro_unit_read_callback_config_json()`
+  - added callback event publishing through `neuro_unit_publish_callback_event()` on successful `read` / `write` / `toggle` actions at the configured trigger interval
+  - kept the existing `gpio_state` app event and alias-gated graceful unsupported behavior
+  - updated the demo catalog so `neuro_demo_gpio` advertises both `gpio_state` and `callback` events
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/test_demo_catalog.sh` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink_demo.sh --demo neuro_demo_gpio --no-c-style-check` => PASS
+  - `strings build/neurolink_unit/llext/neuro_demo_gpio.llext | grep neuro_demo_gpio-1.1.10-dev-cbor-v1` => PASS
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - add hardware-facing GPIO smoke workflow coverage once a tested `sw0` / `led0` mapping or explicit unsupported evidence path is selected
+
+2026-05-01: Closed the documentation half of release-1.1.10 `EXEC-204` and immediately started `EXEC-201`. For `EXEC-204`, updated the canonical Neuro CLI workflow references in `applocation/NeuroLink/neuro_cli/skill/references/workflows.md` and `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`, plus the project-shared mirror at `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`, so the new `workflow plan demo-build` and `workflow plan demo-net-event-smoke` surfaces are documented where Agents already look. Added focused Neuro CLI regression coverage to keep the canonical/shared references aligned with the live workflow plans. This closes the reference-alignment portion of `EXEC-204`; hardware smoke execution remains part of later closure work. - Copilot
+
+#### EXEC-204 Release-1.1.10 Demo Workflow Reference Alignment
+
+- Status: completed for canonical/shared workflow reference alignment and focused CLI validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - closes the documentation/reference portion of the earlier `EXEC-204` workflow-support slice
+  - keeps demo workflow plans non-executing and reviewable before hardware closure
+  - preserves firmware behavior, app ABI, hardware state, and release identity
+  - keeps `RELEASE_TARGET = "1.1.9"` until final release-1.1.10 closure
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - documented `workflow plan demo-build` and `workflow plan demo-net-event-smoke` in the canonical workflow references
+  - aligned the shared Neuro CLI skill mirror with the canonical workflow reference text
+  - added discovery/control reference guidance for the first demo smoke sequence and blocking failure classifications
+  - added focused pytest coverage so the live workflow plans and references stay aligned
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q -k 'demo_workflow_references_include_release_1_1_10_demo_plans or control_reference_contains_workflows_and_safety_contracts or project_shared_skill_mirrors_canonical_resources'` => PASS (`3 passed`)
+- Next action:
+  - continue `EXEC-201` with the first hardware-facing demo implementation and then add bounded hardware evidence once a tested GPIO mapping is declared
+
+2026-05-01: Started release-1.1.10 `EXEC-201` with the first hardware-facing demo runtime slice by adding `applocation/NeuroLink/subprojects/neuro_demo_gpio`. The new LLEXT app reuses the existing safe app ABI, keeps the shared `invoke` command surface, supports `action=capability`, `action=read`, `action=write`, and `action=toggle`, and publishes `gpio_state` events on successful actions. GPIO behavior is gated on safe board aliases only: `DT_ALIAS(sw0)` for input and `DT_ALIAS(led0)` for output. When the board does not expose those aliases or the backing device is not ready, the demo reports stable `capability_missing` or `io_error` JSON instead of assuming raw pins. Updated `subprojects/demo_catalog.json` so `neuro_demo_gpio` is marked `implemented_local`, and validated the end-to-end selected-demo build path through `build_neurolink_demo.sh --demo neuro_demo_gpio --no-c-style-check`. The current DNESP32S3B in-tree baseline still does not declare tested `sw0` / `led0` aliases, so this slice closes local build plus graceful-unsupported behavior only; hardware proof remains pending. - Copilot
+
+#### EXEC-201 Release-1.1.10 First GPIO Demo Slice
+
+- Status: in progress for local implementation and selected-demo artifact validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - starts the hardware-facing demo family with the lowest-risk alias-driven path
+  - reuses the stable public app ABI and selected-demo build workflow established earlier in the release
+  - preserves Unit firmware behavior, protocol shape, hardware state, and release identity
+  - keeps `RELEASE_TARGET = "1.1.9"` until final release-1.1.10 closure
+- Touched files:
+  - `applocation/NeuroLink/subprojects/neuro_demo_gpio/CMakeLists.txt`
+  - `applocation/NeuroLink/subprojects/neuro_demo_gpio/toolchain.cmake`
+  - `applocation/NeuroLink/subprojects/neuro_demo_gpio/src/main.c`
+  - `applocation/NeuroLink/subprojects/demo_catalog.json`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added the first hardware demo subproject for release-1.1.10
+  - demo supports capability discovery and bounded `read` / `write` / `toggle` actions on safe GPIO aliases only
+  - missing or unready aliases return explicit `capability_missing` / `io_error` JSON instead of hard-coded pin assumptions
+  - successful actions publish a `gpio_state` event and echo the app build identity
+  - marked `neuro_demo_gpio` as `implemented_local` in the machine-readable demo catalog
+- Verification evidence:
+  - `bash applocation/NeuroLink/scripts/build_neurolink_demo.sh --demo neuro_demo_gpio --no-c-style-check` => PASS
+- Next action:
+  - add bounded local contract checks and then decide whether DNESP32S3B needs an explicit alias overlay or a documented unsupported hardware classification for GPIO closure
+
+2026-05-01: Continued release-1.1.10 with the next `EXEC-204` slice, exposing the first demo-specific non-executing CLI workflow plans after the catalog-backed wrapper was validated. Added `workflow plan demo-build` and `workflow plan demo-net-event-smoke` in `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`. `demo-build` points at `scripts/build_neurolink_demo.sh --demo neuro_demo_net_event`, while `demo-net-event-smoke` describes the first reviewable demo lifecycle for the implemented event-bridge app: build, preflight with explicit artifact path, protected deploy, capability invoke, publish invoke, app-event monitoring, and lease cleanup. Added focused parser and workflow-plan regressions in `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`. This slice did not execute any hardware smoke commands, did not update skill references yet, and did not change firmware/runtime behavior; `RELEASE_TARGET = "1.1.9"` remains unchanged. - Copilot
+
+#### EXEC-204 Release-1.1.10 Demo Workflow Plans
+
+- Status: in progress for demo workflow-plan exposure and focused CLI validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows the earlier `EXEC-204` demo build wrapper support slice
+  - exposes reviewable Agent-facing workflow plans before additional hardware demo implementation
+  - preserves firmware behavior, app ABI, hardware state, and release identity
+  - keeps `RELEASE_TARGET = "1.1.9"` until final release-1.1.10 closure
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `workflow plan demo-build` for the catalog-backed selected-demo build path
+  - added `workflow plan demo-net-event-smoke` for the first event-demo deploy/invoke/event-monitor cleanup sequence
+  - kept both plans non-executing and aligned with the existing workflow metadata schema
+  - added focused parser and contract regressions for the new workflow plans
+- Verification evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q -k 'release_1_1_10_demo_workflow_plans or demo_build_workflow_plan or demo_net_event_smoke_workflow_plan'` => PASS (`3 passed`)
+- Next action:
+  - continue `EXEC-204` with skill/reference updates for the new demo workflow plans, or move into the first hardware demo implementation slice once the workflow surface is sufficient
+
+2026-05-01: Continued release-1.1.10 with `EXEC-204`, starting the operator-facing demo workflow support slice after the first event demo subproject was proven locally. Added `applocation/NeuroLink/scripts/build_neurolink_demo.sh` as a catalog-backed wrapper that resolves demo metadata from `subprojects/demo_catalog.json`, forwards safe build options to `build_neurolink.sh`, and prints the resolved staged artifact path for downstream use. Added focused regression coverage in `tests/scripts/test_build_neurolink_demo.sh`, wired the new test into `tests/scripts/run_all_tests.sh`, and exposed the new script through `tests/scripts/test_linux_scripts_help.sh`. Real validation built `neuro_demo_net_event` successfully through the new wrapper and confirmed the artifact still contains `neuro_demo_net_event-1.1.10-dev-cbor-v1`. This slice did not add new CLI `workflow plan` entries, did not change firmware behavior, and did not run hardware smoke; `RELEASE_TARGET = "1.1.9"` remains unchanged. - Copilot
+
+#### EXEC-204 Release-1.1.10 Demo Build Wrapper Workflow Support
+
+- Status: in progress for operator-facing demo build entrypoint and local validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-200` first-demo implementation and keeps workflow support separate from firmware/runtime changes
+  - adds a stable selected-demo build surface before hardware-facing demo slices
+  - preserves existing Unit firmware behavior, app ABI, protocol shape, hardware state, and release identity
+  - keeps `RELEASE_TARGET = "1.1.9"` until final release-1.1.10 closure
+- Touched files:
+  - `applocation/NeuroLink/scripts/build_neurolink_demo.sh`
+  - `applocation/NeuroLink/tests/scripts/test_build_neurolink_demo.sh`
+  - `applocation/NeuroLink/tests/scripts/run_all_tests.sh`
+  - `applocation/NeuroLink/tests/scripts/test_linux_scripts_help.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added a catalog-backed wrapper for building demo artifacts through the existing selected-app EDK flow
+  - wrapper resolves demo `source_dir`, default staged artifact path, and catalog status from `demo_catalog.json`
+  - wrapper forwards supported build-time options and can print the resolved artifact path for follow-on scripts
+  - added focused regression coverage and raised the script suite baseline to eleven tests
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/test_build_neurolink_demo.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_linux_scripts_help.sh` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink_demo.sh --demo neuro_demo_net_event --no-c-style-check` => PASS
+  - `strings build/neurolink_unit/llext/neuro_demo_net_event.llext | grep neuro_demo_net_event-1.1.10-dev-cbor-v1` => PASS
+  - `env -u ZEPHYR_SDK_INSTALL_DIR bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=11`, `script_tests_failed=0`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue `EXEC-204` with non-executing CLI workflow plans for demo build and smoke, or move directly into the first hardware demo slice once the operator workflow surface is sufficient
+
+2026-05-01: Continued release-1.1.10 with `EXEC-200`, implementing the first actual demo subproject on top of the new multi-app build and app API capability contracts. Added `applocation/NeuroLink/subprojects/neuro_demo_net_event` with its own `CMakeLists.txt`, `toolchain.cmake`, and `src/main.c`. The demo stays inside the existing safe app ABI: it exports the standard lifecycle symbols, uses the existing `invoke` app command, supports `action=capability`, `action=publish`, and `action=selftest`, returns the new capability/unsupported JSON contracts, and publishes app events through `neuro_unit_publish_app_event()` without introducing any new hardware or raw socket dependency. While validating the first real selected-app build path, found and fixed another local build-script defect: non-default app ids were sharing the same external app build directory and tripping a CMake cache source-dir mismatch; `build_neurolink.sh` now uses an app-specific external build dir for non-default app ids. Updated `subprojects/demo_catalog.json` so `neuro_demo_net_event` is marked `implemented_local`. No hardware validation, CLI workflow-plan expansion, protocol schema change, or release identity promotion was performed in this slice; `RELEASE_TARGET = "1.1.9"` remains unchanged. - Copilot
+
+#### EXEC-200 Release-1.1.10 First Event Demo Subproject
+
+- Status: completed for first demo subproject and local artifact validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-199` demo catalog and public app API contracts
+  - implements the lowest-risk first demo using the existing app event bridge
+  - avoids new hardware-driver and raw-socket dependencies in the first runtime slice
+  - preserves firmware behavior, protocol shape, hardware state, and release identity
+  - keeps `RELEASE_TARGET = "1.1.9"` until final release-1.1.10 closure
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/subprojects/neuro_demo_net_event/CMakeLists.txt`
+  - `applocation/NeuroLink/subprojects/neuro_demo_net_event/toolchain.cmake`
+  - `applocation/NeuroLink/subprojects/neuro_demo_net_event/src/main.c`
+  - `applocation/NeuroLink/subprojects/demo_catalog.json`
+  - `applocation/NeuroLink/tests/scripts/test_demo_catalog.sh`
+  - `applocation/NeuroLink/scripts/build_neurolink.sh`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added the first standalone event-bridge demo app subproject
+  - demo supports capability discovery plus publish/selftest actions through the existing `invoke` command surface
+  - demo publishes structured app events through the existing Unit app event bridge
+  - marked `neuro_demo_net_event` as `implemented_local` in the machine-readable demo catalog
+  - fixed selected-app external build-dir collisions for non-default app ids
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/test_demo_catalog.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_build_neurolink.sh` => PASS
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --app neuro_demo_net_event --no-c-style-check` => PASS
+  - `strings build/neurolink_unit/llext/neuro_demo_net_event.llext | grep neuro_demo_net_event-1.1.10-dev-cbor-v1` => PASS
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with CLI/workflow support for selected demo builds and then move to the first hardware-facing demo slice, starting with I2C or GPIO on DNESP32S3B
+
+2026-05-01: Continued release-1.1.10 with `EXEC-199`, adding the first demo-facing runtime contracts before implementing the actual demo apps. Added `applocation/NeuroLink/subprojects/demo_catalog.json` as a machine-readable source-of-truth for the initial demo family: `neuro_demo_i2c`, `neuro_demo_spi`, `neuro_demo_gpio`, `neuro_demo_uart`, `neuro_demo_adc_pwm`, `neuro_demo_net_event`, `neuro_demo_net_udp`, and `neuro_demo_integrated`. Extended the public LLEXT app API in `neuro_unit/include/neuro_unit_app_api.h` with capability-report and unsupported-result DTOs plus JSON writers implemented in `neuro_unit/src/neuro_unit_event.c`, then added native_sim coverage in `neuro_unit/tests/unit/src/app/test_neuro_unit_app_api.c` for the new JSON contracts. Added `tests/scripts/test_demo_catalog.sh` and promoted the script suite baseline to `10` tests. While validating the new public API/EDK path, found and fixed a local build-script defect: `build_neurolink.sh --pristine-always` previously skipped rebuilding already-configured Unit/EDK builds; it now forces reconfiguration as intended. No Unit firmware behavior, hardware behavior, protocol schema, CLI release identity, or demo runtime behavior changed; `RELEASE_TARGET = "1.1.9"` remains unchanged. - Copilot
+
+#### EXEC-199 Release-1.1.10 Demo Catalog and App API Capability Contracts
+
+- Status: completed for demo catalog, app API contracts, and local validation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - follows `EXEC-198` multi-app build foundation
+  - keeps demo runtime implementation deferred until capability contracts are stable
+  - preserves existing firmware, protocol, and hardware behavior
+  - keeps `neuro_unit_app` as the lifecycle/callback reference app
+  - keeps `RELEASE_TARGET = "1.1.9"` until final release-1.1.10 closure
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/neuro_unit/include/neuro_unit_app_api.h`
+  - `applocation/NeuroLink/neuro_unit/src/neuro_unit_event.c`
+  - `applocation/NeuroLink/neuro_unit/tests/unit/src/app/test_neuro_unit_app_api.c`
+  - `applocation/NeuroLink/subprojects/demo_catalog.json`
+  - `applocation/NeuroLink/tests/scripts/test_demo_catalog.sh`
+  - `applocation/NeuroLink/tests/scripts/run_all_tests.sh`
+  - `applocation/NeuroLink/scripts/build_neurolink.sh`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added a machine-readable catalog for the first planned demo app family
+  - added public app API JSON contracts for capability discovery and graceful unsupported results
+  - added native_sim coverage for the new app API helpers
+  - added focused script validation for the demo catalog and raised the script suite baseline to ten tests
+  - fixed `build_neurolink.sh` so `--pristine-always` applies to already-configured Unit/EDK builds
+- Verification evidence:
+  - `bash applocation/NeuroLink/tests/scripts/test_build_neurolink.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_demo_catalog.sh` => PASS
+  - `env -u ZEPHYR_SDK_INSTALL_DIR bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=10`, `script_tests_failed=0`)
+  - `west build -b native_sim applocation/NeuroLink/neuro_unit/tests/unit --build-dir build/neurolink_unit_ut_check -p always -t run` => PASS (`PROJECT EXECUTION SUCCESSFUL`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with `EXEC-200` by introducing a reusable demo app template and implementing `neuro_demo_net_event` first on top of the new capability/unsupported-result contracts
+
+2026-05-01: Started release-1.1.10 with `EXEC-198`, opening the LLEXT app demo platform release after the closed release-1.1.9 baseline. Added `docs/project/RELEASE_1.1.10_PRE_RESEARCH.md` to define the cross-board demo scope: separate LLEXT demo apps for I2C/IIC, SPI, GPIO, UART, ADC/PWM, event-bridge networking, TCP/UDP as a gated candidate, and an integrated demo, with DNESP32S3B as the required hardware closure target and graceful unsupported responses as the portability rule. Began implementation with the low-risk multi-app build foundation: `build_neurolink.sh` now accepts `--app <app-id>` and `--app-source-dir <path>`, validates app ids and source dirs, preserves the legacy `neuro_unit_app` default, and stages selected artifacts as `<app-id>.llext`. Added script regressions for invalid app ids, missing app source dirs, source-dir traversal rejection, and the new app-selection contract. No Unit firmware behavior, public app ABI, demo app runtime behavior, hardware state, or release identity changed; `RELEASE_TARGET = "1.1.9"` remains unchanged. - Copilot
+
+#### EXEC-198 Release-1.1.10 Kickoff and Multi-App Build Foundation
+
+- Status: completed for kickoff planning and local build-script foundation
+- Owner: GitHub Copilot with user direction
+- Mainline alignment:
+  - starts release-1.1.10 from the closed release-1.1.9 hardware baseline
+  - keeps `neuro_unit_app` as the lifecycle/callback reference app
+  - prepares separate LLEXT app artifacts for upcoming hardware, network, and integrated demos
+  - preserves firmware behavior, app ABI, hardware state, and release identity
+  - keeps `RELEASE_TARGET = "1.1.9"` until final release-1.1.10 closure
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.1.10_PRE_RESEARCH.md`
+  - `applocation/NeuroLink/scripts/build_neurolink.sh`
+  - `applocation/NeuroLink/tests/scripts/test_build_neurolink.sh`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - documented release-1.1.10 demo catalog, execution slices, validation gates, and closure policy
+  - added selected-app LLEXT build inputs with `--app` and `--app-source-dir`
+  - preserved the default `neuro_unit_app` source path and staged artifact name
+  - added validation for app id format, app source path traversal, missing source dirs, and required `CMakeLists.txt`
+  - established the foundation for future `neuro_demo_*` subprojects without adding demo runtime behavior yet
+- Verification evidence:
+  - `bash -n applocation/NeuroLink/scripts/build_neurolink.sh` => PASS
+  - `bash -n applocation/NeuroLink/tests/scripts/test_build_neurolink.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/test_build_neurolink.sh` => PASS
+  - `bash applocation/NeuroLink/tests/scripts/run_all_tests.sh` => PASS (`script_tests_passed=9`, `script_tests_failed=0`)
+  - `git -C applocation/NeuroLink diff --check` => PASS
+- Next action:
+  - continue with `EXEC-199` by adding a source-of-truth demo catalog and app API capability/unsupported-result contracts before implementing the first demo app
+
 2026-05-01: Closed release-1.1.9 with `EXEC-197` after completing hardware closure, fixing the discovered update-delete CBOR route gap, and promoting release identity. Hardware closure used `/dev/ttyACM0` and router endpoint `tcp/192.168.2.94:7447`; UART Zenoh `show`, `set`, and `clear` all succeeded and the Unit returned to `NETWORK_READY` at `192.168.2.67`. The first lifecycle hardware pass exposed stale firmware for unload and missing CBOR request mapping for `update/app/neuro_unit_app/delete`; reflashing current firmware and adding `update_delete_request=10` to Python and Unit protocol contracts resolved it. Post-promotion changed `neuro_cli/src/neuro_cli.py` to `RELEASE_TARGET = "1.1.9"`, promoted the sample app to `1.1.9`/`neuro_unit_app-1.1.9-cbor-v2`, updated release-target regressions and README status, regenerated `applocation/NeuroLink/memory-evidence/release-1.1.9-closure.{json,summary.txt}` with `release_target=1.1.9`, `dram0=377188`, `iram0=66216`, `flash=673952`, `ext_ram=2847776`, and `section_count=77`, rebuilt `build/neurolink_unit/llext/neuro_unit_app.llext`, and verified the artifact contains `neuro_unit_app-1.1.9-cbor-v2`. Final local gates passed for Python compile, CLI+wrapper tests (`123 passed`), script suite (`script_tests_passed=9`, `script_tests_failed=0`), Unit native_sim (`PROJECT EXECUTION SUCCESSFUL`), wrapper `system capabilities` and `workflow plan release-closure` reporting `release_target=1.1.9`, and `git -C applocation/NeuroLink diff --check`. Final hardware gates passed for serial-required preflight, Linux smoke `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260501-021622.ndjson`, explicit smoke lease release as `source_agent=rational`, callback smoke with `neuro_unit_app-1.1.9-cbor-v2` echo and three CBOR callback events, and final queries showing Unit ready, `neuro_unit_app` running/active, and `leases: []`. Release-1.1.9 is closed against the current Linux/hardware evidence. - Copilot
 
 2026-05-01: Started release-1.1.9 `EXEC-197` closure preparation after completing the local `EXEC-196` dynamic LLEXT memory candidate boundary slice. Ran the non-destructive local closure setup that is safe before a hardware validation window: generated fresh static memory evidence at `applocation/NeuroLink/memory-evidence/exec-197-local-closure.{json,summary.txt}` from `build/neurolink_unit` with `release_target=1.1.8`, `dram0=377188`, `iram0=66216`, `flash=673780`, `ext_ram=2847776`, and `section_count=77`; confirmed wrapper `workflow plan release-closure` still reports `release_target=1.1.8`, `requires_hardware=true`, `requires_serial=true`, `requires_router=true`, and `destructive=true`. Hardware preflight, UART Zenoh recovery/config proof, LLEXT lifecycle smoke, callback smoke, final lease cleanup, and release identity promotion were intentionally not run in this local preparation slice. `RELEASE_TARGET = "1.1.8"` remains unchanged. - Copilot

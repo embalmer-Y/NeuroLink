@@ -16,6 +16,7 @@ python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system capabi
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan unit-build
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan unit-edk
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan app-build
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan demo-build
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan unit-tests
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan cli-tests
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan memory-evidence
@@ -68,6 +69,7 @@ python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan preflight
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan smoke
 python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan callback-smoke
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan demo-net-event-smoke
 ```
 
 Run discovery in order before protected control: host, router, serial, device,
@@ -80,6 +82,13 @@ Run protected control only after discovery succeeds. Control plans cover
 read-only health, protected deploy, app invoke, callback configuration, event
 monitoring, and lease cleanup. Destructive plans declare `destructive: true` and
 include lease cleanup commands.
+
+For release 1.1.10 demo work, ask for `workflow plan demo-build` before
+building a selected demo artifact through the catalog-backed wrapper. Then use
+`workflow plan demo-net-event-smoke` to inspect the first end-to-end demo
+sequence for `neuro_demo_net_event`: build, preflight with explicit artifact
+path, protected deploy, capability/publish invoke, app-event monitoring, and
+lease cleanup.
 
 ## Deploy Order
 

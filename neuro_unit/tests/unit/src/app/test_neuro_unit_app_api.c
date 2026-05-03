@@ -124,6 +124,69 @@ ZTEST(neuro_unit_app_api, test_command_reply_helper_writes_standard_json)
 		"command reply helper must preserve the shared reply JSON shape");
 }
 
+ZTEST(neuro_unit_app_api, test_capability_report_helper_writes_standard_json)
+{
+	const neuro_unit_app_capability_report_t report = {
+		.capability = "i2c",
+		.available = true,
+		.interface_name = "i2c0",
+		.detail = "board_alias_present",
+	};
+	char reply_buf[NEURO_UNIT_EVENT_JSON_LEN];
+	int ret;
+
+	memset(reply_buf, 0, sizeof(reply_buf));
+	ret = neuro_unit_write_capability_report_json(
+		reply_buf, sizeof(reply_buf), &report);
+	zassert_equal(ret, 0,
+		"capability report helper should serialize the standard reply contract");
+	zassert_true(
+		strcmp(reply_buf,
+			"{\"status\":\"ok\",\"capability\":\"i2c\",\"available\":true,\"interface\":\"i2c0\",\"detail\":\"board_alias_present\"}") ==
+			0,
+		"capability report helper must preserve the shared capability JSON shape");
+}
+
+ZTEST(neuro_unit_app_api, test_unsupported_result_helper_writes_standard_json)
+{
+	const neuro_unit_app_unsupported_result_t result = {
+		.status = "capability_missing",
+		.command_name = "scan",
+		.capability = "i2c",
+		.detail = "board_alias_missing",
+	};
+	char reply_buf[NEURO_UNIT_EVENT_JSON_LEN];
+	int ret;
+
+	memset(reply_buf, 0, sizeof(reply_buf));
+	ret = neuro_unit_write_unsupported_result_json(
+		reply_buf, sizeof(reply_buf), &result);
+	zassert_equal(ret, 0,
+		"unsupported result helper should serialize the standard reply contract");
+	zassert_true(
+		strcmp(reply_buf,
+			"{\"status\":\"capability_missing\",\"command\":\"scan\",\"capability\":\"i2c\",\"detail\":\"board_alias_missing\"}") ==
+			0,
+		"unsupported result helper must preserve the shared unsupported JSON shape");
+}
+
+ZTEST(neuro_unit_app_api, test_capability_report_helper_rejects_invalid_detail)
+{
+	const neuro_unit_app_capability_report_t report = {
+		.capability = "i2c",
+		.available = false,
+		.interface_name = "i2c0",
+		.detail = "bad\"detail",
+	};
+	char reply_buf[NEURO_UNIT_EVENT_JSON_LEN];
+	int ret;
+
+	ret = neuro_unit_write_capability_report_json(
+		reply_buf, sizeof(reply_buf), &report);
+	zassert_equal(ret, -EINVAL,
+		"capability report helper should reject unescaped JSON fragments");
+}
+
 ZTEST(neuro_unit_app_api, test_manifest_header_exposes_runtime_contract)
 {
 	const struct app_runtime_manifest manifest = {

@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.20.0)
+
+set(CMAKE_SYSTEM_NAME Generic)
+
+if(NOT DEFINED CMAKE_C_COMPILER)
+	if(DEFINED ENV{LLEXT_C_COMPILER})
+		set(CMAKE_C_COMPILER $ENV{LLEXT_C_COMPILER})
+	else()
+		message(FATAL_ERROR "CMAKE_C_COMPILER or LLEXT_C_COMPILER must be provided")
+	endif()
+endif()
+
+set(CMAKE_C_COMPILER_FORCED TRUE)
