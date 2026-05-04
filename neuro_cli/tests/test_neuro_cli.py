@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportMissingImports=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportOptionalMemberAccess=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownVariableType=false
 import io
 import json
 from pathlib import Path
@@ -36,8 +37,15 @@ def _install_fake_zenoh() -> None:
     fake.Session = _Session
     fake.Sample = _Sample
     fake.Config = _Config
-    fake.open = lambda config=None: None
-    fake.init_log_from_env_or = lambda level: None
+
+    def _open(config: object | None = None) -> None:
+        del config
+
+    def _init_log_from_env_or(level: object) -> None:
+        del level
+
+    fake.open = _open
+    fake.init_log_from_env_or = _init_log_from_env_or
     sys.modules["zenoh"] = fake
 
 
@@ -51,6 +59,8 @@ if str(SRC_DIR) not in sys.path:
 
 import neuro_cli
 import neuro_protocol
+import neuro_workflow_catalog
+import neuro_workflow_contracts
 
 
 FIXTURES_DIR = THIS_DIR / "fixtures"
@@ -361,6 +371,38 @@ class TestNeuroProtocolModule(unittest.TestCase):
 
 
 class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
+    def test_workflow_catalog_module_owns_exported_workflow_tables(self) -> None:
+        self.assertIs(neuro_cli.WORKFLOW_PLANS, neuro_workflow_catalog.WORKFLOW_PLANS)
+        self.assertIs(
+            neuro_cli.WORKFLOW_METADATA_DEFAULTS,
+            neuro_workflow_catalog.WORKFLOW_METADATA_DEFAULTS,
+        )
+        self.assertIs(
+            neuro_cli.WORKFLOW_PLAN_METADATA,
+            neuro_workflow_catalog.WORKFLOW_PLAN_METADATA,
+        )
+        self.assertIn("preflight", neuro_workflow_catalog.WORKFLOW_PLANS)
+
+    def test_workflow_contract_module_builds_surface_from_explicit_inputs(self) -> None:
+        payload = neuro_workflow_contracts.build_workflow_surface(
+            {
+                "sample-plan": {
+                    "category": "verification",
+                    "description": "sample workflow",
+                    "commands": ["echo sample"],
+                    "artifacts": [],
+                }
+            },
+            neuro_cli.WORKFLOW_METADATA_DEFAULTS,
+            {},
+            neuro_cli.WORKFLOW_PLAN_SCHEMA_VERSION,
+        )
+
+        self.assertEqual(payload["schema_version"], neuro_cli.WORKFLOW_PLAN_SCHEMA_VERSION)
+        self.assertEqual(payload["categories"], ["verification"])
+        self.assertEqual(payload["plans"][0]["workflow"], "sample-plan")
+        self.assertEqual(payload["plans"][0]["plan_command"], "workflow plan sample-plan")
+
     def test_parser_parses_grouped_prepare_path(self) -> None:
         parser = neuro_cli.build_parser()
         args = parser.parse_args(
@@ -428,7 +470,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.1.10")
+        self.assertEqual(payload["release_target"], "1.2.0")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -462,6 +504,17 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
             payload["agent_skill"]["callback_handler_execution"],
             "explicit_audited_runner",
         )
+        self.assertIn("agent_runtime", payload)
+        self.assertEqual(
+            payload["agent_runtime"]["schema_version"],
+            neuro_cli.AGENT_RUNTIME_SCHEMA_VERSION,
+        )
+        self.assertTrue(payload["agent_runtime"]["supports"]["tool_manifest"])
+        self.assertTrue(payload["agent_runtime"]["supports"]["state_sync"])
+        self.assertTrue(payload["agent_runtime"]["supports"]["agent_events_jsonl"])
+        self.assertEqual(
+            payload["agent_runtime"]["agent_events_mode"], "bounded_equivalent"
+        )
         self.assertIn("capabilities", payload)
         workflow_surface = payload["workflow_surface"]
         self.assertEqual(
@@ -488,6 +541,131 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
 
         self.assertIs(args.handler, neuro_cli.handle_init)
         self.assertFalse(args.requires_session)
+
+    def test_parser_parses_system_tool_manifest_without_session(self) -> None:
+        parser = neuro_cli.build_parser()
+        args = parser.parse_args(["--output", "json", "system", "tool-manifest"])
+
+        self.assertIs(args.handler, neuro_cli.handle_tool_manifest)
+        self.assertFalse(args.requires_session)
+
+    def test_parser_parses_system_state_sync_with_session(self) -> None:
+        parser = neuro_cli.build_parser()
+        args = parser.parse_args(["--output", "json", "system", "state-sync"])
+
+        self.assertIs(args.handler, neuro_cli.handle_state_sync)
+        self.assertTrue(getattr(args, "requires_session", True))
+
+    def test_parser_parses_monitor_agent_events_without_session(self) -> None:
+        parser = neuro_cli.build_parser()
+        args = parser.parse_args(["--output", "jsonl", "monitor", "agent-events"])
+
+        self.assertIs(args.handler, neuro_cli.handle_agent_events)
+        self.assertFalse(args.requires_session)
+
+    def test_agent_events_outputs_bounded_jsonl_rows(self) -> None:
+        args = Namespace(output="jsonl", node="unit-01", max_events=1)
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = neuro_cli.handle_agent_events(None, args)
+
+        self.assertEqual(code, 0)
+        lines = [line for line in out.getvalue().splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1)
+        payload = json.loads(lines[0])
+        self.assertEqual(
+            payload["schema_version"], neuro_cli.AGENT_EVENTS_SCHEMA_VERSION
+        )
+        self.assertEqual(payload["mode"], "bounded_equivalent")
+        self.assertFalse(payload["live_subscription"])
+        self.assertEqual(payload["semantic_topic"], "unit.callback")
+        self.assertEqual(payload["dedupe_key"], "demo-callback-001")
+        self.assertEqual(payload["causality_id"], "demo-callback-001")
+        self.assertEqual(
+            payload["raw_payload_ref"],
+            "bounded_equivalent://agent-events/demo-callback-001",
+        )
+        self.assertEqual(payload["payload_encoding"], "json")
+        self.assertIn("read_only_ingress", payload["policy_tags"])
+
+    def test_tool_manifest_outputs_agent_facing_contracts(self) -> None:
+        args = Namespace(output="json")
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = neuro_cli.handle_tool_manifest(None, args)
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            payload["schema_version"], neuro_cli.TOOL_MANIFEST_SCHEMA_VERSION
+        )
+        names = {item["name"] for item in payload["tools"]}
+        self.assertIn("system_state_sync", names)
+        self.assertIn("system_query_device", names)
+
+    def test_state_sync_aggregates_query_contracts(self) -> None:
+        args = Namespace(
+            output="json",
+            node="unit-01",
+            source_core="core-cli",
+            source_agent="rational",
+            timeout=10.0,
+            request_id="",
+            query_retries=1,
+            query_retry_backoff_ms=0,
+            query_retry_backoff_max_ms=0,
+            dry_run=False,
+        )
+
+        device_result = {
+            "ok": True,
+            "status": "ok",
+            "replies": [
+                {
+                    "ok": True,
+                    "payload": {
+                        "status": "ok",
+                        "network_state": "NETWORK_READY",
+                        "ipv4": "192.168.2.67",
+                    },
+                }
+            ],
+        }
+        apps_result = {
+            "ok": True,
+            "status": "ok",
+            "replies": [{"ok": True, "payload": {"status": "ok", "app_count": 0, "apps": []}}],
+        }
+        leases_result = {
+            "ok": True,
+            "status": "ok",
+            "replies": [{"ok": True, "payload": {"status": "ok", "leases": []}}],
+        }
+
+        out = io.StringIO()
+        with mock.patch.object(
+            neuro_cli,
+            "collect_query_result_with_retry",
+            side_effect=[device_result, apps_result, leases_result],
+        ) as collect_mock:
+            with redirect_stdout(out):
+                code = neuro_cli.handle_state_sync(mock.Mock(), args)
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema_version"], neuro_cli.STATE_SYNC_SCHEMA_VERSION)
+        self.assertEqual(payload["state"]["device"]["payload"]["network_state"], "NETWORK_READY")
+        self.assertEqual(payload["state"]["apps"]["payload"]["app_count"], 0)
+        self.assertEqual(payload["state"]["leases"]["payload"]["leases"], [])
+        self.assertEqual(
+            payload["recommended_next_actions"],
+            ["state sync is clean; read-only delegated reasoning may continue"],
+        )
+        self.assertEqual(collect_mock.call_count, 3)
 
     def test_init_diagnostics_reports_workspace_scripts(self) -> None:
         args = Namespace(output="json")
@@ -1714,6 +1892,7 @@ class TestNeuroCliResultClassification(unittest.TestCase):
             for workflow in neuro_cli.WORKFLOW_PLANS.values()
             for command in workflow["commands"]
         )
+        assert neuro_cli.__file__ is not None
         source_text = Path(neuro_cli.__file__).read_text(encoding="utf-8")
 
         self.assertIn(
@@ -1831,7 +2010,7 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertIn("Callback handler execution", reference)
         self.assertIn("query leases", reference)
 
-    def test_demo_workflow_references_include_release_1_1_10_demo_plans(self) -> None:
+    def test_demo_workflow_references_include_release_1_2_0_demo_plans(self) -> None:
         project_root = NEURO_CLI_DIR.parent
         canonical_workflows = (
             NEURO_CLI_DIR / "skill" / "references" / "workflows.md"
@@ -3011,7 +3190,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertIn("event_stream", names)
         self.assertIn("app_event_stream", names)
 
-    def test_capabilities_reports_release_1_1_10(self) -> None:
+    def test_capabilities_reports_release_1_2_0(self) -> None:
         args = Namespace(output="json")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -3019,7 +3198,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.1.10")
+        self.assertEqual(payload["release_target"], "1.2.0")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

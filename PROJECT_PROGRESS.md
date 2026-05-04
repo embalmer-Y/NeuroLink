@@ -1,3 +1,626 @@
+2026-05-04: Promoted the canonical release identity and public docs for release-1.2.0 after local AI Core baseline closure. Updated Neuro CLI `RELEASE_TARGET`, workflow catalog release labels, Agent-facing contract defaults, README release statements, Neuro CLI skill references, and focused release-target tests from `1.1.10` to `1.2.0`. Recorded the release identity promotion in the 1.2.0 plan closure status while keeping the validated 1.1.10 Unit/demo hardware platform as the baseline for later provider/live-event/hardware integration tracks. - Copilot
+
+#### EXEC-217 Release-1.2.0 Identity And Documentation Promotion
+
+- Status: completed for release-1.2.0 identity promotion and documentation convergence
+- Owner: GitHub Copilot completing release-1.2.0 publication prep
+- Scope:
+  - promote canonical host/AI Core release identity to `1.2.0`
+  - update README and skill-facing release references for the closed local AI Core baseline
+  - keep real provider execution, long-running live daemons, and hardware smoke as post-baseline follow-up tracks
+- Touched files:
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/neuro_cli/README.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_agent_contracts.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/skill/README.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neurolink_core/*.py neurolink_core/tests/test_events.py neurolink_core/tests/test_maf.py neurolink_core/tests/test_neurolink_core.py neurolink_core/tests/test_tools.py neuro_cli/src/neuro_agent_contracts.py neuro_cli/src/neuro_workflow_catalog.py neuro_cli/src/neuro_workflow_contracts.py neuro_cli/src/neuro_cli.py neuro_cli/tests/test_neuro_cli.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests neuro_cli/tests/test_neuro_cli.py --maxfail=4 -q` passed: 160 tests OK
+  - direct capabilities JSON check reported `release_target: 1.2.0` and `agent_runtime: 1.2.0-agent-runtime-v1`
+  - scoped `git diff --check` over release docs, CLI files, Agent contracts, workflow catalog, tests, and skill references passed with no output
+- Next action:
+  - commit and push release-1.2.0 closure to `origin`
+
+2026-05-04: Completed the release-1.2.0 local AI Core baseline closure. Added `neurolink_core/events.py` as the Perception Event Router for normalized event ingress, priority/time ordering, dedupe-key handling, causality defaults, and in-process subscriber fan-out before persistence. Enriched bounded `monitor agent-events --output jsonl` rows with `timestamp_mono`, `dedupe_key`, `causality_id`, `raw_payload_ref`, `policy_tags`, `payload_encoding`, and `payload_hex`, then verified Core ingestion preserves the normalized count and dedupes before persistence. Added a credential-safe MAF provider smoke seam through `maf_provider_smoke_status()` and `neurolink-core maf-provider-smoke`, which reports `ready` only when the external framework package and model credentials are present and otherwise reports `skipped` without executing a model call. Updated the release plan with explicit local closure criteria and non-blocking follow-up boundaries. - Copilot
+
+#### EXEC-216 Release-1.2.0 Local Baseline Closure
+
+- Status: completed for release-1.2.0 local AI Core baseline closure
+- Owner: GitHub Copilot completing the release-1.2.0 implementation plan
+- Estimated plan completion:
+  - 100% complete for the scoped local baseline defined in `docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`
+  - follow-up integration tracks remain for real model-provider calls, long-running live event daemons, and optional hardware smoke, but those are not blockers for this release baseline
+- Plan alignment:
+  - completes WS-3 local event router coverage for ordering, dedupe, causality, and in-process fan-out
+  - completes WS-4 local MAF compatibility with deterministic adapters and provider smoke detection
+  - completes WS-5 bounded agent-events JSONL contract with richer ingestion metadata
+  - keeps WS-6 and WS-7 closure deterministic, no-model, and credential-free by default
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/events.py`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/__init__.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_events.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_agent_contracts.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `PerceptionEventRouter` with normalization, dedupe, priority/time ordering, causality defaults, and subscriber fan-out
+  - made `NoModelCoreWorkflow` route ingress through the event router before database persistence
+  - enriched bounded agent-events JSONL rows with dedupe/causality/raw-payload/policy metadata
+  - added `MAF_PROVIDER_SMOKE_SCHEMA_VERSION` and `maf_provider_smoke_status()`
+  - added `neurolink-core maf-provider-smoke --output json`
+  - documented release-1.2.0 local closure criteria and follow-up integration boundaries
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neurolink_core/*.py neurolink_core/tests/test_events.py neurolink_core/tests/test_maf.py neurolink_core/tests/test_neurolink_core.py neurolink_core/tests/test_tools.py neuro_cli/src/neuro_agent_contracts.py neuro_cli/src/neuro_workflow_catalog.py neuro_cli/src/neuro_workflow_contracts.py neuro_cli/src/neuro_cli.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=4 -v` passed: 36 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py --maxfail=4 -v` passed: 124 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests neuro_cli/tests/test_neuro_cli.py --maxfail=4 -q` passed: 160 tests OK after final static-analysis cleanup
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli no-model-dry-run --output json` passed and reported `db_counts` with 2 perception events, 1 execution span, 3 facts, 2 memory candidates, 1 policy decision, 1 tool result, and 1 audit record
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli maf-provider-smoke --output json` passed with `status=skipped`, `reason=agent_framework_package_not_installed`, and `executes_model_call=false` in this local environment
+  - VS Code Problems reported no errors for the touched Core files and Neuro CLI main test file after cleanup
+  - scoped tracked `git diff --check` and untracked line-trailing-whitespace scans passed with no output
+- Next action:
+  - release-1.2.0 local baseline is closed; continue later with real provider integration or live long-running event daemon work as post-baseline follow-up tracks
+
+2026-05-04: Continued release-1.2.0 by adding the first explicit Microsoft Agent Framework compatibility boundary inside `neurolink_core` without requiring real model credentials or the external MAF package at test time. Added `neurolink_core/maf.py` with a deterministic MAF runtime profile and MAF-shaped Affective/Rational Agent adapters that delegate to the existing fake agents. `NoModelCoreWorkflow` now defaults through those adapters, records MAF runtime metadata in session context and audit payloads, and returns top-level `maf_runtime` metadata in `no-model-dry-run` output. This gives the current deterministic local vertical slice the same Agent-wrapper shape planned for real MAF provider integration while keeping the release gate credential-free. - Copilot
+
+#### EXEC-215 Deterministic MAF Adapter Boundary
+
+- Status: completed for the first MAF-compatible Agent wrapper seam
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Estimated plan completion:
+  - about 87% complete overall after adding the no-provider MAF runtime/profile boundary around the Core Agent wrappers
+  - remaining major gaps are live/richer event monitoring and eventual real Microsoft Agent Framework provider integration
+- Plan alignment:
+  - advances WS-4 by making the no-model workflow call Affective and Rational reasoning through MAF-shaped adapters
+  - advances the MAF compatibility gate by proving deterministic fake clients cover the workflow behavior without real credentials
+  - preserves current local behavior and does not require hardware, Unit wire changes, Neuro CLI command changes, or external MAF package installation
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/__init__.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `MAF_RUNTIME_SCHEMA_VERSION` and `MafRuntimeProfile`
+  - added `build_maf_runtime_profile()` with deterministic fake provider defaults and optional package-availability detection
+  - added `MafAffectiveAgentAdapter` and `MafRationalAgentAdapter`
+  - made `NoModelCoreWorkflow` default to those MAF-shaped adapters while retaining injectable test seams
+  - added `maf_runtime` to dry-run output, session context, and audit records
+  - added package-local tests for the runtime profile, deterministic MAF adapters, and dry-run/audit metadata
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neurolink_core/maf.py neurolink_core/workflow.py neurolink_core/__init__.py neurolink_core/tests/test_maf.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=3 -v` passed: 32 tests OK
+  - VS Code Problems reported no errors for the touched Core files
+- Next action:
+  - continue by deepening `monitor agent-events` beyond the bounded equivalent, or add a provider-loaded MAF smoke that skips cleanly when the real package or credentials are unavailable
+
+2026-05-04: Continued release-1.2.0 by turning the newly expanded Core persistence schema into an Agent-readable evidence surface. Added `CoreDataStore` read helpers for completed execution spans and persisted facts, then added `build_execution_evidence()` so the deterministic dry-run can return the durable span, fact, policy-decision, memory-candidate, and audit-record evidence for the current execution. `neurolink_core no-model-dry-run --output json` now includes an `execution_evidence` object in addition to table counts, letting later MAF workflow/provider integration consume persisted evidence directly instead of reverse-engineering local DB state from counts only. - Copilot
+
+#### EXEC-214 Core Execution Evidence Snapshot
+
+- Status: completed for exposing persisted Core evidence through the no-model dry-run JSON contract
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Estimated plan completion:
+  - about 85% complete overall after adding an Agent-readable evidence snapshot on top of the broader WS-3 schema
+  - remaining major gaps are live/richer event monitoring and eventual real Microsoft Agent Framework provider integration
+- Plan alignment:
+  - advances WS-3 by adding read/query access for execution spans and facts, not only write-side persistence
+  - advances WS-7 by making the local vertical slice return its durable evidence bundle in one dry-run payload
+  - keeps the slice deterministic and no-model, with no hardware, Unit wire, or Neuro CLI command behavior change
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `CoreDataStore.get_execution_span()` and `CoreDataStore.get_facts()`
+  - added `CoreDataStore.build_execution_evidence()` as a compact read model for the current execution
+  - extended `run_no_model_dry_run()` to emit `execution_evidence` with span, facts, policy decisions, memory candidates, and audit record
+  - added regression coverage for the evidence snapshot returned by both direct workflow helper usage and the Core CLI output
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neurolink_core/data.py neurolink_core/workflow.py neurolink_core/tests/test_neurolink_core.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=3 -v` passed: 29 tests OK
+- Next action:
+  - continue with the thin MAF adapter/provider boundary around the deterministic fake Agent wrappers, or deepen `monitor agent-events` beyond the bounded equivalent
+
+2026-05-04: Continued release-1.2.0 along the plan by closing more of the WS-3 data-schema gap and WS-6 policy evidence gap inside the deterministic `neurolink_core` slice. Expanded the Core SQLite schema beyond the initial perception/tool/audit MVP with `execution_spans`, `facts`, `policy_decisions`, and `memory_candidates`, then wired `NoModelCoreWorkflow` to persist an execution span, frame/event facts, deterministic memory candidates, and every evaluated tool policy decision before sealing audit. This keeps the no-model local path aligned with the release rule that perception facts and policy evidence are durable before reasoning/execution outcomes are treated as complete. - Copilot
+
+#### EXEC-213 Core Data Schema Evidence Expansion
+
+- Status: completed for the next WS-3/WS-6 persistence slice
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Estimated plan completion:
+  - about 84% complete overall after adding durable span, fact, policy-decision, and memory-candidate evidence to the Core local workflow
+  - remaining major gaps are live/richer event monitoring and eventual real Microsoft Agent Framework provider integration
+- Plan alignment:
+  - advances WS-3 by adding the missing local schema families for execution spans, facts, policy decisions, and memory candidates
+  - advances WS-6 by persisting each tool policy decision separately from raw tool result payloads
+  - keeps the slice deterministic and no-model, with no hardware, Unit wire, or Neuro CLI command behavior change
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/memory.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added Core tables for `execution_spans`, `facts`, `policy_decisions`, and `memory_candidates`
+  - added data-store persistence/query helpers for policy decisions and memory candidates
+  - made the no-model workflow persist a running/completed span around each execution
+  - persisted perception-frame and event-topic facts before reasoning continues
+  - added deterministic memory candidates from the no-model frame topics
+  - persisted tool policy decisions before allowed execution or blocked result handling
+  - extended Core dry-run JSON `db_counts` to report the new table families
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neurolink_core/data.py neurolink_core/memory.py neurolink_core/workflow.py neurolink_core/tests/test_neurolink_core.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=3 -v` passed: 28 tests OK
+  - scoped `git diff --check` over this slice's Core files passed with no output
+- Next action:
+  - continue toward richer/live `monitor agent-events` ingestion or introduce a thin MAF adapter boundary around the current deterministic fake Agent wrappers
+
+2026-05-04: Continued the release-1.2.0 `neuro_cli` decomposition by moving the workflow catalog data out of the main command/transport file. Added `neuro_cli/src/neuro_workflow_catalog.py` as the owner of `WORKFLOW_PLANS`, `WORKFLOW_METADATA_DEFAULTS`, and `WORKFLOW_PLAN_METADATA`, including the catalog-local `release_label()` and `default_app_echo()` helpers needed by the static plan tables. `neuro_cli.py` now imports and re-exports those workflow tables for compatibility, so existing tests and skill callers that use `neuro_cli.WORKFLOW_PLANS` continue to work while the large workflow data body no longer lives in the main CLI module. After the split, `neuro_cli.py` is about 2957 lines and the workflow catalog module is about 1609 lines. - Copilot
+
+#### EXEC-212 Workflow Catalog Extraction
+
+- Status: completed for moving workflow plan tables and defaults out of `neuro_cli.py`
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Estimated plan completion:
+  - about 82% complete overall after extracting the largest workflow data domain from `neuro_cli.py`
+  - remaining major gaps are live/richer event monitoring, broader WS-3 storage schemas, and eventual real MAF provider integration
+- Plan alignment:
+  - directly addresses the user-requested split of `WORKFLOW_PLANS` and `WORKFLOW_METADATA_DEFAULTS`
+  - keeps `neuro_cli` parser/handler behavior stable by preserving imported public names
+  - continues shrinking `neuro_cli.py` without changing Unit wire behavior, CLI commands, workflow names, or skill references
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - introduced `neuro_workflow_catalog.py` as the workflow catalog owner
+  - moved `WORKFLOW_PLANS`, `WORKFLOW_METADATA_DEFAULTS`, and `WORKFLOW_PLAN_METADATA` out of `neuro_cli.py`
+  - retained `neuro_cli.WORKFLOW_PLANS`, `neuro_cli.WORKFLOW_METADATA_DEFAULTS`, and `neuro_cli.WORKFLOW_PLAN_METADATA` through imports for compatibility
+  - added regression coverage that asserts the exported workflow tables are owned by `neuro_workflow_catalog`
+  - preserved existing workflow contract builders in `neuro_workflow_contracts.py`
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neuro_cli/src/neuro_cli.py neuro_cli/src/neuro_workflow_catalog.py neuro_cli/src/neuro_workflow_contracts.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k 'workflow_catalog_module or workflow_contract_module or workflow_plan or capabilities' --maxfail=4 -v` passed: 29 selected tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py --maxfail=4 -v` passed: 124 tests OK for the full Neuro CLI test file
+  - scoped `git diff --check` over this slice's touched files passed with no output
+- Next action:
+  - continue `neuro_cli.py` decomposition around serial helpers or event subscription helpers, or return to `EXEC-210` live/richer agent-events ingestion depending on release priority
+
+2026-05-04: Continued release-1.2.0 after the first `neuro_cli` contract split with a second low-risk decomposition and the first explicit Core policy-module gate. Added `neuro_cli/src/neuro_workflow_contracts.py` for pure workflow surface and workflow plan payload construction, while keeping `WORKFLOW_PLANS` data and public wrapper functions in `neuro_cli.py` for compatibility. This reduces `neuro_cli.py` responsibility around Agent-consumable workflow contracts without moving the large plan tables yet. Also added `neurolink_core/policy.py` with side-effect levels, read-only tool policy decisions, and a no-model workflow gate that evaluates tool contracts before adapter execution. Current `system_state_sync` remains allowed as read-only, while destructive or approval-required contracts are blocked before execution and persisted as structured tool results. - Copilot
+
+#### EXEC-211 Workflow Contract Split And Core Policy Gate
+
+- Status: completed for the second `neuro_cli` decomposition slice plus the first Core policy-module separation
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Estimated plan completion:
+  - about 80% complete overall after workflow contract extraction and policy gate wiring
+  - remaining major gaps are moving more large `neuro_cli.py` data domains safely, live/richer event monitoring, broader WS-3 storage schemas, and eventual real MAF provider integration
+- Plan alignment:
+  - advances the user-requested `neuro_cli` architecture split with another pure helper module
+  - keeps public `neuro_cli` functions and workflow plan names stable for existing tests and skill callers
+  - advances WS-6 by separating policy concepts from tool adapter implementation and enforcing a read-only no-model gate before tool execution
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_contracts.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neurolink_core/policy.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - introduced `neuro_workflow_contracts.py` for explicit-input workflow surface and workflow plan payload builders
+  - retained `neuro_cli.workflow_agent_metadata()`, `build_workflow_surface()`, and `build_workflow_plan()` as compatibility wrappers
+  - added direct regression coverage for the new workflow contracts module
+  - introduced `neurolink_core.policy.ReadOnlyToolPolicy` and `ToolPolicyDecision`
+  - moved `SideEffectLevel` ownership to `neurolink_core.policy` while preserving import compatibility through `neurolink_core.tools`
+  - wired `NoModelCoreWorkflow` to evaluate tool contracts before adapter execution and persist structured `policy_blocked` results for disallowed tools
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k 'workflow_contract_module or workflow_plan or capabilities' --maxfail=4 -v` passed: 28 selected tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py --maxfail=4 -v` passed: 123 tests OK for the full Neuro CLI test file
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=4 -v` passed: 28 tests OK after policy gate wiring
+  - scoped `git diff --check` over this slice's touched files passed with no output
+- Next action:
+  - continue decomposing `neuro_cli.py` by moving the large workflow plan tables only after adding an import-compatibility strategy, or proceed with richer/live `monitor agent-events` ingestion if event-loop closure becomes higher priority
+
+2026-05-04: Added a release-1.2.0 refactor task for `neuro_cli` size control and completed the first safe split. Extracted Agent-facing contract construction into `neuro_cli/src/neuro_agent_contracts.py`, including schema constants, protocol/runtime metadata, tool-manifest payload construction, and bounded agent-event row construction. `neuro_cli.py` now imports those APIs and keeps the parser/handler/transport orchestration, reducing coupling without changing public command behavior. Continued `EXEC-210` after the split by teaching the wrapper to forward `--output jsonl`, adding `NeuroCliToolAdapter.collect_agent_events()`, and letting `neurolink_core no-model-dry-run` opt into `--event-source neuro-cli-agent-events`. This starts the Core-side ingestion loop from the bounded `monitor agent-events` JSONL surface rather than relying only on hard-coded sample events. - Copilot
+
+#### EXEC-210 Neuro CLI Contract Split And Core Event Ingestion
+
+- Status: completed for the first architecture split plus bounded Core ingestion path
+- Owner: GitHub Copilot continuing release-1.2.0 implementation after user-requested `neuro_cli` decomposition
+- Estimated plan completion:
+  - about 76% complete overall after adding the first `neuro_cli` modularization task and closing the bounded Core ingestion loop for `monitor agent-events`
+  - remaining major gaps are live/richer event monitoring, broader WS-3 storage schemas, explicit policy module separation, and further `neuro_cli.py` decomposition around other large domains
+- Plan alignment:
+  - adds `neuro_cli` modularization as an explicit release-1.2.0 maintenance task
+  - keeps Agent-facing contract builders isolated from the large command/transport file
+  - advances `EXEC-210` by ingesting bounded JSONL agent events into the Core dry-run workflow
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_agent_contracts.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - introduced `neuro_agent_contracts.py` for Agent runtime metadata, manifest payloads, schema constants, and bounded event rows
+  - preserved the existing `neuro_cli` module API by importing the moved names back into `neuro_cli.py`
+  - added wrapper-level `--output json|jsonl` forwarding so Core can consume JSONL surfaces through the stable wrapper
+  - added `NeuroCliToolAdapter.collect_agent_events()` for bounded JSONL ingestion
+  - added `neurolink_core no-model-dry-run --event-source neuro-cli-agent-events` to build the local vertical slice from CLI event output
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k 'capabilities or tool_manifest or state_sync or agent_events' --maxfail=4 -v` passed: 9 tests OK after the split
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py --maxfail=4 -v` passed: 122 tests OK for the full Neuro CLI test file after the split
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python neuro_cli/scripts/invoke_neuro_cli.py --output jsonl monitor agent-events --max-events 1` emitted one bounded JSONL event row
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=4 -v` passed: 25 tests OK after Core event-source ingestion
+  - no live router, hardware smoke, or long-running monitor daemon was required
+- Next action:
+  - continue decomposing `neuro_cli.py` around other low-risk pure domains, with workflow plans or serial helpers as likely next candidates
+
+2026-05-04: Started `EXEC-210` with a bounded local event-ingestion surface instead of waiting for a full live subscription daemon. Added `monitor agent-events --output jsonl` to `neuro_cli` as a clearly labeled `bounded_equivalent` command that emits normalized Agent-facing event envelopes for the same callback-plus-time-tick vertical-slice shape already used in `neurolink_core`. This is intentionally not a live long-running Zenoh subscription yet: it closes the plan/code mismatch where `agent_runtime` advertised an `agent_events_command` that did not exist, and gives the Core side a concrete JSONL contract to start ingesting in the next slice. Updated runtime metadata so `agent_events_jsonl` is now true with `agent_events_mode=bounded_equivalent`, and added parser/output tests for the new command. - Copilot
+
+#### EXEC-210 Bounded Agent-Events JSONL Surface
+
+- Status: started and completed for the first bounded event-surface slice
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Estimated plan completion:
+  - about 72% complete overall against `docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md` after landing the first bounded `EXEC-210` entry point
+  - remaining major gaps are live or richer event ingestion, fuller WS-3 schema breadth, explicit policy-module separation, and end-to-end Core ingestion from the CLI event surface
+- Plan alignment:
+  - starts `EXEC-210` without over-claiming a full live event monitor
+  - closes the explicit runtime metadata gap where `monitor agent-events --output jsonl` was advertised but not implemented
+  - provides a concrete JSONL contract that the Core runtime can ingest next
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `monitor agent-events --output jsonl`
+  - marked the surface as `bounded_equivalent` and `live_subscription=false`
+  - updated `agent_runtime.supports.agent_events_jsonl` to true
+  - added parser and JSONL output coverage for the new event surface
+- Verification evidence:
+  - focused Neuro CLI tests are the next command in this slice
+  - no router, hardware smoke, or long-running daemon process was required
+- Next action:
+  - ingest the bounded JSONL agent-events output into `neurolink_core` so the local Core workflow can build perception events from the CLI event surface rather than only from hard-coded sample events
+
+2026-05-04: Aligned plan progress with actual code and advanced the next WS-6/WS-7 gap instead of opening `EXEC-210` early. At this point release-1.2.0 is roughly 68% complete against the current plan: WS-1 and WS-2 are effectively done, WS-3 and WS-4 are mostly done in deterministic local form, WS-5 is substantially done but still missing the `monitor agent-events --output jsonl` surface, and WS-6/WS-7 still needed workflow-level degraded-state visibility rather than just raw tool results. Closed part of that gap by adding adapter runtime metadata plus a `state_sync_summary` projection into workflow audit payloads, so audit records now capture whether the run used a fake or real Neuro CLI adapter, the runtime source, and the structured `failure_class` / `failure_status` / `recommended_next_actions` from state-sync degradation. This keeps later MAF orchestration from having to reverse-engineer raw tool payloads just to understand why delegated read-only execution degraded. - Copilot
+
+#### EXEC-209 Audit Visibility For Degraded State-Sync
+
+- Status: completed for workflow/audit exposure of real adapter degradation state
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Plan alignment:
+  - closes part of WS-6 by surfacing structured tool degradation into workflow audit records instead of leaving it buried in raw tool payloads
+  - advances WS-7 because the local vertical slice can now distinguish clean read-only state sync from degraded connectivity in its own audit evidence
+  - does not yet start `EXEC-210`; event-stream ingestion is still pending behind this audit/runtime hardening
+- Estimated plan completion:
+  - about 68% complete overall against `docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`
+  - complete or near-complete: WS-1, WS-2, most of WS-4, large parts of WS-5 and WS-6
+  - still clearly incomplete: full WS-3 schema breadth, `monitor agent-events --output jsonl`, policy module separation, and EXEC-210 local vertical-slice ingestion closure
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added adapter runtime metadata for fake and real Neuro CLI adapter paths
+  - projected `state_sync_summary` into audit payloads with snapshot status, failure class/status, and recommended next actions
+  - added audit record lookup helper for package-local verification
+  - added regression coverage for degraded real-adapter state sync being preserved in audit records
+- Verification evidence:
+  - focused Core workflow tests are the next command in this slice
+  - no firmware build, hardware smoke, or live model/provider integration was required
+- Next action:
+  - start the first `EXEC-210` slice by landing a bounded `monitor agent-events --output jsonl` equivalent and ingesting it into the local Core workflow path
+
+2026-05-04: Continued `EXEC-209` by hardening the real Core-to-CLI adapter against wrapper failures that still emit structured JSON. `NeuroCliToolAdapter` no longer collapses every non-zero wrapper exit into `command_exit_N`; it now parses JSON stdout first and preserves payload statuses like `no_reply` or `partial_failure`, so the Core side can distinguish transport/process failure from an expected structured Neuro CLI failure. Added a guarded real-process `system_state_sync` smoke in package-local tests with a short timeout, asserting that the result is either fully successful or a structured top-level failure when no local router/session is available. This gives the release-1.2.0 adapter path a real degraded-mode validation step without pretending hardware is present. - Copilot
+
+#### EXEC-209 Guarded Real-Process State-Sync Smoke
+
+- Status: completed for degraded-mode real-process state-sync validation
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Mainline alignment:
+  - preserves meaningful Neuro CLI failure statuses across the real adapter boundary instead of flattening them into raw exit-code failures
+  - adds a guarded real-process state-sync smoke that works both with and without local router/session availability
+  - improves the Core-side error model before later hardware/live-agent integration work
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - changed JSON parsing so non-zero wrapper exits still surface structured CLI payload statuses when stdout is valid JSON
+  - added regression coverage for non-zero exit plus structured JSON failure payloads
+  - added a short-timeout real wrapper `system_state_sync` smoke that accepts either clean success or structured top-level failure
+- Verification evidence:
+  - focused adapter tests are the next command in this slice
+  - no firmware build or hardware smoke was required; the guarded validation explicitly tolerates missing local router/session
+- Next action:
+  - start exposing richer state-sync failure categories and runtime metadata back into workflow audit records so later MAF orchestration can reason about degraded connectivity explicitly
+
+2026-05-04: Continued `EXEC-209` with the first real-process local smoke for the Core-to-CLI adapter path. Extended `neurolink_core.cli tool-manifest` so it can use `--tool-adapter neuro-cli`, then added package-local smoke coverage that launches the actual `neuro_cli/scripts/invoke_neuro_cli.py` wrapper through `NeuroCliToolAdapter` and verifies the returned manifest contains the read-only `system_state_sync` contract. This keeps the smoke narrow and deterministic because `system tool-manifest` is workspace-local metadata, not a live device query. It gives release-1.2.0 a concrete local end-to-end check for the real adapter path before any hardware-dependent `state-sync` smoke is attempted. - Copilot
+
+#### EXEC-209 Local Real-Process Manifest Smoke
+
+- Status: completed for the first real wrapper-process validation slice
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Mainline alignment:
+  - validates the real Core-to-CLI adapter through an actual local wrapper process instead of only fake injected runners
+  - keeps the smoke deterministic by using `system tool-manifest`, which is local metadata and does not require router or Unit connectivity
+  - adds a user-facing verification entry point through `neurolink_core.cli tool-manifest --tool-adapter neuro-cli`
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `NeuroCliToolAdapter.tool_manifest_payload()` for a shared manifest payload shape
+  - extended `neurolink_core.cli tool-manifest` with `--tool-adapter fake|neuro-cli`
+  - added a real-process test that launches the actual wrapper for `system tool-manifest`
+  - added a CLI smoke test that verifies the new opt-in manifest path end-to-end
+- Verification evidence:
+  - focused package-local Core adapter tests are the next command in this slice
+  - no router, firmware build, or hardware smoke was required because the smoke only exercises local manifest discovery
+- Next action:
+  - add guarded real-process coverage for `system state-sync` that automatically skips or degrades cleanly when no local router/session is available
+
+2026-05-04: Continued `EXEC-209` by wiring the new `NeuroCliToolAdapter` into an opt-in no-model workflow path instead of leaving it test-only. `neurolink_core.cli no-model-dry-run` now accepts `--tool-adapter fake|neuro-cli`; the default remains fake for deterministic local behavior, but the workflow can now run through the real CLI-consuming adapter path when explicitly requested. Added package-local coverage that patches the CLI adapter constructor with a fake runner-backed `NeuroCliToolAdapter`, proving the workflow can consume the real `tool-manifest` and `state-sync` JSON contract path end-to-end without requiring live infrastructure. - Copilot
+
+#### EXEC-209 Opt-In Real Adapter Workflow Path
+
+- Status: completed for the first opt-in workflow wiring of the real CLI-consuming adapter
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Mainline alignment:
+  - keeps fake adapters as the default local path while enabling an explicit real-contract path for the workflow
+  - proves the no-model workflow can execute against actual CLI-shaped tool-manifest and state-sync JSON
+  - avoids forcing live infrastructure by keeping the real adapter path opt-in and test-injected
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `--tool-adapter fake|neuro-cli` to `neurolink_core.cli no-model-dry-run`
+  - allowed `run_no_model_dry_run()` to accept an injected tool adapter instance
+  - verified the workflow can run through the real CLI-consuming adapter path using fake CLI stdout in tests
+- Verification evidence:
+  - focused package-local Core tests are the next command in this slice
+  - no live Neuro CLI process execution, firmware build, or hardware smoke was required for this opt-in wiring step
+- Next action:
+  - add a small real-process smoke path for `NeuroCliToolAdapter` against local `system tool-manifest` when the workspace CLI is available, while keeping tests deterministic
+
+2026-05-04: Continued `EXEC-209` from schema alignment into the first real Core-side adapter boundary. Added `NeuroCliToolAdapter` in `neurolink_core.tools` with an injectable command runner so the Core runtime can load `system tool-manifest` JSON, resolve `system_state_sync`, execute `system state-sync`, and classify top-level execution failures without requiring hardware or a live router in unit tests. This is still not wired in as the default workflow adapter, but it is the first non-fake path that consumes the actual CLI contract shape instead of only mirroring it. The adapter is intentionally narrow for this slice: it supports manifest loading plus `system_state_sync`, and tests exercise success and top-level failure handling with fake CLI stdout. - Copilot
+
+#### EXEC-209 Real Core-To-CLI Adapter Boundary
+
+- Status: completed for the first real CLI-consuming adapter slice
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Mainline alignment:
+  - advances from fake-only Core contracts to a real adapter boundary that can consume actual `neuro_cli` JSON output
+  - keeps the slice deterministic by injecting the command runner in tests instead of requiring live infrastructure
+  - limits the first real execution surface to read-only `system_state_sync`
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `NeuroCliToolAdapter` with manifest discovery through `system tool-manifest --output json`
+  - added real `system_state_sync` execution parsing through `system state-sync --output json`
+  - added structured classification for command exit / parse / top-level status failures in the new adapter path
+  - kept the fake adapter in place for deterministic workflow defaults while enabling a real adapter boundary for the next slice
+- Verification evidence:
+  - focused package-local Core tests are the next command in this slice
+  - no firmware build, no hardware smoke, and no live Neuro CLI process execution was required for this adapter boundary step
+- Next action:
+  - wire `NeuroCliToolAdapter` into an opt-in workflow path so the no-model workflow can run against actual CLI contracts when a local Unit/router is available
+
+2026-05-04: Continued `EXEC-209` by removing the remaining contract drift between `neurolink_core` and the newly added Neuro CLI Agent-facing surfaces. The Core-side fake tool adapter no longer uses the older `unit_state_sync` name; it now advertises and executes `system_state_sync`, emits a CLI-compatible tool-manifest schema, and returns a typed fake state-sync snapshot with `device/apps/leases` surfaces that matches the read-only contract shape added to `neuro_cli`. Updated the fake Rational Agent to delegate against `system_state_sync` so the no-model Core workflow now exercises the same contract name the real CLI exposes. This keeps local deterministic tests useful while reducing the amount of renaming and schema conversion needed when the real Core-to-CLI adapter lands. - Copilot
+
+#### EXEC-209 Core/CLI Contract Alignment
+
+- Status: completed for the first Core-side alignment with the new CLI contract names and schema
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Mainline alignment:
+  - removes naming drift between the Core fake adapter and the real `neuro_cli` Agent-facing contract
+  - keeps the slice local and deterministic by aligning the fake adapter to the same `system_state_sync` surface
+  - introduces a typed fake state-sync snapshot so workflow tests exercise the same payload family the future real adapter will consume
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - renamed the fake delegated tool from `unit_state_sync` to `system_state_sync`
+  - aligned the Core fake tool manifest to the same `1.2.0-tool-manifest-v1` schema family as the CLI
+  - added a typed fake `state_sync` snapshot with `device`, `apps`, and `leases` surfaces
+  - updated the fake Rational Agent and workflow path to execute the aligned tool contract
+  - added typed deserialization helpers so `neurolink_core` can parse CLI-style tool-manifest and state-sync JSON back into Core DTOs
+  - added regression tests for typed state-sync payloads and aligned manifest output
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=3 -v` passed: 14 tests OK after contract rename and typed manifest/state-sync parsing coverage
+  - no firmware build, no hardware smoke, and no real Neuro CLI process execution was run in this alignment step
+- Next action:
+  - continue from aligned fake contracts into a real Core adapter that can consume the actual `neuro_cli system tool-manifest` and `system state-sync` JSON output
+
+2026-05-04: Started `EXEC-209` by moving the first real Agent-facing contract surfaces from the Core-only fake layer into `neuro_cli`. Implemented `tool-manifest` as a stable local JSON schema that advertises read-only query/state-sync tools with argv templates, side-effect levels, timeout/retry metadata, output contracts, and cleanup hints. Replaced the old top-level `state-sync` placeholder with a real aggregator that collects `query device`, `query apps`, and `query leases` through the existing retry/query path and emits a unified JSON state snapshot with failures and recommended next actions. Extended `system capabilities --output json` with `agent_runtime` metadata so the Core Agent can discover wrapper path, supported Agent-facing surfaces, and side-effect categories without scraping docs. This slice remains CLI-local and read-only: no Unit firmware, protocol wire shape, hardware execution, or real Agent/provider integration changed. - Copilot
+
+#### EXEC-209 Neuro CLI Tool Manifest And State-Sync Contract
+
+- Status: in progress with the first local read-only contract slice implemented
+- Owner: GitHub Copilot continuing release-1.2.0 implementation
+- Mainline alignment:
+  - implements the first real Agent-facing Neuro CLI surfaces instead of keeping the contract only inside `neurolink_core`
+  - keeps the slice read-only and local by reusing existing query routes and protocol metadata
+  - preserves existing query transport and failure handling semantics by building on current retry/query helpers
+  - adds runtime discovery metadata through `system capabilities --output json`
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `system tool-manifest --output json` and top-level `tool-manifest`
+  - replaced the top-level `state-sync` placeholder with a real read-only aggregator and added grouped alias `system state-sync`
+  - added `agent_runtime` metadata to `system capabilities --output json`
+  - defined initial manifest entries for device/apps/leases query tools, state-sync, and capabilities
+  - emitted recommended next actions from the state-sync snapshot based on connectivity and lease state
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k 'capabilities or tool_manifest or state_sync' --maxfail=3 -v` passed: 7 tests OK
+  - no firmware build, no hardware smoke, and no Unit wire/protocol schema change was run
+- Next action:
+  - refine the tool-manifest schema toward the final release-1.2.0 contract and add `agent_runtime` coverage to wrapper-facing documentation/tests
+
+2026-05-04: Continued release-1.2.0 beyond the Core data MVP by moving the AI Core tests into the `neurolink_core` package itself and establishing the first bounded Agent-facing tool contract inside the Core runtime. Created `neurolink_core/tests/` and migrated the end-to-end Core workflow tests there so the package now owns its own verification surface instead of relying on the repository-level test root. Added a minimal `ToolContract` / `SideEffectLevel` manifest layer in `neurolink_core.tools`, with `FakeUnitToolAdapter.tool_manifest()` and `describe_tool()` exposing a deterministic read-only `unit_state_sync` contract plus structured unknown-tool failure classification. This is still a local fake adapter, but it now matches the release-1.2.0 design direction that every tool must declare side-effect level, retryability, timeout, approval requirement, and resource requirements before execution. - Copilot
+
+#### EXEC-208 Workflow/Adapter Hardening And Package-Local Tests
+
+- Status: completed for package-local test ownership and first bounded tool contract
+- Owner: GitHub Copilot continuing release-1.2.0 implementation with user-directed test relocation
+- Mainline alignment:
+  - keeps `neurolink_core` as a self-contained Python project with package-local tests
+  - hardens the existing deterministic workflow slice without requiring real MAF or Neuro CLI runtime integration
+  - introduces the first tool manifest/contract boundary required by the Agent Tool Adapter Subsystem design
+  - preserves fake adapters so local validation remains deterministic and credential-free
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/tests/test_neurolink_core.py` (removed after migration)
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - created `neurolink_core/tests/` and migrated the Core workflow test suite into the package
+  - added package-local tool contract tests for manifest exposure and structured unknown-tool failures
+  - introduced `SideEffectLevel` and `ToolContract` DTOs in the fake Unit tool adapter layer
+  - added `tool_manifest()` and `describe_tool()` to `FakeUnitToolAdapter`
+  - exposed the package-local tool manifest through `neurolink_core.cli tool-manifest --output json`
+  - structured unknown-tool execution failures as manifest lookup failures instead of a bare error string
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests --maxfail=2 -v` passed: 11 tests OK after adding package-local tests and `tool-manifest` CLI coverage
+  - no real Neuro CLI process execution, firmware build, hardware smoke, or real MAF/provider integration was run
+- Next action:
+  - continue toward `EXEC-209` by replacing the fake manifest shape with the first Neuro CLI-compatible tool-manifest schema and a typed state-sync result envelope
+
+2026-05-04: Continued release-1.2.0 `EXEC-207` by hardening the perception/data MVP around the executable no-model workflow instead of only keeping the initial happy-path dry run. Rebuilt `neurolink_core/workflow.py` into a clean deterministic implementation after a broken edit sequence had corrupted the file, restored the dry-run contract from `event_ingress` through `notification_dispatch`, and kept the release rule that perception facts are persisted before reasoning. Extended `CoreDataStore` with reusable query and topic-index helpers plus DB-backed frame construction support, then added focused tests that lock the new data-service behavior: priority/topic-filtered event queries, recent-topic lookup, DB-backed frame aggregation, and the workflow path that reconstructs its reasoning frame from persisted events (`use_db_events=True`). This slice still uses fake Agent adapters and a fake read-only Unit tool adapter; no real Microsoft Agent Framework provider, model credentials, Neuro CLI runtime change, firmware build, or hardware path was touched. - Copilot
+
+#### EXEC-207 Core Data Service MVP Hardening
+
+- Status: completed for the first perception/data MVP hardening slice
+- Owner: GitHub Copilot continuing release-1.2.0 implementation with user direction
+- Mainline alignment:
+  - preserves the existing no-model deterministic workflow as the first executable Core path
+  - hardens the Core Data Service around persisted perception-first semantics rather than bypassing storage during reasoning
+  - adds a DB-backed frame reconstruction path that matches the release-1.2.0 perception router direction
+  - keeps fake Agent/tool adapters in place so the slice remains local and deterministic
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - repaired and normalized `neurolink_core/workflow.py` into a stable implementation after prior corruption
+  - added `CoreDataStore.query_events()` for priority/topic filtered reads from persisted perception events
+  - added `CoreDataStore.get_recent_topics()` for simple topic index lookup
+  - added `CoreDataStore.build_frame()` for DB-backed perception frame reconstruction
+  - extended `NoModelCoreWorkflow.run()` with an optional `use_db_events=True` mode so reasoning can rebuild from persisted slices
+  - extended the `no-model-dry-run` CLI with `--use-db-events`, `--query-limit`, `--min-priority`, and `--topic` so the DB-backed slice is locally invokable without code edits
+  - added regression tests for filtered query/topic indexing and DB-backed frame reconstruction
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest tests/test_neurolink_core.py --maxfail=2 -v` passed after workflow repair: 4 tests OK before adding the new assertions
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest tests/test_neurolink_core.py --maxfail=2 -v` passed again after expanding the slice: 7 tests OK including CLI DB-slice coverage
+  - no firmware build, no hardware smoke, no real Neuro CLI Unit command, and no real MAF/provider integration was run
+- Next action:
+  - continue with the first real Agent-facing tool adapter contract and a typed event-router boundary for perception ingress in the next release-1.2.0 slice
+
+2026-05-04: Added the first release-1.2.0 Python AI Core runtime slice as `neurolink_core`: a no-model deterministic workflow that normalizes perception events, persists them to SQLite before reasoning, builds a perception frame, runs fake Affective/Rational Agent adapters, executes a fake read-only Unit state-sync tool, seals an audit record, and exposes a local `no-model-dry-run` CLI entrypoint. This is the first executable Core-Agent scaffold and intentionally avoids real model credentials, real MAF provider calls, Unit firmware changes, hardware access, and Neuro CLI behavior changes. - Copilot
+
+#### EXEC-206 Python Core Skeleton And No-Model Dry Run
+
+- Status: completed for initial executable Core skeleton
+- Owner: GitHub Copilot with user direction to start release-1.2.0 implementation
+- Mainline alignment:
+  - follows the EXEC-205 MAF Core Agent architecture baseline
+  - keeps MAF/provider integration behind adapters and fake-agent seams for local tests
+  - preserves Neuro CLI as the future Unit tool surface; this slice uses a fake read-only Unit tool adapter only
+  - proves the release-1.2.0 rule that perception facts are persisted before Agent reasoning
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/__init__.py`
+  - `applocation/NeuroLink/neurolink_core/common.py`
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/memory.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `NoModelCoreWorkflow` with the release-1.2.0 dry-run step order from `event_ingress` to `notification_dispatch`
+  - added the minimum perception event envelope, perception frame, workflow result DTOs, and local ID/time helpers
+  - added SQLite persistence for perception events, tool results, and audit records
+  - added fake Affective/Rational Agent adapters, fake long-term memory lookup, and fake read-only Unit state-sync tool execution
+  - added `neurolink-core` style CLI module command `no-model-dry-run --output json`
+  - added unit tests for persistence-before-reasoning, low-salience no-delegation, file-backed dry-run counts, and CLI JSON output
+- Verification evidence:
+  - configured Python venv for `/home/emb/project/zephyrproject/applocation/NeuroLink` with Python 3.12.3
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m unittest discover -s tests -p 'test_neurolink_core.py'` passed: 4 tests OK
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m unittest discover -s neuro_cli/tests -p 'test_*.py'` passed from the NeuroLink project root: 127 tests OK
+  - VS Code Problems reported no errors for `tests/test_neurolink_core.py`
+  - no firmware build, hardware smoke, real model provider, real Microsoft Agent Framework provider call, or live Neuro CLI Unit command was run in this slice
+- Next action:
+  - continue with `EXEC-207` Core Data Service schema hardening and perception event router expansion, then add the first real Neuro CLI tool adapter contract in `EXEC-209`
+
+2026-05-04: Started release-1.2.0 as the NeuroLink native AI Core Agent track after the release-1.1.10 demo-platform cutoff. The release direction is now Microsoft Agent Framework first: MAF `Agent` objects own open-ended Affective/Rational reasoning, while MAF Workflows own deterministic perception, persistence, delegation, tool execution, policy, and audit orchestration. Added the release baseline plan at `docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`, clarified the HLD boundary so `Agent` and Workflow responsibilities are explicit, and extended the AI Core LLD with the release-1.2.0 MAF execution profile, Agent tool adapter subsystem, and perception event router contracts. This slice is documentation and architecture kickoff only: no Unit firmware, demo app, protocol wire format, release marker, hardware state, or Neuro CLI runtime behavior changed. - Copilot
+
+#### EXEC-205 Release-1.2.0 MAF Core Agent Kickoff
+
+- Status: completed for release planning and architecture baseline
+- Owner: GitHub Copilot with user direction to implement the Agent on Microsoft Agent Framework
+- Mainline alignment:
+  - starts release-1.2.0 from the closed release-1.1.10 demo-platform baseline
+  - keeps release-1.1.10 demo closure intact and does not reopen hardware demo scope
+  - makes AI Core native Agent work the new release focus
+  - preserves Neuro CLI as the Unit tool/control compatibility surface for the first Core Agent slices
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`
+  - `applocation/NeuroLink/docs/project/HLD.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_LLD.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - created the release-1.2.0 MAF Core Agent plan with workstreams for Python Core skeleton, perception/data MVP, MAF workflow and Agent wrappers, Neuro CLI Agent-facing contracts, policy/audit, and local vertical-slice closure
+  - clarified that MAF `Agent` is for open-ended Affective/Rational reasoning and MAF Workflow is for deterministic orchestration
+  - documented the first release-1.2.0 local workflow steps from `event_ingress` through `audit_seal` and `notification_dispatch`
+  - added LLD contracts for Agent tool adapters and perception event routing
+- Verification evidence:
+  - `git -C applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed with no output
+  - `git -C applocation/NeuroLink diff --stat` confirmed the HLD/LLD diff is limited to the new release-1.2.0 content after preserving the existing CRLF documentation style
+  - no Python Core runtime, firmware, hardware smoke, or Neuro CLI behavior test was run in this kickoff slice
+- Next action:
+  - continue with the Python `neurolink_core` package skeleton and no-model dry-run workflow as `EXEC-206`
+
 2026-05-03: Closed release-1.1.10 at the requested cutoff after the long demo-platform development cycle. The included scope is the completed and locally/hardware-proven demo family: `neuro_demo_net_event`, `neuro_demo_gpio`, `neuro_demo_uart`, `neuro_demo_spi`, `neuro_demo_adc_pwm`, and `neuro_demo_i2c` with AP3216C scan/sample proof. The remaining `neuro_demo_net_udp` and `neuro_demo_integrated` work is explicitly deferred to the next release in the demo catalog instead of continuing to extend this release. Promoted the canonical CLI marker to `RELEASE_TARGET = "1.1.10"`, promoted `neuro_unit_app` to `neuro_unit_app-1.1.10-cbor-v2`, promoted demo app identities from `1.1.10-dev` to `1.1.10`, marked the 1.1.10 catalog as closed, and updated the README/release plan/tests to match the cutoff. The live board state before cutoff had `neuro_demo_i2c` `RUNNING` / `ACTIVE` and `leases=[]`; final validation for the metadata cutoff is recorded with the release commit. - Copilot
 
 2026-05-03: Closed the requested `EXEC-202` DNESP32S3B IO8 ADC voltage-reading proof for `neuro_demo_adc_pwm`. Confirmed ESP32-S3 GPIO8 maps to ADC1 channel 7 and is not used by the current NeuroLink board overlay for UART1 J3 loopback, SPI3 SD, I2C0, LCD, LEDs, or buttons. Enabled Zephyr ADC support in the Unit build and added the board overlay binding for `adc0` channel 7 plus `zephyr,user` `io-channels = <&adc0 7>`, using `ADC_GAIN_1_4`, `ADC_REF_INTERNAL`, and 12-bit resolution. Added `subprojects/neuro_demo_adc_pwm` with `action=capability`, `action=adc_read`, and graceful unsupported `action=pwm_set`; `adc_read` accepts bounded `samples`, publishes compact `adc_sample` JSON events with raw/mV evidence for GPIO8/channel 7, and supports callback events through the stable public app callback API. The first hardware activate failed after prepare/verify with `runtime/llext_load LOAD_FAILURE cause=-2 ret=-20490`; symbol inspection showed non-exported helper references from `adc_raw_to_millivolts_dt`, `adc_is_ready_dt`, and `k_busy_wait`, so the app was narrowed to the exported ADC read path and an app-local 12-bit/1100 mV/`ADC_GAIN_1_4` millivolt conversion. Rebuilt artifact size dropped from 26392 to 23672 bytes, and undefined symbols now only include the ADC0 device, NeuroLink public API, and libc symbols. Hardware redeploy through `smoke_neurolink_linux.sh --app-id neuro_demo_adc_pwm` passed preflight, prepare, verify, activate, and monitor; `query apps` reports `neuro_demo_adc_pwm` `RUNNING` / `ACTIVE`. With IO8 connected to GND, protected `app invoke --args-json '{"action":"adc_read","samples":4}'` returned `command=adc_read`, `echo=io8_adc1_ch7`, and `publish_ret=0`; `monitor app-events --app-id neuro_demo_adc_pwm` captured `adc_sample` JSON on `neuro/unit-01/event/app/neuro_demo_adc_pwm/adc_sample` with `gpio=8`, `channel=7`, `raw=0`, `mv=0`, `count=4`, and `invoke_count=2`. Final lease cleanup is confirmed with `query leases` returning `leases=[]`; the ADC demo remains running intentionally for additional IO8 voltage reads. - Copilot

@@ -68,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--node", default="unit-01")
     parser.add_argument("--source-core", default="core-cli")
     parser.add_argument("--source-agent", default="skills")
+    parser.add_argument("--output", choices=("json", "jsonl"), default="json")
     parser.add_argument("--timeout", type=float, default=None, help="forwarded query timeout")
     parser.add_argument(
         "--query-retries", type=int, default=None, help="forwarded query retry count"
@@ -118,7 +119,7 @@ def main() -> int:
         args.python,
         str(cli_path),
         "--output",
-        "json",
+        args.output,
         "--node",
         args.node,
         "--source-core",
@@ -131,6 +132,15 @@ def main() -> int:
 
     stdout = proc.stdout.strip()
     payload = None
+    if args.output == "jsonl":
+        if stdout:
+            print(stdout)
+        payload = {"ok": proc.returncode == 0, "status": "ok" if proc.returncode == 0 else "process_failed"}
+        stderr = proc.stderr.strip()
+        if stderr:
+            print(stderr, file=sys.stderr)
+        return 0 if proc.returncode == 0 else int(proc.returncode)
+
     if stdout:
         try:
             payload = json.loads(stdout)

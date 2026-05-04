@@ -156,9 +156,7 @@ requires a successful `query leases` response with no unexpected active leases.
 
 ## Demo Workflow Plans
 
-For release 1.1.10 demo rollout, ask for `workflow plan demo-build` before any
-selected demo artifact build. This keeps Agents on the catalog-backed wrapper
-surface instead of hand-assembling `build_neurolink.sh --app ...` commands.
+For release 1.2.0 demo or AI Core integration work, ask for `workflow plan demo-build` before any selected demo artifact build. This keeps Agents on the catalog-backed wrapper surface instead of hand-assembling `build_neurolink.sh --app ...` commands.
 
 Ask for `workflow plan demo-net-event-smoke` before running the first network
 demo on hardware. The plan keeps the same discovery/control discipline: it

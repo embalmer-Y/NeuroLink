@@ -131,6 +131,44 @@ Rules:
 4. A span ends only after persistence and audit emission complete.
 5. Failure responses may be released before async notification fan-out finishes, but not before audit emission is queued durably.
 
+### 4.3 Release 1.2.0 MAF Execution Profile
+
+Release 1.2.0 starts the executable AI Core implementation with Microsoft Agent
+Framework as the Agent runtime and workflow host.
+
+Implementation rules:
+
+1. Use MAF `Agent` objects only for open-ended Affective and Rational reasoning
+  nodes.
+2. Use MAF workflows for deterministic orchestration: event ingress,
+  persistence, perception-frame build, context load, arbitration, delegation,
+  tool execution, audit sealing, and notification dispatch.
+3. Start with the Python Functional Workflow API for the first local slice so
+  tests can exercise the full path without real model credentials.
+4. Keep a migration path to graph workflows with executors and edges when typed
+  routing, fan-out/fan-in, checkpoint boundaries, or human-in-the-loop nodes
+  become release requirements.
+5. Wrap MAF provider calls behind NeuroLink adapters so unit tests can run with
+  deterministic fake agents.
+6. Treat Neuro CLI as the first production Unit tool adapter; Core Agent code
+  must not bypass the existing lease, cleanup, and payload-status contracts for
+  supported Unit operations.
+
+Minimum release-1.2.0 local workflow steps:
+
+1. `event_ingress`
+2. `database_persistence`
+3. `perception_frame_build`
+4. `session_context_load`
+5. `long_term_memory_lookup_stub`
+6. `affective_arbitration`
+7. `rational_delegate_optional`
+8. `tool_and_unit_execution`
+9. `audit_seal`
+10. `notification_dispatch`
+
+UT anchor: `UT-CORE-MAF-*`
+
 ## 5. Subsystem Design
 
 ### 5.1 Ingress Layer
@@ -227,6 +265,57 @@ Responsibilities:
 1. Evaluate actor, capability, and lease-aware permissions.
 2. Record every allow/deny decision with evidence fields.
 3. Emit immutable audit records for critical execution steps.
+
+### 5.10 Agent Tool Adapter Subsystem
+
+Responsibilities:
+
+1. Expose deterministic tools to MAF Agents and workflows through bounded
+  adapter contracts.
+2. Wrap Neuro CLI as the first Unit control tool surface.
+3. Classify execution failures using process exit code, JSON top-level status,
+  nested payload status, parse failure, timeout, and output truncation.
+4. Attach `agent_id`, `principal_id`, `execution_span_id`, `correlation_id`, and
+  `source_agent` metadata wherever the target tool supports it.
+5. Declare side-effect level, lease/resource requirements, timeout, retryability,
+  cleanup hints, and approval requirements for every tool.
+
+Hard boundary:
+
+1. Tool adapters may invoke existing CLI wrappers and MCP servers.
+2. Tool adapters may not silently execute local code from MCU-originated events.
+3. Unit side effects require policy allow, lease awareness, idempotency metadata
+  where applicable, and audit sealing.
+
+UT anchor: `UT-CORE-TOOLADAPT-*`
+
+### 5.11 Perception Event Router
+
+Responsibilities:
+
+1. Normalize Unit telemetry, app events, callback events, user prompts, operator
+  requests, external API messages, and time ticks into a common event envelope.
+2. Persist normalized events before any Agent reasoning.
+3. Deduplicate, debounce, batch, and prioritize events into perception frames.
+4. Wake the Affective Agent only when salience and policy gates allow work.
+
+Minimum envelope fields:
+
+1. `event_id`
+2. `source_kind`
+3. `source_node`
+4. `source_app`
+5. `event_type`
+6. `semantic_topic`
+7. `timestamp_mono`
+8. `timestamp_wall`
+9. `priority`
+10. `dedupe_key`
+11. `causality_id`
+12. `raw_payload_ref`
+13. `policy_tags`
+
+UT anchor: `UT-CORE-PERCEPTION-*`
 
 ## 6. State Machines
 

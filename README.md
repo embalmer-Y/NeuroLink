@@ -2,7 +2,9 @@
 
 NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
 
-The project is currently closed at release `1.1.10`. The canonical host CLI advertises `RELEASE_TARGET = "1.1.10"`.
+The project is currently closed at release `1.2.0`. The canonical host CLI advertises `RELEASE_TARGET = "1.2.0"`.
+
+Release `1.2.0` closes the local AI Core baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, bounded Agent event ingestion, and a credential-safe provider smoke check. The validated release `1.1.10` Unit/demo platform remains the hardware baseline for follow-up provider or live-event integration work.
 
 ## Project Layout
 
@@ -10,6 +12,7 @@ The project is currently closed at release `1.1.10`. The canonical host CLI adve
 NeuroLink/
 ├── neuro_unit/       # Zephyr firmware, runtime, update service, app command service, and unit tests
 ├── neuro_cli/        # Python host-control CLI and CLI tests
+├── neurolink_core/   # Python AI Core local baseline, event router, MAF adapter seam, and tests
 ├── scripts/          # Build, preflight, smoke, WSL board preparation, and utility scripts
 ├── tests/            # Script-level regression tests
 ├── docs/             # Release plans, architecture notes, and runbooks
@@ -76,6 +79,19 @@ bash applocation/NeuroLink/neuro_unit/tests/unit/run_ut_linux.sh
 /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q
 ```
 
+### AI Core local baseline tests
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests -q
+```
+
+### AI Core dry-run and MAF provider smoke
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli no-model-dry-run --output json
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli maf-provider-smoke --output json
+```
+
 ### C style
 
 ```bash
@@ -123,6 +139,6 @@ Capability map:
 Release progress and architecture closure notes live in:
 
 - `PROJECT_PROGRESS.md`
-- `docs/project/RELEASE_1.1.4_PRE_RESEARCH.md`
+- `docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.1.4` closed after local, script, build, preflight, and real-board smoke evidence passed. Future work should open a new release or maintenance slice rather than extending `1.1.4`.
+Release `1.2.0` closes the local AI Core baseline after Python compile, Core tests, Neuro CLI tests, Core dry-run smoke, MAF provider smoke, Problems, and whitespace gates passed. Real model-provider calls, long-running live event daemons, and additional hardware smoke are post-baseline integration tracks.

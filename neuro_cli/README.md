@@ -2,6 +2,8 @@
 
 This directory is the canonical home for the Neuro CLI host-control project.
 
+Current release target: `1.2.0`. For release-1.2.0, Neuro CLI remains the stable Unit tool/control surface consumed by the new `neurolink_core` AI Core baseline.
+
 ## Structure
 - src: CLI implementation
 - scripts: helper/wrapper scripts for automation
@@ -35,3 +37,11 @@ source applocation/NeuroLink/scripts/setup_neurolink_env.sh --activate --strict 
 
 ## Skill entrypoint
 - applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py
+
+## Agent-facing release-1.2.0 surfaces
+
+```bash
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system tool-manifest
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system state-sync
+python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --output jsonl monitor agent-events --max-events 2
+```

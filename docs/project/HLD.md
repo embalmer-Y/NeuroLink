@@ -144,6 +144,9 @@ Unit 主要面向 MCU 场景，基于 Zephyr RTOS 构建，最低要求如下：
 6. 当前 `demo_unit` 已在实板上验证 `prepare -> verify -> activate -> query apps` 与 `app-stop -> app-start` 两条闭环。
 7. 当前内存观测以 `sys_heap_runtime_stats_get()` 与线程 stack watermark 为可信依据，Espressif `heap_caps_*` 在该 Zephyr target 下不作为结论来源。
 8. AI Core Agent 编排框架选型确定为 `Microsoft Agent Framework`。
+9. release 1.2.0 起，AI Core 的原生 Agent 实现以 Microsoft Agent Framework
+  Python 运行时为主路径：`Agent` 承担感性/理性推理节点，Workflow 承担
+  感知、落库、委派、工具执行、策略审计等确定性编排。
 
 ## 6. High-Level Architecture
 
@@ -293,6 +296,19 @@ AI Core 的正式 Agent 编排层采用 Microsoft Agent Framework，原因如下
 1. 官方定位为 AutoGen 的继任框架，适合新项目长期演进。
 2. 提供 graph-based workflow、executor、middleware、checkpointing、human-in-the-loop、observability。
 3. 支持 MCP 和多提供商模型接入，适合本项目的工具编排与多模态接入需求。
+
+在 NeuroLink 中，MAF 的使用边界进一步明确为：
+
+1. `Agent` 用于开放式推理节点，例如感性 Agent 的语义仲裁、呈现策略和
+  理性 Agent 的计划生成。
+2. `Workflow` 用于确定性流程，例如事件摄取、数据库持久化、上下文加载、
+  委派窗口、工具/Unit 执行、结果过滤、审计封存和通知分发。
+3. 工具调用必须通过策略、租约和审计层治理；MAF tool 能力不能绕过
+  NeuroLink 的 Unit 控制面与 Neuro CLI 兼容契约。
+4. release 1.2.0 的首个实现切片优先采用 Python Functional Workflow，以便
+  在无真实模型凭据的本地环境中验证 Core 控制流；当需要固定拓扑、类型化
+  边、并行 fan-out/fan-in 或明确 checkpoint 边界时，再迁移到 graph
+  WorkflowBuilder 形式。
 
 NeuroLink 中推荐的 workflow 逻辑节点至少包括：
 
