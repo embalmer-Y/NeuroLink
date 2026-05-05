@@ -12,6 +12,7 @@ for expected in \
   'FAILED_STEP="-"' \
   'FAILURE_EXIT_CODE=0' \
   'run_smoke_step()' \
+  'artifact_is_valid_llext_file()' \
   'echo "failed_step=${FAILED_STEP}"' \
   'echo "failure_exit_code=${FAILURE_EXIT_CODE}"'; do
   if [[ "${script_text}" != *"${expected}"* ]]; then

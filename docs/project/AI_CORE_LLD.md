@@ -131,9 +131,9 @@ Rules:
 4. A span ends only after persistence and audit emission complete.
 5. Failure responses may be released before async notification fan-out finishes, but not before audit emission is queued durably.
 
-### 4.3 Release 1.2.0 MAF Execution Profile
+### 4.3 Release 1.2.1 MAF Execution Profile
 
-Release 1.2.0 starts the executable AI Core implementation with Microsoft Agent
+Release 1.2.1 continues the executable AI Core implementation with Microsoft Agent
 Framework as the Agent runtime and workflow host.
 
 Implementation rules:
@@ -154,7 +154,7 @@ Implementation rules:
   must not bypass the existing lease, cleanup, and payload-status contracts for
   supported Unit operations.
 
-Minimum release-1.2.0 local workflow steps:
+Minimum release-1.2.1 local workflow steps:
 
 1. `event_ingress`
 2. `database_persistence`

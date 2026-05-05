@@ -5,7 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .common import new_id
 from .policy import SideEffectLevel
@@ -13,6 +13,11 @@ from .policy import SideEffectLevel
 
 TOOL_MANIFEST_SCHEMA_VERSION = "1.2.0-tool-manifest-v1"
 STATE_SYNC_SCHEMA_VERSION = "1.2.0-state-sync-v1"
+APP_CONTROL_TOOL_ACTIONS = {
+    "system_start_app": "start",
+    "system_stop_app": "stop",
+    "system_unload_app": "unload",
+}
 
 
 @dataclass(frozen=True)
@@ -28,7 +33,9 @@ class ToolContract:
     retryable: bool = False
     approval_required: bool = False
     cleanup_hint: str | None = None
-    output_contract: dict[str, Any] = field(default_factory=dict)
+    output_contract: dict[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ToolContract":
@@ -170,6 +177,87 @@ class FakeUnitToolAdapter:
     def tool_manifest(self) -> tuple[ToolContract, ...]:
         return (
             ToolContract(
+                tool_name="system_query_device",
+                description="Read current Unit device/network state through the query plane.",
+                side_effect_level=SideEffectLevel.READ_ONLY,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "query",
+                    "device",
+                    "--output",
+                    "json",
+                ),
+                resource="device query plane",
+                required_arguments=("--node",),
+                timeout_seconds=10,
+                retryable=True,
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "no_reply",
+                        "query_failed",
+                        "error_reply",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_query_apps",
+                description="Read current Unit application lifecycle state through the query plane.",
+                side_effect_level=SideEffectLevel.READ_ONLY,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "query",
+                    "apps",
+                    "--output",
+                    "json",
+                ),
+                resource="app query plane",
+                required_arguments=("--node",),
+                timeout_seconds=10,
+                retryable=True,
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "no_reply",
+                        "query_failed",
+                        "error_reply",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_query_leases",
+                description="Read current active leases before any side-effecting action.",
+                side_effect_level=SideEffectLevel.READ_ONLY,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "query",
+                    "leases",
+                    "--output",
+                    "json",
+                ),
+                resource="lease query plane",
+                required_arguments=("--node",),
+                timeout_seconds=10,
+                retryable=True,
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "no_reply",
+                        "query_failed",
+                        "error_reply",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
                 tool_name="system_state_sync",
                 description="Aggregate device, apps, leases, protocol, and agent runtime metadata into one read-only sync snapshot.",
                 side_effect_level=SideEffectLevel.READ_ONLY,
@@ -194,6 +282,147 @@ class FakeUnitToolAdapter:
                         "no_reply",
                         "query_failed",
                         "error_reply",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_capabilities",
+                description="Read stable Neuro CLI protocol, workflow, and agent runtime metadata.",
+                side_effect_level=SideEffectLevel.OBSERVE_ONLY,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "system",
+                    "capabilities",
+                    "--output",
+                    "json",
+                ),
+                resource="capability map",
+                timeout_seconds=5,
+                retryable=False,
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": ["parse_failed"],
+                },
+            ),
+            ToolContract(
+                tool_name="system_restart_app",
+                description="Restart a Unit application through the control plane after explicit approval.",
+                side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "control",
+                    "app-restart",
+                    "--output",
+                    "json",
+                ),
+                resource="app control plane",
+                required_arguments=("--node", "--app"),
+                required_resources=("app_control_lease",),
+                timeout_seconds=15,
+                retryable=False,
+                approval_required=True,
+                cleanup_hint="confirm target app identity and active leases before restart",
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "approval_required",
+                        "lease_missing",
+                        "control_failed",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_start_app",
+                description="Start a Unit application through the control plane after explicit approval.",
+                side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "app",
+                    "start",
+                    "--output",
+                    "json",
+                ),
+                resource="app control plane",
+                required_arguments=("--node", "--app-id", "--lease-id"),
+                required_resources=("app_control_lease",),
+                timeout_seconds=15,
+                retryable=False,
+                approval_required=True,
+                cleanup_hint="confirm target app identity and active leases before start",
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "approval_required",
+                        "lease_missing",
+                        "control_failed",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_stop_app",
+                description="Stop a Unit application through the control plane after explicit approval.",
+                side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "app",
+                    "stop",
+                    "--output",
+                    "json",
+                ),
+                resource="app control plane",
+                required_arguments=("--node", "--app-id", "--lease-id"),
+                required_resources=("app_control_lease",),
+                timeout_seconds=15,
+                retryable=False,
+                approval_required=True,
+                cleanup_hint="confirm target app identity and active leases before stop",
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "approval_required",
+                        "lease_missing",
+                        "control_failed",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_unload_app",
+                description="Unload a Unit application through the control plane after explicit approval.",
+                side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "app",
+                    "unload",
+                    "--output",
+                    "json",
+                ),
+                resource="app control plane",
+                required_arguments=("--node", "--app-id", "--lease-id"),
+                required_resources=("app_control_lease",),
+                timeout_seconds=15,
+                retryable=False,
+                approval_required=True,
+                cleanup_hint="confirm target app identity and active leases before unload",
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "approval_required",
+                        "lease_missing",
+                        "control_failed",
                         "parse_failed",
                     ],
                 },
@@ -261,6 +490,69 @@ class FakeUnitToolAdapter:
             ),
         )
 
+    def _fake_query_payload(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        event_ids = list(args.get("event_ids") or [])
+        reply_payload: dict[str, Any]
+        if tool_name == "system_query_device":
+            reply_payload = {
+                "status": "ok",
+                "network_state": "NETWORK_READY",
+                "ipv4": "192.168.2.67",
+            }
+        elif tool_name == "system_query_apps":
+            reply_payload = {
+                "status": "ok",
+                "app_count": 0,
+                "apps": [],
+                "observed_event_ids": event_ids,
+            }
+        elif tool_name == "system_query_leases":
+            reply_payload = {
+                "status": "ok",
+                "leases": [],
+            }
+        elif tool_name == "system_capabilities":
+            return {
+                "ok": True,
+                "status": "ok",
+                "payload": {
+                    "agent_runtime": "1.2.0-agent-runtime-v1",
+                    "tool_manifest_command": "system tool-manifest --output json",
+                    "state_sync_command": "system state-sync --output json",
+                },
+            }
+        elif tool_name == "system_restart_app":
+            return {
+                "ok": True,
+                "status": "ok",
+                "payload": {
+                    "status": "ok",
+                    "requested_action": "restart_app",
+                    "requested_app": str(args.get("app") or "default-app"),
+                },
+            }
+        elif tool_name in APP_CONTROL_TOOL_ACTIONS:
+            action = APP_CONTROL_TOOL_ACTIONS[tool_name]
+            return {
+                "ok": True,
+                "status": "ok",
+                "payload": {
+                    "status": "ok",
+                    "requested_action": action,
+                    "requested_app": str(
+                        args.get("app_id") or args.get("app") or "default-app"
+                    ),
+                },
+            }
+        else:
+            raise ValueError(f"unsupported fake tool: {tool_name}")
+        return {
+            "ok": True,
+            "status": "ok",
+            "payload": {"request_id": new_id("req")},
+            "replies": [{"ok": True, "payload": reply_payload}],
+        }
+
     def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
         contract = self.describe_tool(tool_name)
         if contract is None:
@@ -273,17 +565,21 @@ class FakeUnitToolAdapter:
                     "failure_class": "manifest_lookup_failed",
                 },
             )
+        payload: dict[str, Any] = {
+            "contract": contract.to_dict(),
+            "mode": "fake_no_model",
+            "side_effect_level": contract.side_effect_level.value,
+            "event_ids": list(args.get("event_ids") or []),
+        }
+        if tool_name == "system_state_sync":
+            payload["state_sync"] = self.build_state_sync_snapshot(args).to_dict()
+        else:
+            payload["result"] = self._fake_query_payload(tool_name, args)
         return ToolExecutionResult(
             tool_result_id=new_id("tool"),
             tool_name=tool_name,
             status="ok",
-            payload={
-                "contract": contract.to_dict(),
-                "mode": "fake_no_model",
-                "side_effect_level": "read_only",
-                "event_ids": list(args.get("event_ids") or []),
-                "state_sync": self.build_state_sync_snapshot(args).to_dict(),
-            },
+            payload=payload,
         )
 
 
@@ -346,14 +642,14 @@ class NeuroCliToolAdapter:
     @staticmethod
     def _parse_json_stdout(command_result: CommandExecutionResult) -> dict[str, Any]:
         try:
-            payload = json.loads(command_result.stdout)
+            payload: Any = json.loads(command_result.stdout)
         except json.JSONDecodeError as exc:
             if command_result.exit_code != 0:
                 raise ValueError(f"command_exit_{command_result.exit_code}") from exc
             raise ValueError("parse_failed") from exc
         if not isinstance(payload, dict):
             raise ValueError("parse_failed")
-        return payload
+        return cast(dict[str, Any], payload)
 
     @staticmethod
     def _parse_jsonl_stdout(command_result: CommandExecutionResult) -> list[dict[str, Any]]:
@@ -361,10 +657,10 @@ class NeuroCliToolAdapter:
         for line in command_result.stdout.splitlines():
             if not line.strip():
                 continue
-            payload = json.loads(line)
+            payload: Any = json.loads(line)
             if not isinstance(payload, dict):
                 raise ValueError("parse_failed")
-            rows.append(payload)
+            rows.append(cast(dict[str, Any], payload))
         if command_result.exit_code != 0:
             raise ValueError(f"command_exit_{command_result.exit_code}")
         return rows
@@ -409,6 +705,374 @@ class NeuroCliToolAdapter:
                 return contract
         return None
 
+    @staticmethod
+    def _contract_command_suffix(contract: ToolContract) -> list[str]:
+        argv = list(contract.argv_template)
+        if len(argv) >= 2:
+            argv = argv[2:]
+        suffix: list[str] = []
+        skip_next = False
+        for token in argv:
+            if skip_next:
+                skip_next = False
+                continue
+            if token == "--output":
+                skip_next = True
+                continue
+            suffix.append(token)
+        return suffix
+
+    @staticmethod
+    def _extract_apps_payload(result_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        replies = cast(list[Any] | None, result_payload.get("replies"))
+        if not isinstance(replies, list):
+            return []
+        for reply in replies:
+            if not isinstance(reply, dict):
+                continue
+            reply_dict = cast(dict[str, Any], reply)
+            reply_payload = cast(dict[str, Any] | None, reply_dict.get("payload"))
+            if not isinstance(reply_payload, dict):
+                continue
+            apps = cast(list[Any] | None, reply_payload.get("apps"))
+            if not isinstance(apps, list):
+                continue
+            resolved_apps: list[dict[str, Any]] = []
+            for app in apps:
+                if isinstance(app, dict):
+                    resolved_apps.append(cast(dict[str, Any], app))
+            return resolved_apps
+        return []
+
+    @staticmethod
+    def _extract_lease_rows(result_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        replies = cast(list[Any] | None, result_payload.get("replies"))
+        if not isinstance(replies, list):
+            return []
+        for reply in replies:
+            if not isinstance(reply, dict):
+                continue
+            reply_dict = cast(dict[str, Any], reply)
+            reply_payload = cast(dict[str, Any] | None, reply_dict.get("payload"))
+            if not isinstance(reply_payload, dict):
+                continue
+            leases = cast(list[Any] | None, reply_payload.get("leases"))
+            if not isinstance(leases, list):
+                continue
+            rows: list[dict[str, Any]] = []
+            for lease in leases:
+                if isinstance(lease, dict):
+                    rows.append(cast(dict[str, Any], lease))
+            return rows
+        return []
+
+    def _build_contract_command_with_args(
+        self,
+        contract: ToolContract,
+        args: dict[str, Any],
+    ) -> list[str]:
+        argv = [*self._base_command(), *self._contract_command_suffix(contract)]
+        for argument_name in contract.required_arguments:
+            if argument_name == "--node":
+                continue
+            candidate_keys = [argument_name.lstrip("-").replace("-", "_")]
+            if argument_name == "--app-id":
+                candidate_keys.extend(["app", "app_id"])
+            if argument_name == "--lease-id":
+                candidate_keys.append("lease_id")
+            if argument_name == "--start-args":
+                candidate_keys.append("start_args")
+            value = None
+            for key in candidate_keys:
+                candidate = args.get(key)
+                if candidate not in (None, ""):
+                    value = candidate
+                    break
+            if value not in (None, ""):
+                argv.extend([argument_name, str(value)])
+        optional_start_args = args.get("start_args")
+        if optional_start_args not in (None, "") and "--start-args" not in argv:
+            argv.extend(["--start-args", str(optional_start_args)])
+        return argv
+
+    def _execute_raw_contract_command(
+        self,
+        contract: ToolContract,
+        args: dict[str, Any],
+    ) -> tuple[CommandExecutionResult, dict[str, Any] | None, str | None]:
+        argv = self._build_contract_command_with_args(contract, args)
+        command_result = self.runner(argv, contract.timeout_seconds)
+        try:
+            payload = self._parse_json_stdout(command_result)
+        except ValueError as exc:
+            return command_result, None, str(exc)
+        return command_result, payload, None
+
+    def _resolve_control_app_args(self, args: dict[str, Any]) -> dict[str, Any] | None:
+        resolved_args = dict(args)
+        app_id = str(args.get("app_id") or args.get("app") or "")
+        if not app_id:
+            apps_contract = self.describe_tool("system_query_apps")
+            if apps_contract is not None:
+                _command_result, apps_payload, apps_error = self._execute_raw_contract_command(
+                    apps_contract,
+                    {},
+                )
+                if apps_payload is not None and apps_error is None:
+                    observed_apps = self._extract_apps_payload(apps_payload)
+                    if len(observed_apps) == 1:
+                        observed_app = observed_apps[0]
+                        app_id = str(
+                            observed_app.get("app_id")
+                            or observed_app.get("name")
+                            or observed_app.get("app")
+                            or ""
+                        )
+        if not app_id:
+            return None
+
+        lease_id = str(args.get("lease_id") or "")
+        if not lease_id:
+            leases_contract = self.describe_tool("system_query_leases")
+            if leases_contract is not None:
+                _command_result, leases_payload, leases_error = self._execute_raw_contract_command(
+                    leases_contract,
+                    {},
+                )
+                if leases_payload is not None and leases_error is None:
+                    target_resource = f"app/{app_id}/control"
+                    for lease in self._extract_lease_rows(leases_payload):
+                        resource = str(lease.get("resource") or "")
+                        if resource != target_resource:
+                            continue
+                        lease_id = str(lease.get("lease_id") or "")
+                        if lease_id:
+                            break
+        if not lease_id:
+            return None
+
+        resolved_args.setdefault("app_id", app_id)
+        resolved_args.setdefault("app", app_id)
+        resolved_args.setdefault("lease_id", lease_id)
+        return resolved_args
+
+    def _execute_single_app_control(
+        self,
+        contract: ToolContract,
+        args: dict[str, Any],
+    ) -> ToolExecutionResult:
+        resolved_args = self._resolve_control_app_args(args)
+        if resolved_args is None:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name=contract.tool_name,
+                status="error",
+                payload={
+                    "failure_status": "control_args_unresolved",
+                    "failure_class": "dynamic_argument_resolution_failed",
+                    "contract": contract.to_dict(),
+                    "requested_args": dict(args),
+                },
+            )
+
+        command_result, payload, command_error = self._execute_raw_contract_command(
+            contract,
+            resolved_args,
+        )
+        if command_error is not None:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name=contract.tool_name,
+                status="error",
+                payload={
+                    "failure_status": command_error,
+                    "failure_class": "control_cli_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "stderr": command_result.stderr,
+                },
+            )
+        assert payload is not None
+        payload_status = str(payload.get("status") or "unknown")
+        nested_failure_status = self._extract_nested_failure_status(payload)
+        if not payload.get("ok", False) or nested_failure_status:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name=contract.tool_name,
+                status="error",
+                payload={
+                    "failure_status": nested_failure_status or payload_status,
+                    "failure_class": "control_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "result": payload,
+                },
+            )
+        return ToolExecutionResult(
+            tool_result_id=new_id("tool"),
+            tool_name=contract.tool_name,
+            status="ok",
+            payload={
+                "contract": contract.to_dict(),
+                "resolved_args": resolved_args,
+                "result": payload,
+            },
+        )
+
+    def _execute_restart_app(
+        self,
+        contract: ToolContract,
+        args: dict[str, Any],
+    ) -> ToolExecutionResult:
+        resolved_args = self._resolve_control_app_args(args)
+        if resolved_args is None:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name="system_restart_app",
+                status="error",
+                payload={
+                    "failure_status": "restart_args_unresolved",
+                    "failure_class": "dynamic_argument_resolution_failed",
+                    "contract": contract.to_dict(),
+                    "requested_args": dict(args),
+                },
+            )
+
+        stop_contract = ToolContract(
+            tool_name="system_restart_app.stop",
+            description="stop app as first half of restart",
+            side_effect_level=contract.side_effect_level,
+            argv_template=(
+                "python",
+                "neuro_cli/scripts/invoke_neuro_cli.py",
+                "app",
+                "stop",
+                "--output",
+                "json",
+            ),
+            required_arguments=("--node", "--app-id", "--lease-id"),
+            timeout_seconds=contract.timeout_seconds,
+        )
+        start_contract = ToolContract(
+            tool_name="system_restart_app.start",
+            description="start app as second half of restart",
+            side_effect_level=contract.side_effect_level,
+            argv_template=(
+                "python",
+                "neuro_cli/scripts/invoke_neuro_cli.py",
+                "app",
+                "start",
+                "--output",
+                "json",
+            ),
+            required_arguments=("--node", "--app-id", "--lease-id"),
+            timeout_seconds=contract.timeout_seconds,
+        )
+
+        stop_command_result, stop_payload, stop_error = self._execute_raw_contract_command(
+            stop_contract,
+            resolved_args,
+        )
+        if stop_error is not None:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name="system_restart_app",
+                status="error",
+                payload={
+                    "failure_status": stop_error,
+                    "failure_class": "restart_stop_cli_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "stderr": stop_command_result.stderr,
+                },
+            )
+        assert stop_payload is not None
+        stop_status = str(stop_payload.get("status") or "unknown")
+        if not stop_payload.get("ok", False) or self._extract_nested_failure_status(stop_payload):
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name="system_restart_app",
+                status="error",
+                payload={
+                    "failure_status": self._extract_nested_failure_status(stop_payload)
+                    or stop_status,
+                    "failure_class": "restart_stop_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "stop_result": stop_payload,
+                },
+            )
+
+        start_command_result, start_payload, start_error = self._execute_raw_contract_command(
+            start_contract,
+            resolved_args,
+        )
+        if start_error is not None:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name="system_restart_app",
+                status="error",
+                payload={
+                    "failure_status": start_error,
+                    "failure_class": "restart_start_cli_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "stop_result": stop_payload,
+                    "stderr": start_command_result.stderr,
+                },
+            )
+        assert start_payload is not None
+        start_status = str(start_payload.get("status") or "unknown")
+        if not start_payload.get("ok", False) or self._extract_nested_failure_status(start_payload):
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name="system_restart_app",
+                status="error",
+                payload={
+                    "failure_status": self._extract_nested_failure_status(start_payload)
+                    or start_status,
+                    "failure_class": "restart_start_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "stop_result": stop_payload,
+                    "start_result": start_payload,
+                },
+            )
+
+        return ToolExecutionResult(
+            tool_result_id=new_id("tool"),
+            tool_name="system_restart_app",
+            status="ok",
+            payload={
+                "contract": contract.to_dict(),
+                "resolved_args": resolved_args,
+                "stop_result": stop_payload,
+                "start_result": start_payload,
+            },
+        )
+
+    @staticmethod
+    def _extract_nested_failure_status(payload: dict[str, Any]) -> str:
+        nested_payload = payload.get("payload")
+        if isinstance(nested_payload, dict):
+            nested_payload_dict = cast(dict[str, Any], nested_payload)
+            nested_status = str(nested_payload_dict.get("status") or "")
+            if nested_status and nested_status != "ok":
+                return nested_status
+        replies = payload.get("replies")
+        if isinstance(replies, list):
+            for reply in cast(list[Any], replies):
+                if not isinstance(reply, dict):
+                    continue
+                reply_dict = cast(dict[str, Any], reply)
+                reply_payload = reply_dict.get("payload")
+                if isinstance(reply_payload, dict):
+                    reply_payload_dict = cast(dict[str, Any], reply_payload)
+                    reply_status = str(reply_payload_dict.get("status") or "")
+                    if reply_status and reply_status != "ok":
+                        return reply_status
+        return ""
+
     def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
         contract = self.describe_tool(tool_name)
         if contract is None:
@@ -422,18 +1086,12 @@ class NeuroCliToolAdapter:
                 },
             )
 
-        if tool_name != "system_state_sync":
-            return ToolExecutionResult(
-                tool_result_id=new_id("tool"),
-                tool_name=tool_name,
-                status="error",
-                payload={
-                    "failure_status": "unsupported_tool",
-                    "failure_class": "adapter_contract_missing",
-                },
-            )
+        if tool_name == "system_restart_app":
+            return self._execute_restart_app(contract, args)
+        if tool_name in APP_CONTROL_TOOL_ACTIONS:
+            return self._execute_single_app_control(contract, args)
 
-        argv = [*self._base_command(), "system", "state-sync"]
+        argv = [*self._base_command(), *self._contract_command_suffix(contract)]
         command_result = self.runner(argv, contract.timeout_seconds)
         try:
             payload = self._parse_json_stdout(command_result)
@@ -462,15 +1120,29 @@ class NeuroCliToolAdapter:
                 },
             )
 
-        snapshot = StateSyncSnapshot.from_dict(payload)
+        nested_failure_status = self._extract_nested_failure_status(payload)
+        if nested_failure_status:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name=tool_name,
+                status="error",
+                payload={
+                    "failure_status": nested_failure_status,
+                    "failure_class": "nested_payload_status_failure",
+                    "payload": payload,
+                },
+            )
+
+        result_payload: dict[str, Any] = {"contract": contract.to_dict()}
+        if tool_name == "system_state_sync":
+            result_payload["state_sync"] = StateSyncSnapshot.from_dict(payload).to_dict()
+        else:
+            result_payload["result"] = payload
         return ToolExecutionResult(
             tool_result_id=new_id("tool"),
             tool_name=tool_name,
             status="ok",
-            payload={
-                "contract": contract.to_dict(),
-                "state_sync": snapshot.to_dict(),
-            },
+            payload=result_payload,
         )
 
     def collect_agent_events(self, max_events: int = 0) -> list[dict[str, Any]]:

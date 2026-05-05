@@ -470,7 +470,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.2.0")
+        self.assertEqual(payload["release_target"], "1.2.1")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -605,6 +605,10 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         names = {item["name"] for item in payload["tools"]}
         self.assertIn("system_state_sync", names)
         self.assertIn("system_query_device", names)
+        self.assertIn("system_restart_app", names)
+        self.assertIn("system_start_app", names)
+        self.assertIn("system_stop_app", names)
+        self.assertIn("system_unload_app", names)
 
     def test_state_sync_aggregates_query_contracts(self) -> None:
         args = Namespace(
@@ -3190,7 +3194,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertIn("event_stream", names)
         self.assertIn("app_event_stream", names)
 
-    def test_capabilities_reports_release_1_2_0(self) -> None:
+    def test_capabilities_reports_release_1_2_1(self) -> None:
         args = Namespace(output="json")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -3198,7 +3202,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.2.0")
+        self.assertEqual(payload["release_target"], "1.2.1")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

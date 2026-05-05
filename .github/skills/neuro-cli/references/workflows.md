@@ -83,7 +83,7 @@ read-only health, protected deploy, app invoke, callback configuration, event
 monitoring, and lease cleanup. Destructive plans declare `destructive: true` and
 include lease cleanup commands.
 
-For release 1.2.0 demo or AI Core integration work, ask for `workflow plan demo-build` before
+For release 1.2.1 demo or AI Core integration work, ask for `workflow plan demo-build` before
 building a selected demo artifact through the catalog-backed wrapper. Then use
 `workflow plan demo-net-event-smoke` to inspect the first end-to-end demo
 sequence for `neuro_demo_net_event`: build, preflight with explicit artifact
@@ -108,7 +108,7 @@ python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan
 ```
 
 Release closure must keep `RELEASE_TARGET` unchanged until the release-specific
-evidence has passed. For release 1.2.0 local AI Core closure, that evidence is
+evidence has passed. For release 1.2.1 plan closure, that evidence is
 Core tests, Neuro CLI tests, Core dry-run smoke, MAF provider smoke, Problems,
 and whitespace checks. Hardware preflight/smoke remains required only for
 hardware-targeted follow-up integration tracks.

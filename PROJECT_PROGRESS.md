@@ -1,3 +1,554 @@
+2026-05-05: Marked release-1.2.1 as closed after reviewing the accumulated Core, CLI, approval, hardware, and script hardening evidence against the release plan gates. The local MAF-shaped Core baseline, Agent-facing Neuro CLI contracts, approval-gated resumable control flow, bounded real command-path bridge, DNESP32S3B approval-decision hardware proof, and post-hardware artifact-path hardening are now all recorded in the execution ledger. No additional code changes were required for closure; the remaining open items are explicitly reclassified as next-release follow-up tracks rather than unresolved release-1.2.1 blockers. - Copilot
+
+#### EXEC-235 Release-1.2.1 Closure Review
+
+- Status: completed for formally closing release-1.2.1 against the current repository state
+- Owner: GitHub Copilot completing the release-1.2.1 closure pass
+- Scope:
+  - review the recorded 1.2.1 execution slices against the release plan closure gates
+  - update top-level release-facing documentation so `1.2.1` is described as closed rather than still in progress
+  - record which remaining topics are follow-up tracks instead of current release blockers
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added an explicit closure review section to the release-1.2.1 plan summarizing acceptance-criteria status and residual operational notes
+  - updated the top-level README so release `1.2.1` is presented as the closed Core-Agent baseline and not an open-ended active track
+  - recorded that remaining real-provider, long-running event-ingestion, and broader operator-path parity work is deferred to the next release line
+- Verification evidence:
+  - closure review was derived from the completed execution ledger entries `EXEC-205` through `EXEC-234` plus the already-recorded local, script, and bounded hardware validation evidence in `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - documentation diagnostics for the touched Markdown files reported no new errors after the closure wording update
+- Next action:
+  - start the next release plan only after the follow-up scope is explicitly named and separated from the now-closed `1.2.1` baseline
+
+2026-05-05: Continued the release-1.2.1 hardware stabilization follow-up by hardening Linux smoke/preflight artifact acceptance so stale staged placeholders cannot silently re-enter the operator path. The previous guard only checked whether an artifact path existed and was non-empty, which meant a short ASCII placeholder like `fake llext` or the observed 11-byte staged file could still satisfy the preflight/smoke contract if it appeared at a custom path or regressed back into a legacy staging location. Tightened both Linux scripts to require a real ELF header before treating a `.llext` as deployable, kept the default-path auto-build flow intact, and added a regression that proves non-empty non-ELF placeholders are now rejected with `artifact_invalid`. - Copilot
+
+#### EXEC-234 Linux Artifact ELF Guard
+
+- Status: completed for hardening Linux smoke/preflight artifact validation against non-ELF placeholder files
+- Owner: GitHub Copilot continuing the release-1.2.1 hardware stabilization track
+- Scope:
+  - upgrade Linux smoke/preflight artifact acceptance from non-empty-file checks to valid-ELF checks
+  - preserve the existing auto-build behavior for the normalized default `unit-app` artifact path
+  - reject non-empty placeholder `.llext` files at custom paths with the existing `artifact_invalid` contract
+  - add focused regression coverage for the stronger validation rule
+- Touched files:
+  - `applocation/NeuroLink/scripts/preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/scripts/smoke_neurolink_linux.sh`
+  - `applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/tests/scripts/test_smoke_neurolink_linux.sh`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added a shared Linux-side ELF magic check so `.llext` artifacts are now accepted only when they are non-empty files beginning with the standard ELF header `0x7f454c46`
+  - changed preflight to treat artifacts as valid only when they pass the stronger ELF check, while still allowing the default normalized artifact path to trigger the existing auto-build flow
+  - changed smoke to reject invalid custom artifacts and invalid default-path outputs with a clearer `missing, empty, or not an ELF llext` message
+  - updated the preflight regression fixture so the default artifact stub is a minimal ELF-shaped payload, and added a dedicated regression proving `fake llext` placeholders are rejected
+  - updated the smoke script contract test to assert the stronger validation helper remains present
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject && bash applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh` passed after the ELF guard landed
+  - `cd /home/emb/project/zephyrproject && bash applocation/NeuroLink/tests/scripts/test_smoke_neurolink_linux.sh` passed after the smoke-side validation update
+  - `cd /home/emb/project/zephyrproject && bash -n applocation/NeuroLink/scripts/preflight_neurolink_linux.sh && bash -n applocation/NeuroLink/scripts/smoke_neurolink_linux.sh` passed with no shell syntax errors
+- Next action:
+  - continue by deciding whether the same placeholder guard should be propagated to remaining operator entry points, especially any legacy compatibility path or non-Linux smoke helper that can still accept an explicit artifact override
+
+2026-05-05: Continued the release-1.2.1 hardware follow-up by correcting the default smoke/preflight artifact contract after the live approval validation exposed stale staging drift. The current `unit-app` build flow still produces the real deployable ELF at `build/neurolink_unit_app/neuro_unit_app.llext`, but the Linux smoke script, Linux preflight script, Windows smoke helper, and workflow catalog example were still defaulting to the older staged path `build/neurolink_unit/llext/neuro_unit_app.llext`, which on the active workspace had degraded into an 11-byte placeholder. Retargeted those default consumer-facing paths to the real `unit-app` build output so default smoke behavior now follows the actual build artifact location instead of depending on the legacy restaged copy remaining valid. - Copilot
+
+#### EXEC-233 Default Smoke Artifact Path Normalization
+
+- Status: completed for retargeting default smoke/preflight artifact selection away from the stale staged path
+- Owner: GitHub Copilot continuing the release-1.2.1 hardware stabilization track
+- Scope:
+  - align Linux smoke default artifact selection with the real `unit-app` build output
+  - align Linux preflight default artifact selection with the same path so standalone readiness checks match smoke
+  - align Windows smoke defaults and workflow catalog examples to avoid showing operators the stale path
+  - keep explicit custom `--artifact-file` overrides unchanged
+- Touched files:
+  - `applocation/NeuroLink/scripts/smoke_neurolink_linux.sh`
+  - `applocation/NeuroLink/scripts/preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/scripts/smoke_neurolink_windows.ps1`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - changed the Linux smoke default artifact path from `build/neurolink_unit/llext/neuro_unit_app.llext` to `build/neurolink_unit_app/neuro_unit_app.llext`
+  - changed Linux preflight to use the same default path, so auto-build and readiness checks now validate the actual `unit-app` output by default
+  - changed the Windows smoke helper default artifact path to the same real build output
+  - updated the workflow catalog deploy-prepare example and artifact hint so operator-facing guidance no longer points at the stale staged copy
+  - updated the preflight regression fixture to create its fake default artifact under the new normalized path
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject && bash applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh` passed after the default-path retargeting
+  - `cd /home/emb/project/zephyrproject && bash -n applocation/NeuroLink/scripts/smoke_neurolink_linux.sh && bash -n applocation/NeuroLink/scripts/preflight_neurolink_linux.sh` passed with no shell syntax errors
+  - diagnostics for `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py` and `applocation/NeuroLink/scripts/smoke_neurolink_windows.ps1` reported no new errors
+- Next action:
+  - continue by deciding whether the legacy staged copy under `build/neurolink_unit/llext/` should remain as a compatibility artifact or be guarded more strictly so placeholder files cannot silently re-enter future workflows
+
+2026-05-05: Completed bounded operator-supervised hardware validation for the release-1.2.1 real approval-decision control path on DNESP32S3B. The initial blocker was confirmed as router-endpoint drift, not Core logic: UART `serial zenoh show` reported `tcp/192.168.2.94:7447` while the current WSL-reachable host IP was `192.168.2.90`. Updating the board override through `serial zenoh set tcp/192.168.2.90:7447` immediately restored live `query device` reachability and showed the Unit opening its Zenoh session successfully. A second live deviation also surfaced during deployment: `build/neurolink_unit/llext/neuro_unit_app.llext` was only an 11-byte ASCII placeholder, while the real deployable artifact remained `build/neurolink_unit_app/neuro_unit_app.llext` at 21520 bytes, so hardware validation used the real ELF directly instead of the stale staging path. With the app activated on hardware, the Core approval path was exercised end to end through `agent-run`, `approval-inspect`, and `approval-decision --tool-adapter neuro-cli` for both stop and start. Approval inspection first reported the missing `app/neuro_unit_app/control` lease, then correctly resolved `matching_lease_ids=["lease-core-hw-control-001"]` after a live control lease was acquired. Approved stop resumed real execution with `resolved_args.app_id=neuro_unit_app` and `resolved_args.lease_id=lease-core-hw-control-001`, and `query apps` confirmed the app moved from `RUNNING` to `INITIALIZED`. A matching approved start request restored the same app to `RUNNING`, again with the resolved control lease injected by the Core. Hardware policy behavior also proved correct in two places: deploy activate rejected a lease acquired under `source_agent=skills` when activation was attempted as `source_agent=rational` (`lease holder mismatch`), and final lease cleanup showed the control lease released successfully while the activate lease had already disappeared naturally before explicit release (`lease not found`, followed by final `query leases: []`). No Core code changes were needed; the validation closed the real approval-resume hardware gate and left the board reachable, app running, and lease state clean. - Copilot
+
+#### EXEC-232 Hardware Approval-Decision Validation
+
+- Status: completed for bounded DNESP32S3B validation of the real Core approval-resume control path
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent validation track
+- Scope:
+  - recover live board reachability when the configured Zenoh endpoint drifts from the current host IP
+  - deploy and activate a real reference app on hardware using the existing Neuro CLI contract surface
+  - validate `agent-run -> approval-inspect -> approval-decision --tool-adapter neuro-cli` for both stop and start
+  - leave the board in a clean, running, lease-free state after validation
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - confirmed the original `no_reply` blocker was endpoint drift and restored connectivity by changing the Unit override from `tcp/192.168.2.94:7447` to `tcp/192.168.2.90:7447`
+  - confirmed the current default staged artifact path `build/neurolink_unit/llext/neuro_unit_app.llext` is a stale 11-byte placeholder and used the real ELF at `build/neurolink_unit_app/neuro_unit_app.llext` for this validation pass
+  - deployed and activated `neuro_unit_app` on the live board, with `query apps` showing one active/running app before Core control validation
+  - proved `approval-inspect` surfaces missing live resources first, then resolves the concrete `app/neuro_unit_app/control` lease once acquired
+  - proved approved stop and approved start both resume through the real adapter with the expected resolved `app_id` and `lease_id`, changing hardware state accordingly
+  - observed live lease policy enforcement on hardware via `lease holder mismatch` when activation attempted to reuse a lease owned by a different source agent
+  - completed cleanup with final `query leases` returning `[]` and final `query apps` returning `neuro_unit_app` in `RUNNING`
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject && /home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py serial zenoh show --port /dev/ttyACM0` reported `tcp/192.168.2.94:7447`
+  - `cd /home/emb/project/zephyrproject && /home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py serial zenoh set tcp/192.168.2.90:7447 --port /dev/ttyACM0` succeeded and UART immediately showed `tcp probe succeeded` plus `zenoh session opened`
+  - `cd /home/emb/project/zephyrproject && /home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --query-retries 3 query device` returned live device state with `session_ready=true`, `NETWORK_READY`, and `ipv4=192.168.2.67`
+  - `cd /home/emb/project/zephyrproject && ls -l build/neurolink_unit/llext/neuro_unit_app.llext build/neurolink_unit_app/neuro_unit_app.llext` showed `11` bytes vs `21520` bytes, and `file ...` confirmed the former was ASCII text while the latter was an Xtensa ELF relocatable
+  - `cd /home/emb/project/zephyrproject && /home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy prepare --app-id neuro_unit_app --file build/neurolink_unit_app/neuro_unit_app.llext` plus follow-on `deploy verify` and `deploy activate` succeeded once lease ownership matched `source_agent=rational`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli agent-run --db /home/emb/project/zephyrproject/tmp/neurolink_core_hw_validation.db --session-id hw-approval-stop-001 --tool-adapter neuro-cli --input-text "stop neuro_unit_app app now"` created pending approval `approval-c96c6fb7f812`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli approval-inspect --db /home/emb/project/zephyrproject/tmp/neurolink_core_hw_validation.db --approval-request-id approval-c96c6fb7f812 --tool-adapter neuro-cli` first reported `missing_required_resources=["app/neuro_unit_app/control"]`, then after live lease acquire reported `resource_requirements_satisfied=true` and `matching_lease_ids=["lease-core-hw-control-001"]`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli approval-decision --db /home/emb/project/zephyrproject/tmp/neurolink_core_hw_validation.db --approval-request-id approval-c96c6fb7f812 --decision approve --tool-adapter neuro-cli` resumed real stop with `resolved_args.app_id=neuro_unit_app` and `resolved_args.lease_id=lease-core-hw-control-001`; follow-on `query apps` showed `runtime_state=INITIALIZED` and `running_count=0`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli agent-run --db /home/emb/project/zephyrproject/tmp/neurolink_core_hw_validation.db --session-id hw-approval-start-001 --tool-adapter neuro-cli --input-text "start neuro_unit_app app now"` plus `approval-decision --decision approve --tool-adapter neuro-cli` restored the same app; follow-on `query apps` showed `runtime_state=RUNNING` and `running_count=1`
+  - final cleanup released the control lease, final `query leases` returned `[]`, and the board remained reachable with `neuro_unit_app` running
+- Next action:
+  - continue release-1.2.1 by either normalizing the stale staged artifact path used by smoke defaults or widening the same approval-gated hardware proof to additional lifecycle actions such as unload/restart and explicit multi-app targeting
+
+2026-05-05: Continued the release-1.2.1 Core-Agent control path by surfacing explicit target app identity from user input instead of relying only on approval-time single-app inference. Added bounded app-id extraction for control-style user prompts, carried the extracted `target_app_id` through the user event payload and session context, and updated the deterministic planner to inject `app_id` / `app` into app lifecycle control plans before they reach approval persistence. This lets approval inspection and resumed execution choose the operator-requested app even when `query apps` observes multiple running apps, while still falling back to the prior single-app inference path when the user did not specify one. - Copilot
+
+#### EXEC-231 Explicit App Identity Extraction
+
+- Status: completed for carrying explicit target app identity from user input into approval-gated app control plans
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent implementation track
+- Scope:
+  - extract an explicit `app_id` from user control prompts in a bounded, fail-closed way
+  - persist the extracted app identity in the user event payload and session context
+  - inject explicit `app_id` / `app` into deterministic app control plans before approval persistence
+  - validate that approval resume now targets the requested app even when multiple apps are observed live
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added bounded explicit app-id extraction in `build_user_prompt_event()` and stored the result as both `source_app` and `payload.target_app_id` on user-input events
+  - projected the extracted target app into workflow session context so the deterministic Rational planner can use it without widening the frame shape
+  - updated the planner to include `app_id` and `app` in `system_restart_app`, `system_start_app`, `system_stop_app`, and `system_unload_app` plans when a target app is available
+  - kept the previous approval-time fallback behavior intact so control requests without an explicit app still work through single-observed-app inference
+  - added regression coverage for direct app-id extraction and for a multi-app approval resume path that succeeds only because the explicit app target is carried through
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python - <<'PY' ... stop neuro_demo_gpio app now ... PY` focused smoke confirmed `approval_request.requested_args` now includes `app_id=neuro_demo_gpio`
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "build_user_prompt_event_extracts_explicit_target_app_id or approval_decision_resume_execution_uses_real_neuro_cli_stop_path"` passed: 2 tests OK
+- Next action:
+  - continue by moving from simulated/local validation into bounded operator-supervised hardware validation for the real approval-decision command path, now that explicit app targeting no longer depends on single-app inference
+
+2026-05-05: Continued the release-1.2.1 Core-Agent control path by widening the real app lifecycle surface beyond restart-only behavior. Added `system_start_app`, `system_stop_app`, and `system_unload_app` as approval-gated Core tools, taught user-input routing and the deterministic planner to recognize start/stop/unload app intents, and reused the existing approval-resolved app/lease bridge so these new actions execute through the same live `app/<app_id>/control` resource model as restart. On the real adapter side, each new tool now maps directly onto the corresponding Neuro CLI `app start`, `app stop`, or `app unload` command, while the approval resume path remains shared and bounded. - Copilot
+
+#### EXEC-230 App Lifecycle Control Intent Expansion
+
+- Status: completed for widening the first real approval-gated app control slice beyond restart-only behavior
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent implementation track
+- Scope:
+  - extend user-input routing and deterministic planning from restart-only app control to start/stop/unload intents
+  - expose real approval-gated `system_start_app`, `system_stop_app`, and `system_unload_app` contracts in both fake and Neuro CLI manifests
+  - reuse the existing approval-time app/lease resolution model for all app lifecycle control actions
+  - validate direct adapter execution and approval-resume behavior for the widened control surface
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_agent_contracts.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `user.input.control.app.start`, `user.input.control.app.stop`, and `user.input.control.app.unload` routing in `build_user_prompt_event()` and mapped them to `system_start_app`, `system_stop_app`, and `system_unload_app` in the deterministic Rational planner
+  - expanded the fake tool manifest and fake execution path to cover the new approval-gated app lifecycle tools without changing approval-state machinery
+  - expanded the real Neuro CLI agent manifest with explicit `app start`, `app stop`, and `app unload` contracts that keep the same `app_control_lease` requirement model as restart
+  - generalized the real adapter's app/lease resolution path so single-step lifecycle commands reuse the same approval-resolved `app_id` and `lease_id` injection used by the restart bridge
+  - added focused route, manifest, direct adapter, and approval-resume tests covering the widened control surface, including a real stop-path approval resume regression
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "agent_run_routes_restart_request_to_pending_approval or agent_run_routes_other_app_control_requests_to_pending_approval"` passed: 2 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py -k "manifest_exposes_query_and_capability_contracts or parse_cli_manifest_payload_returns_typed_contracts or cli_tool_manifest_outputs_contracts or execute_restart_app_maps_to_real_app_stop_start_commands or execute_single_control_tools_map_to_real_app_commands or cli_tool_manifest_can_use_neuro_cli_adapter"` passed: 6 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "approval_decision_resume_execution_uses_real_neuro_cli_restart_path or approval_decision_resume_execution_uses_real_neuro_cli_stop_path or agent_run_routes_other_app_control_requests_to_pending_approval"` passed: 3 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py neurolink_core/tests/test_tools.py` passed: 57 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k tool_manifest_outputs_agent_facing_contracts` passed: 1 test OK
+  - diagnostics checks for `neurolink_core/workflow.py`, `neurolink_core/agents.py`, `neurolink_core/tools.py`, and `neuro_cli/src/neuro_agent_contracts.py` reported no new errors; existing broader type diagnostics in `neurolink_core/tests/test_neurolink_core.py` remain pre-existing and unchanged
+- Next action:
+  - continue by surfacing explicit app identity extraction from user input so control intents can target a chosen app instead of only defaulting to the single observed app path during approval-time resolution
+
+2026-05-05: Continued the release-1.2.1 Core-Agent control path by connecting the existing approval/audit/resource-gate model to a bounded real Neuro CLI restart command. Exposed `system_restart_app` in the real agent manifest, taught approval inspection to resolve a concrete target app and `app/<app_id>/control` lease requirement from live `query apps` and `query leases` observations, and changed approval resume so the resolved `app_id` / `lease_id` are passed into the resumed execution instead of being left implicit. On the real adapter side, `system_restart_app` now translates into a narrow `app stop` plus `app start` sequence against the existing CLI surface, keeping the fake tool name stable while finally grounding the action in the real command plane. - Copilot
+
+#### EXEC-229 Real Neuro CLI Restart Bridge
+
+- Status: completed for the first approval-gated real control-command bridge in release-1.2.1
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent implementation track
+- Scope:
+  - expose a real approval-required `system_restart_app` contract in the Neuro CLI agent manifest
+  - resolve approval-time `app_id` and concrete control lease resources from live query observations
+  - pass approval-resolved app/lease metadata into resumed execution to avoid a second implicit lookup step
+  - map the stable Core tool name onto the existing real `app stop` plus `app start` CLI surface
+- Touched files:
+  - `applocation/NeuroLink/neuro_cli/src/neuro_agent_contracts.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `system_restart_app` to the real Neuro CLI tool manifest with approval-required side-effect metadata and explicit `--app-id` / `--lease-id` requirements
+  - extended approval operator requirements so the Core derives `target_app_id`, `resolved_required_resources`, and `matching_lease_ids` from live `system_query_apps` and `system_query_leases` observations
+  - updated approval resume to inject the resolved app and lease metadata into `adapter.execute()` before the resumed tool runs
+  - implemented a bounded real restart path in `NeuroCliToolAdapter` that executes `app stop` then `app start`, returning structured step results and resolved arguments
+  - added focused adapter, manifest, and approval-resume regressions that prove the real restart path works through both direct adapter execution and `approval-decision --tool-adapter neuro-cli`
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py neuro_cli/tests/test_neuro_cli.py -k "restart_app or tool_manifest_outputs_agent_facing_contracts or cli_tool_manifest_can_use_neuro_cli_adapter or execute_restart_app_maps_to_real_app_stop_start_commands"` passed: 3 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "approval_inspect_and_approve_resume_execution_when_resources_are_satisfied or approval_decision_resume_execution_uses_real_neuro_cli_restart_path or approval_decision_rejects_replay_after_terminal_status"` passed: 3 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py neurolink_core/tests/test_tools.py` passed: 54 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k tool_manifest_outputs_agent_facing_contracts` passed: 1 test OK
+  - diagnostics checks for `neurolink_core/tools.py`, `neurolink_core/workflow.py`, and `neuro_cli/src/neuro_agent_contracts.py` reported no errors after the slice landed
+- Next action:
+  - continue by grounding richer real control intents beyond restart on the same approval-resolved resource model, then start bounded hardware-facing validation for the real command path under operator supervision
+
+2026-05-05: Continued the release-1.2.1 Core-Agent approval model by turning resource-aware approval evidence into an actual approval-time lease gate. `approve` no longer releases a pending control action when required resources are missing; instead it records the attempted approval, returns a structured `blocked_resource_gate` outcome, and keeps the request pending so the operator can retry later. Added a satisfied-resource path using a patched adapter-backed lease observation so approval can still proceed when the required lease is visible at decision time. This is the first point where approval resolution depends on live control-plane readiness instead of only operator intent. - Copilot
+
+#### EXEC-228 Approval-Time Resource Gate
+
+- Status: completed for enforcing resource/lease satisfaction before approval-gated execution resumes
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent implementation track
+- Scope:
+  - block `approve` when required resources are not observed at approval time
+  - keep blocked requests pending so operators can retry after the resource state changes
+  - preserve successful approval and replay-guard behavior when resources are satisfied
+  - validate both blocked and satisfied approval paths with focused and broader Core regression
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - changed `apply_approval_decision()` so `approve` first evaluates live operator requirements and returns `blocked_resource_gate` with `missing_required_resources` when the approval-time lease gate is unsatisfied
+  - kept the approval request in `pending` state after a blocked approval attempt, while recording the attempted decision and the missing resources in the approval history
+  - added a satisfied-resource approval test path using a patched adapter that exposes `app_control_lease`, proving the same request can still be approved and resumed when live prerequisites are met
+  - preserved terminal-state replay rejection after successful approval
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "approval"` passed: 6 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py neurolink_core/tests/test_tools.py` passed: 52 tests OK
+  - diagnostics check for `neurolink_core/workflow.py` reported no errors after the gate logic was added
+- Next action:
+  - continue by moving from fake approval-gated control actions toward bounded Neuro CLI control commands that use the same live approval-time resource gate and audit model
+
+2026-05-05: Continued the release-1.2.1 Core-Agent approval work by making the operator-facing approval surface resource-aware. Reused the existing read-only `system_query_leases` and `system_state_sync` tools during approval inspection/resolution so the Core now returns live lease/state observations alongside required resource metadata and a derived missing-resource view for approval-required actions. This does not yet enforce lease gating at approval time, but it gives the operator the concrete evidence needed to decide whether a pending control action is safe to release. - Copilot
+
+#### EXEC-227 Resource-Aware Approval Evidence
+
+- Status: completed for lease/resource-aware operator evidence on approval inspection and resolution paths
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent implementation track
+- Scope:
+  - make approval inspection carry live lease and state-sync observations
+  - derive missing/satisfied resource requirements from the tool contract and observed lease payloads
+  - keep approval semantics unchanged while enriching the operator decision surface
+  - validate the new evidence fields with focused approval tests and broader Core regression
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added reusable approval-context helpers that attach source execution evidence, resumed execution evidence, and live operator evidence into approval responses
+  - extended `approval-inspect` to accept a tool-adapter selection and return lease/state observations through the same adapter family used elsewhere in Core
+  - added derived `required_resources`, `missing_required_resources`, and satisfaction status so approval-required actions are now visibly resource-aware to the operator
+  - preserved current approval behavior: missing resources are surfaced as evidence only, not yet enforced as a hard approval gate
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "approval"` passed: 5 tests OK
+  - diagnostics check for `neurolink_core/workflow.py` and `neurolink_core/cli.py` reported no errors
+- Next action:
+  - continue by turning the new resource-aware evidence into an actual approval-time lease gate, then widen the same approval model from fake control actions toward bounded Neuro CLI control commands
+
+2026-05-05: Continued the release-1.2.1 Core-Agent approval lifecycle by hardening terminal-state handling and operator evidence around resumed control actions. Extended approval decisions to support explicit `expire`, changed replay attempts after terminal resolution to fail with a status-specific guard instead of a generic pending-state error, and widened `approval-inspect` / `approval-decision` output so operators can see source execution evidence and, when applicable, the resumed execution evidence produced by an approved request. This keeps the approval path auditable after resolution, not only while it is pending. - Copilot
+
+#### EXEC-226 Approval Expiry And Replay Guards
+
+- Status: completed for explicit approval expiry, terminal-state replay guards, and richer operator-facing approval evidence
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent implementation track
+- Scope:
+  - add explicit `expire` as a first-class approval decision
+  - reject replayed approval decisions with status-specific terminal-state failures
+  - expose source and resumed execution evidence through approval inspection and resolution output
+  - validate expiry, replay-guard, and approval evidence behavior with focused tests
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - extended `apply_approval_decision()` so approval requests can now be `approved`, `denied`, or explicitly `expired`
+  - tightened replay protection so a second resolution attempt fails with a status-aware failure such as `approval_request_not_pending_approved`
+  - widened `approval-inspect` and `approval-decision` payloads with `approval_context`, including source execution evidence and resumed execution evidence where available
+  - added regression coverage for expiry-without-resume, replay rejection after approval, and evidence visibility across inspect/decision flows
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "approval"` passed: 5 tests OK
+  - diagnostics check for `neurolink_core/workflow.py`, `neurolink_core/cli.py`, and `neurolink_core/tests/test_neurolink_core.py` reported no errors
+- Next action:
+  - continue by carrying lease/resource-aware operator evidence into the approval surface and then widening the same approval model from fake control tools toward bounded Neuro CLI control actions
+
+2026-05-05: Continued the release-1.2.1 Core-Agent implementation track by turning approval-gated tool requests from terminal metadata into a resumable local control path. Persisted approval requests and approval decisions in the Core data store, exposed pending approvals in session snapshots, added `approval-inspect` and `approval-decision` CLI commands, and wired `approve` to resume the requested tool execution in a new execution span while `deny` closes the request without side effects. This keeps the no-model slice fail-closed by default, but gives the Core its first explicit approval lifecycle with auditable request, decision, and resumed-execution evidence. - Copilot
+
+#### EXEC-225 Approval Persistence And Resume Path
+
+- Status: completed for persisting approval-gated requests and resuming approved execution within the local Core session model
+- Owner: GitHub Copilot continuing the release-1.2.1 Core-Agent implementation track
+- Scope:
+  - persist approval requests and approval decisions in the local Core data store
+  - expose pending approval state through session inspection
+  - add CLI commands to inspect and resolve approval requests
+  - resume approved tool execution in a new auditable execution span while leaving denied requests unexecuted
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/session.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `approval_requests` and `approval_decisions` persistence plus approval evidence lookup in the Core data store
+  - extended session snapshots so pending approvals are visible through both workflow output and `session-inspect`
+  - changed approval-gated workflow handling to create a durable `approval_request_id` instead of only emitting transient `pending_approval` metadata
+  - added `approval-inspect` and `approval-decision` CLI commands, with `approve` creating a resumed execution span and `deny` closing the request without tool execution
+  - added regression coverage for pending approval persistence, approval inspection, approval approval-and-resume, and deny-without-resume behavior
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k "approval or session_inspect or dry_run_persists_before_reasoning"` passed: 5 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py neurolink_core/tests/test_tools.py` passed: 49 tests OK
+  - diagnostics check for `neurolink_core/data.py`, `neurolink_core/session.py`, `neurolink_core/workflow.py`, `neurolink_core/cli.py`, and `neurolink_core/tests/test_neurolink_core.py` reported no errors in the touched files
+- Next action:
+  - continue by tightening the approval lifecycle beyond `approve` and `deny`, especially explicit expiry/replay guards and richer operator-facing resumed-execution policy evidence
+
+2026-05-05: Promoted the active Core-Agent follow-up plan and public release identity from release-1.2.0 post-baseline work to release-1.2.1. Preserved release-1.2.0 as the closed local AI Core baseline, copied the MAF Core Agent plan into a new `RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md` document, updated the current README/skill references, and moved the canonical Neuro CLI `RELEASE_TARGET` to `1.2.1` so ongoing guarded real-provider, manifest-grounded planning, and approval-gated tool work is now explicitly tracked as the next release line rather than as anonymous post-baseline drift. - Copilot
+
+#### EXEC-224 Release-1.2.1 Plan And Identity Promotion
+
+- Status: completed for promoting the active Core-Agent development track to release-1.2.1
+- Owner: GitHub Copilot continuing the post-baseline Core-Agent implementation track
+- Scope:
+  - preserve release-1.2.0 as the closed local AI Core baseline
+  - create a current `1.2.1` MAF Core Agent plan document for ongoing development
+  - promote current README, skill, and Neuro CLI release identity surfaces to `1.2.1`
+  - keep schema families and historical release-1.2.0 progress records intact
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
+  - `applocation/NeuroLink/docs/project/HLD.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_LLD.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/neuro_cli/README.md`
+  - `applocation/NeuroLink/neuro_cli/skill/README.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/workflows.md`
+  - `applocation/NeuroLink/neuro_cli/skill/references/discovery-and-control.md`
+  - `applocation/NeuroLink/.github/skills/neuro-cli/references/workflows.md`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/neurolink_core/__init__.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - copied the active MAF Core Agent plan into `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md` and retargeted it to the new release line
+  - updated current README and skill-facing references so the ongoing Core-Agent work is described as release-1.2.1 while still acknowledging the closed release-1.2.0 baseline
+  - promoted the canonical Neuro CLI `RELEASE_TARGET` to `1.2.1` and aligned focused release-target tests
+  - kept historical release-1.2.0 progress entries untouched so prior closure evidence remains auditable
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q -k "capabilities_json_includes_protocol_and_agent_skill or capabilities_reports_release_1_2_1"` passed: 2 tests OK
+- Next action:
+  - continue release-1.2.1 by threading explicit approval decisions and resumable execution through session state on top of the newly promoted release line
+
+2026-05-05: Continued the post-baseline Core-Agent work by widening beyond read-only tool planning into the first approval-gated execution slice. Added a minimal fake `system_restart_app` tool contract with `approval_required` metadata, taught the deterministic local planner to route restart-app user intent into that tool, and changed workflow policy handling so approval-gated tools no longer collapse into a generic block. Instead, the Core now emits a structured `pending_approval` result with an explicit `approval_request` envelope and an affective final response that reports the delegated action is waiting for approval. This preserves the manifest-boundary execution model while giving the Core its first explicit non-read-only control-path state without actually performing unsafe work. - Copilot
+
+#### EXEC-223 Approval-Gated Pending-Approval Tool Slice
+
+- Status: completed for the first approval-gated tool flow with pending-approval workflow semantics
+- Owner: GitHub Copilot continuing the post-baseline Core-Agent implementation track
+- Scope:
+  - add a minimal approval-required tool contract to the fake manifest surface
+  - route restart-app user intent into that delegated tool in the deterministic local planner
+  - convert approval-required policy denies from generic blocks into structured pending-approval results
+  - validate manifest exposure, policy behavior, agent-run routing, and final-response wording
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `system_restart_app` to the fake tool manifest with `approval_required=True`, approval-related resource metadata, and a bounded fake control contract
+  - extended `build_user_prompt_event()` and `FakeRationalAgent.plan()` so restart-app user input becomes a delegated approval-gated tool request instead of falling back to read-only query behavior
+  - changed workflow policy handling so approval-required tools now produce `pending_approval` plus a structured `approval_request` payload instead of only `blocked`
+  - updated the affective final response so approval-gated delegated actions are reported as waiting for explicit approval
+  - added regression coverage for approval-required policy decisions, manifest exposure, and `agent-run` restart requests ending in `pending_approval`
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py -q` passed: 47 tests OK
+  - diagnostics check for `neurolink_core/tools.py`, `neurolink_core/agents.py`, `neurolink_core/workflow.py`, `neurolink_core/tests/test_tools.py`, and `neurolink_core/tests/test_neurolink_core.py` reported no errors
+- Next action:
+  - continue by threading explicit approval decisions and resumable execution through session state so a pending approval can later be granted, denied, or expired instead of remaining terminal metadata only
+
+2026-05-05: Continued the post-baseline Core-Agent work by grounding real-provider rational planning against live workflow context instead of a static allowed-tools hint only. Extended the real-provider rational call path so the provider now receives the current tool manifest and session context, then tightened workflow execution so any provider-returned tool that does not exist in the manifest is rejected at the Core boundary before adapter execution. This makes the `real_provider` path more agent-like and less prompt-fragile: the model now plans against the actual exposed tool surface, while hallucinated or stale tool names fail closed with structured audit evidence. - Copilot
+
+#### EXEC-222 Live Manifest Grounding For Real-Provider Planning
+
+- Status: completed for grounding real-provider rational planning against live tool and session context
+- Owner: GitHub Copilot continuing the post-baseline Core-Agent implementation track
+- Scope:
+  - pass the live tool manifest and current session context into the real-provider rational planning call
+  - preserve deterministic fake behavior while widening only the real-provider planning interface
+  - reject provider-returned tools that are absent from the manifest before any adapter execution occurs
+  - validate both context propagation and hallucinated-tool fail-closed behavior with focused tests
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - widened the real-provider `plan()` contract so provider clients now receive `available_tools` and `session_context`
+  - updated the default MAF rational prompt to plan against the provided live manifest instead of only a static list of allowed tool names
+  - made `NoModelCoreWorkflow` attach manifest-derived `available_tools` into session context and pass both values into rational planning
+  - changed workflow execution to fail closed with `manifest_lookup_failed` when a provider returns a tool absent from the manifest, instead of forwarding the hallucinated tool into the adapter layer
+  - added regression coverage for provider context propagation and for rejecting an unknown provider-returned tool before execution
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py neurolink_core/tests/test_neurolink_core.py -q` passed: 36 tests OK
+  - diagnostics check for `neurolink_core/agents.py`, `neurolink_core/maf.py`, `neurolink_core/workflow.py`, `neurolink_core/tests/test_maf.py`, and `neurolink_core/tests/test_neurolink_core.py` reported no errors
+- Next action:
+  - continue by widening beyond read-only planning into approval-gated tool families, while preserving the same manifest-boundary and structured fail-closed execution model
+
+2026-05-05: Continued the post-baseline Core-Agent work by binding the previously injectable real-provider seam to a guarded default Microsoft Agent Framework client path. Added an `AgentFrameworkMafProviderClient` in `neurolink_core.maf` that dynamically imports `agent_framework`, constructs an `OpenAIChatClient`, and runs separate affective/rational MAF agents behind strict JSON-only prompts so Core-native `AffectiveDecision` and `RationalPlan` coercion can now be driven by a real provider-backed client. Exposed `real_provider` in the Core CLI and workflow, but kept it fail-closed behind an explicit `--allow-model-call` gate and structured JSON error payloads, so deterministic fake mode remains the default and provider calls cannot happen accidentally. - Copilot
+
+#### EXEC-221 Guarded Real-Provider Execution Path
+
+- Status: completed for the first guarded end-to-end `real_provider` execution path through the Core CLI/workflow
+- Owner: GitHub Copilot continuing the post-baseline Core-Agent implementation track
+- Scope:
+  - bind the injectable real-provider adapter seam to a default `agent_framework` OpenAI chat client factory
+  - expose `real_provider` as an explicit CLI/workflow execution mode without changing deterministic fake defaults
+  - require an explicit model-call opt-in flag and return structured fail-closed JSON errors when the request is invalid or the provider is not ready
+  - validate the new path with focused MAF and workflow/CLI coverage
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `AgentFrameworkMafProviderClient` plus a default `build_default_maf_provider_client()` factory that dynamically imports `agent_framework`, configures `OpenAIChatClient`, and performs provider-backed affective/rational JSON calls
+  - widened real-provider runtime metadata so adapters now report their concrete provider-client kind instead of only placeholder status
+  - routed `run_no_model_dry_run()` and both Core CLI entry points through a guarded `real_provider` branch that requires `--allow-model-call` and otherwise fails closed with a structured JSON error payload
+  - added regression coverage for default provider-client construction, CLI rejection of unguarded `real_provider`, and successful `agent-run` wiring when the default factory returns a provider client
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -q` passed: 11 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q` passed: 23 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py neurolink_core/tests/test_neurolink_core.py -q` passed: 34 tests OK
+- Next action:
+  - continue by grounding the real-provider rational prompt against the live tool manifest/session context more deeply and then widening beyond read-only flows into approval-gated execution paths
+
+2026-05-04: Continued the post-baseline Core-Agent work by turning the real-provider MAF adapters from fail-closed placeholders into injectable structured call paths. Extended `RealMafAffectiveAgentAdapter` and `RealMafRationalAgentAdapter` so they can accept a provider client, execute provider-backed structured calls, and coerce the results into `AffectiveDecision` and `RationalPlan` without changing the existing workflow-facing interfaces. This keeps the local environment credential-safe and package-independent by default, while giving the codebase its first real provider execution seam that later can be bound to the actual Microsoft Agent Framework package and model client. - Copilot
+
+#### EXEC-220 Injectable Real-Provider Adapter Call Path
+
+- Status: completed for the first provider-call execution seam behind the real MAF adapter boundary
+- Owner: GitHub Copilot continuing the post-baseline Core-Agent implementation track
+- Scope:
+  - add an injectable provider client protocol for real affective/rational adapters
+  - let real MAF adapters coerce provider output into `AffectiveDecision` and `RationalPlan`
+  - preserve fail-closed behavior when runtime readiness or provider clients are absent
+  - validate the provider-backed adapter path without requiring the external MAF package locally
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added a `MafProviderClient` protocol plus a placeholder provider client implementation inside `neurolink_core.maf`
+  - made `RealMafAffectiveAgentAdapter` and `RealMafRationalAgentAdapter` execute provider-client calls and convert the structured outputs into Core-native decision/plan DTOs
+  - extended the adapter factory helpers so tests and later runtime code can inject provider clients while keeping deterministic fake defaults unchanged elsewhere
+  - added regression coverage proving the ready real-provider path can return a delegated affective decision and a rational tool plan through the new adapter seam
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -q` passed: 10 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neurolink_core/maf.py neurolink_core/agents.py neurolink_core/tools.py neurolink_core/workflow.py neurolink_core/tests/test_maf.py neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py -q` passed: 52 tests OK
+- Next action:
+  - continue by binding the injectable provider seam to a concrete Microsoft Agent Framework model client and exposing a guarded `real_provider` execution path in the Core CLI/workflow, or widen tool execution into approval-gated control flows
+
+2026-05-04: Continued the first post-baseline Core-Agent implementation track by widening deterministic tool execution beyond `system_state_sync`. Expanded `neurolink_core.tools` so both the fake adapter and the Neuro CLI wrapper adapter can execute manifest-driven read-only tools for device, apps, leases, and capabilities, while still preserving special typed handling for `system_state_sync`. Tightened the adapter failure classification to treat nested reply payload statuses such as `not_implemented` as structured failures instead of false-positive success. On the reasoning side, extended the deterministic rational planner and `agent-run` input synthesis so user text can route to `system_query_device`, `system_query_apps`, `system_query_leases`, or `system_capabilities` through semantic topic hints instead of always forcing state sync. - Copilot
+
+#### EXEC-219 Manifest-Driven Read-Only Tool Expansion
+
+- Status: completed for widening the deterministic Core tool surface beyond state sync only
+- Owner: GitHub Copilot continuing the post-baseline Core-Agent implementation track
+- Scope:
+  - expand deterministic and Neuro CLI tool adapters to support multiple manifest-driven read-only tools
+  - preserve typed `state_sync` handling while adding generic query/capability envelopes
+  - route `agent-run` user input toward the appropriate read-only tool in the deterministic rational path
+  - classify nested query reply payload failures as structured tool errors
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - expanded the fake tool manifest and fake execution path to cover `system_query_device`, `system_query_apps`, `system_query_leases`, `system_state_sync`, and `system_capabilities`
+  - made `NeuroCliToolAdapter.execute()` dispatch from manifest argv templates instead of hardcoding `system_state_sync` only
+  - added nested payload-status failure detection for query replies, producing structured `nested_payload_status_failure` tool results
+  - updated the deterministic rational planner to select device/apps/leases/capabilities/state-sync based on semantic topics
+  - made `agent-run --input-text` synthesize user-input semantic topics that can drive different read-only tool selections in the deterministic local path
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py -q` passed: 42 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m py_compile neurolink_core/agents.py neurolink_core/tools.py neurolink_core/workflow.py neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py` passed with no output
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py -q` passed: 51 tests OK
+- Next action:
+  - continue by implementing the first real provider-backed affective/rational call path behind the new runtime contract, or deepen manifest-driven execution into broader read-only and approval-gated Neuro CLI tool families
+
+2026-05-04: Started the first post-baseline Core-Agent integration slices after release-1.2.0 local closure. Hardened `neurolink_core` MAF runtime/provider metadata so the Core can distinguish deterministic fake, provider-availability-only, and real-provider intent without leaking credentials or silently attempting model calls. Added fail-closed real-provider adapter skeletons plus factory helpers, then routed the no-model workflow through those factories while keeping deterministic fake behavior as the default execution path. Extended Core persistence and workflow state with `session_id`, added `neurolink_core/session.py` plus `neurolink-core session-inspect`, and made repeated dry-runs build auditable prior-span session context instead of acting as isolated one-shot runs only. Added a pluggable local memory backend with committed `long_term_memories`, exposed it through `--memory-backend local`, and recorded memory lookup/commit metadata in session context. Finally added affective-owned `final_response` payloads and a first `neurolink-core agent-run` CLI that can synthesize user input into a local perception event and run the full deterministic Core path end to end. - Copilot
+
+#### EXEC-218 Post-Baseline Core Session And Agent-Run Skeleton
+
+- Status: completed for the first post-baseline Core-Agent integration slice after release-1.2.0 local closure
+- Owner: GitHub Copilot continuing the next Core-Agent implementation track
+- Scope:
+  - harden MAF runtime/provider contracts beyond the original local smoke seam
+  - add minimal session continuity and read-only session inspection for repeated Core runs
+  - introduce a pluggable local long-term memory backend without breaking deterministic fake defaults
+  - add the first end-to-end `agent-run` CLI surface with affective-owned final responses
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/common.py`
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/memory.py`
+  - `applocation/NeuroLink/neurolink_core/session.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/__init__.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `MafProviderConfig`, explicit provider modes, safe provider readiness metadata, and opt-in model-call intent reporting in `maf-provider-smoke`
+  - added fail-closed real-provider affective/rational adapter skeletons plus factory helpers while preserving deterministic fake defaults in the no-model workflow
+  - made the Core workflow and persistence layer carry `session_id`, session history, and `session-inspect` snapshots across repeated runs
+  - added `long_term_memories` persistence plus `LocalCandidateBackedMemory` so candidate memories can be committed and later reused through the local data store
+  - recorded `memory_lookup_count`, committed memory IDs, and affective-owned `final_response` payloads in workflow/audit output
+  - added `neurolink-core agent-run` with `--input-text`, `--memory-backend`, and session continuity support for the deterministic local path
+- Verification evidence:
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -q` passed: 9 tests OK
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q` passed: 20 tests OK after workflow, session, memory, and `agent-run` coverage was added
+  - `cd applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py neurolink_core/tests/test_neurolink_core.py -q` passed: 29 tests OK
+- Next action:
+  - continue by implementing the first real provider-backed affective/rational call path behind the new runtime contract, or widen tool execution beyond `system_state_sync` through the manifest-driven Neuro CLI adapter
+
 2026-05-04: Promoted the canonical release identity and public docs for release-1.2.0 after local AI Core baseline closure. Updated Neuro CLI `RELEASE_TARGET`, workflow catalog release labels, Agent-facing contract defaults, README release statements, Neuro CLI skill references, and focused release-target tests from `1.1.10` to `1.2.0`. Recorded the release identity promotion in the 1.2.0 plan closure status while keeping the validated 1.1.10 Unit/demo hardware platform as the baseline for later provider/live-event/hardware integration tracks. - Copilot
 
 #### EXEC-217 Release-1.2.0 Identity And Documentation Promotion

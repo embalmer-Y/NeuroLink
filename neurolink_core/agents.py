@@ -52,11 +52,55 @@ class FakeAffectiveAgent:
 
 
 class FakeRationalAgent:
-    def plan(self, decision: AffectiveDecision, frame: PerceptionFrame) -> RationalPlan | None:
+    def plan(
+        self,
+        decision: AffectiveDecision,
+        frame: PerceptionFrame,
+        *,
+        available_tools: list[dict[str, Any]] | None = None,
+        session_context: dict[str, Any] | None = None,
+    ) -> RationalPlan | None:
+        del available_tools
         if not decision.delegated:
             return None
-        return RationalPlan(
-            tool_name="system_state_sync",
-            args={"event_ids": list(frame.event_ids), "reason": decision.reason},
-            reason="state_sync_before_any_unit_side_effect",
-        )
+        tool_name = "system_state_sync"
+        reason = "state_sync_before_any_unit_side_effect"
+        if "user.input.control.app.restart" in frame.topics:
+            tool_name = "system_restart_app"
+            reason = "app_restart_requested_by_user_input"
+        elif "user.input.control.app.start" in frame.topics:
+            tool_name = "system_start_app"
+            reason = "app_start_requested_by_user_input"
+        elif "user.input.control.app.stop" in frame.topics:
+            tool_name = "system_stop_app"
+            reason = "app_stop_requested_by_user_input"
+        elif "user.input.control.app.unload" in frame.topics:
+            tool_name = "system_unload_app"
+            reason = "app_unload_requested_by_user_input"
+        elif "user.input.query.device" in frame.topics:
+            tool_name = "system_query_device"
+            reason = "device_query_requested_by_user_input"
+        elif "user.input.query.apps" in frame.topics:
+            tool_name = "system_query_apps"
+            reason = "app_query_requested_by_user_input"
+        elif "user.input.query.leases" in frame.topics:
+            tool_name = "system_query_leases"
+            reason = "lease_query_requested_by_user_input"
+        elif "user.input.capabilities" in frame.topics:
+            tool_name = "system_capabilities"
+            reason = "capabilities_query_requested_by_user_input"
+        args: dict[str, Any] = {
+            "event_ids": list(frame.event_ids),
+            "reason": decision.reason,
+        }
+        if session_context is not None and tool_name in {
+            "system_restart_app",
+            "system_start_app",
+            "system_stop_app",
+            "system_unload_app",
+        }:
+            target_app_id = str(session_context.get("target_app_id") or "")
+            if target_app_id:
+                args["app_id"] = target_app_id
+                args["app"] = target_app_id
+        return RationalPlan(tool_name=tool_name, args=args, reason=reason)

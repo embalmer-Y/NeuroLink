@@ -9,8 +9,8 @@ BUILD_SCRIPT="${ROOT_DIR}/applocation/NeuroLink/scripts/build_neurolink.sh"
 CLI_REQUIREMENTS="${ROOT_DIR}/applocation/NeuroLink/neuro_cli/requirements.txt"
 NODE="unit-01"
 APP_ID="neuro_unit_app"
-ARTIFACT_FILE="build/neurolink_unit/llext/neuro_unit_app.llext"
-DEFAULT_ARTIFACT_FILE="build/neurolink_unit/llext/neuro_unit_app.llext"
+ARTIFACT_FILE="build/neurolink_unit_app/neuro_unit_app.llext"
+DEFAULT_ARTIFACT_FILE="build/neurolink_unit_app/neuro_unit_app.llext"
 ACTIVATE_LEASE_ID="lease-act-017b-001"
 ACTIVATE_LEASE_RESOURCE="update/app/neuro_unit_app/activate"
 LEASE_TTL_MS=120000
@@ -83,6 +83,18 @@ build_artifact_with_edk_external_app() {
 
 artifact_is_nonempty_file() {
   [[ -f "$1" ]] && [[ -s "$1" ]]
+}
+
+artifact_has_elf_magic() {
+  local magic
+
+  [[ -f "$1" ]] || return 1
+  magic="$(LC_ALL=C od -An -tx1 -N4 "$1" 2>/dev/null | tr -d ' \n')"
+  [[ "${magic}" == "7f454c46" ]]
+}
+
+artifact_is_valid_llext_file() {
+  artifact_is_nonempty_file "$1" && artifact_has_elf_magic "$1"
 }
 
 output_has_error_reply() {
@@ -277,8 +289,8 @@ if [[ "${ARTIFACT_FILE}" == "${DEFAULT_ARTIFACT_FILE}" ]]; then
   build_rc=$?
   set -e
 
-  if [[ ${build_rc} -ne 0 ]] || ! artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
-    echo "artifact file missing or empty: ${ARTIFACT_FILE}" >&2
+  if [[ ${build_rc} -ne 0 ]] || ! artifact_is_valid_llext_file "${ARTIFACT_FILE}"; then
+    echo "artifact file missing, empty, or not an ELF llext: ${ARTIFACT_FILE}" >&2
     if [[ -n "${build_output}" ]]; then
       echo "auto-build output:" >&2
       printf '%s\n' "${build_output}" >&2
@@ -287,8 +299,8 @@ if [[ "${ARTIFACT_FILE}" == "${DEFAULT_ARTIFACT_FILE}" ]]; then
     echo "or provide --artifact-file pointing to an existing llext" >&2
     exit 2
   fi
-elif ! artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
-  echo "artifact file missing or empty: ${ARTIFACT_FILE}" >&2
+elif ! artifact_is_valid_llext_file "${ARTIFACT_FILE}"; then
+  echo "artifact file missing, empty, or not an ELF llext: ${ARTIFACT_FILE}" >&2
   echo "build default artifact with EDK external app flow: bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check" >&2
   echo "or provide --artifact-file pointing to an existing llext" >&2
   exit 2

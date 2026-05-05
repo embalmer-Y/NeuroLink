@@ -76,6 +76,8 @@ class PerceptionFrame:
 class WorkflowResult:
     status: str
     execution_span_id: str
+    session_id: str
+    final_response: dict[str, Any]
     steps: tuple[str, ...]
     events_persisted: int
     delegated: bool
@@ -86,6 +88,8 @@ class WorkflowResult:
         return {
             "status": self.status,
             "execution_span_id": self.execution_span_id,
+            "session_id": self.session_id,
+            "final_response": dict(self.final_response),
             "steps": list(self.steps),
             "events_persisted": self.events_persisted,
             "delegated": self.delegated,

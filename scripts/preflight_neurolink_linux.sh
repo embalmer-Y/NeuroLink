@@ -8,8 +8,8 @@ ROUTER_SCRIPT="${NEUROLINK_ROUTER_SCRIPT:-${ROOT_DIR}/applocation/NeuroLink/scri
 BUILD_SCRIPT="${ROOT_DIR}/applocation/NeuroLink/scripts/build_neurolink.sh"
 CLI_REQUIREMENTS="${ROOT_DIR}/applocation/NeuroLink/neuro_cli/requirements.txt"
 NODE="unit-01"
-ARTIFACT_FILE="build/neurolink_unit/llext/neuro_unit_app.llext"
-DEFAULT_ARTIFACT_FILE="build/neurolink_unit/llext/neuro_unit_app.llext"
+ARTIFACT_FILE="build/neurolink_unit_app/neuro_unit_app.llext"
+DEFAULT_ARTIFACT_FILE="build/neurolink_unit_app/neuro_unit_app.llext"
 ROUTER_PORT=7447
 ROUTER_LISTEN=""
 AUTO_START_ROUTER=0
@@ -157,6 +157,18 @@ artifact_is_nonempty_file() {
   [[ -f "$1" ]] && [[ -s "$1" ]]
 }
 
+artifact_has_elf_magic() {
+  local magic
+
+  [[ -f "$1" ]] || return 1
+  magic="$(LC_ALL=C od -An -tx1 -N4 "$1" 2>/dev/null | tr -d ' \n')"
+  [[ "${magic}" == "7f454c46" ]]
+}
+
+artifact_is_valid_llext_file() {
+  artifact_is_nonempty_file "$1" && artifact_has_elf_magic "$1"
+}
+
 collect_serial_devices() {
   local devices=()
   local candidate
@@ -271,7 +283,7 @@ query_status="not_run"
 query_output=""
 mapfile -t serial_devices < <(collect_serial_devices)
 
-if artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
+if artifact_is_valid_llext_file "${ARTIFACT_FILE}"; then
   artifact_present=1
 fi
 
@@ -295,15 +307,15 @@ if [[ ${artifact_present} -eq 0 ]]; then
     build_rc=$?
     set -e
 
-    if [[ ${build_rc} -eq 0 ]] && artifact_is_nonempty_file "${ARTIFACT_FILE}"; then
+    if [[ ${build_rc} -eq 0 ]] && artifact_is_valid_llext_file "${ARTIFACT_FILE}"; then
       artifact_present=1
     fi
   fi
 
   if [[ ${artifact_present} -eq 0 ]]; then
-    artifact_hint="build failed or artifact is missing or empty"
+    artifact_hint="build failed or artifact is missing, empty, or not an ELF llext"
     if [[ "${ARTIFACT_FILE}" != "${DEFAULT_ARTIFACT_FILE}" ]]; then
-      artifact_hint="artifact missing or empty at custom path"
+      artifact_hint="artifact missing, empty, or not an ELF llext at custom path"
     fi
 
     emit_result "artifact_invalid" 0 \

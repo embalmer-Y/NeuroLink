@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS perception_events (
 
 CREATE TABLE IF NOT EXISTS execution_spans (
     execution_span_id TEXT PRIMARY KEY,
+    session_id TEXT,
     status TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     started_at TEXT NOT NULL,
@@ -62,6 +63,14 @@ CREATE TABLE IF NOT EXISTS memory_candidates (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS long_term_memories (
+    memory_id TEXT PRIMARY KEY,
+    source_execution_span_id TEXT NOT NULL,
+    semantic_topic TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tool_results (
     tool_result_id TEXT PRIMARY KEY,
     execution_span_id TEXT NOT NULL,
@@ -71,9 +80,30 @@ CREATE TABLE IF NOT EXISTS tool_results (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS approval_requests (
+    approval_request_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    source_execution_span_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approval_decisions (
+    approval_decision_id TEXT PRIMARY KEY,
+    approval_request_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_records (
     audit_id TEXT PRIMARY KEY,
     execution_span_id TEXT NOT NULL,
+    session_id TEXT,
     status TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -87,7 +117,21 @@ class CoreDataStore:
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._ensure_optional_columns()
         self._conn.commit()
+
+    def _ensure_optional_columns(self) -> None:
+        self._ensure_column("execution_spans", "session_id", "TEXT")
+        self._ensure_column("audit_records", "session_id", "TEXT")
+
+    def _ensure_column(self, table_name: str, column_name: str, column_type: str) -> None:
+        rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {row["name"] for row in rows}
+        if column_name in existing:
+            return
+        self._conn.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+        )
 
     def close(self) -> None:
         self._conn.close()
@@ -127,15 +171,17 @@ class CoreDataStore:
         execution_span_id: str,
         status: str,
         payload: dict[str, Any],
+        session_id: str | None = None,
     ) -> None:
         self._conn.execute(
             """
             INSERT OR REPLACE INTO execution_spans (
-                execution_span_id, status, payload_json, started_at, completed_at
-            ) VALUES (?, ?, ?, COALESCE((SELECT started_at FROM execution_spans WHERE execution_span_id = ?), ?), ?)
+                execution_span_id, session_id, status, payload_json, started_at, completed_at
+            ) VALUES (?, ?, ?, ?, COALESCE((SELECT started_at FROM execution_spans WHERE execution_span_id = ?), ?), ?)
             """,
             (
                 execution_span_id,
+                session_id,
                 status,
                 json.dumps(payload, sort_keys=True),
                 execution_span_id,
@@ -255,22 +301,84 @@ class CoreDataStore:
         execution_span_id: str,
         status: str,
         payload: dict[str, Any],
+        session_id: str | None = None,
     ) -> None:
         self._conn.execute(
             """
             INSERT INTO audit_records (
-                audit_id, execution_span_id, status, payload_json, created_at
-            ) VALUES (?, ?, ?, ?, ?)
+                audit_id, execution_span_id, session_id, status, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 audit_id,
                 execution_span_id,
+                session_id,
                 status,
                 json.dumps(payload, sort_keys=True),
                 utc_now_iso(),
             ),
         )
         self._conn.commit()
+
+    def persist_approval_request(
+        self,
+        session_id: str,
+        source_execution_span_id: str,
+        tool_name: str,
+        status: str,
+        payload: dict[str, Any],
+        approval_request_id: str | None = None,
+    ) -> str:
+        resolved_approval_request_id = approval_request_id or new_id("approval")
+        timestamp = utc_now_iso()
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO approval_requests (
+                approval_request_id, session_id, source_execution_span_id,
+                tool_name, status, payload_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM approval_requests WHERE approval_request_id = ?), ?), ?)
+            """,
+            (
+                resolved_approval_request_id,
+                session_id,
+                source_execution_span_id,
+                tool_name,
+                status,
+                json.dumps(payload, sort_keys=True),
+                resolved_approval_request_id,
+                timestamp,
+                timestamp,
+            ),
+        )
+        self._conn.commit()
+        return resolved_approval_request_id
+
+    def persist_approval_decision(
+        self,
+        approval_request_id: str,
+        session_id: str,
+        decision: str,
+        payload: dict[str, Any],
+    ) -> str:
+        approval_decision_id = new_id("approvaldec")
+        self._conn.execute(
+            """
+            INSERT INTO approval_decisions (
+                approval_decision_id, approval_request_id, session_id,
+                decision, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                approval_decision_id,
+                approval_request_id,
+                session_id,
+                decision,
+                json.dumps(payload, sort_keys=True),
+                utc_now_iso(),
+            ),
+        )
+        self._conn.commit()
+        return approval_decision_id
 
     def count(self, table_name: str) -> int:
         if table_name not in {
@@ -279,12 +387,40 @@ class CoreDataStore:
             "facts",
             "policy_decisions",
             "memory_candidates",
+            "long_term_memories",
             "tool_results",
+            "approval_requests",
+            "approval_decisions",
             "audit_records",
         }:
             raise ValueError(f"unsupported table: {table_name}")
         row = self._conn.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()
         return int(row["count"])
+
+    def persist_long_term_memory(
+        self,
+        source_execution_span_id: str,
+        semantic_topic: str,
+        payload: dict[str, Any],
+    ) -> str:
+        memory_id = new_id("memory")
+        self._conn.execute(
+            """
+            INSERT INTO long_term_memories (
+                memory_id, source_execution_span_id, semantic_topic,
+                payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                memory_id,
+                source_execution_span_id,
+                semantic_topic,
+                json.dumps(payload, sort_keys=True),
+                utc_now_iso(),
+            ),
+        )
+        self._conn.commit()
+        return memory_id
 
     def get_policy_decisions(self, execution_span_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
@@ -313,11 +449,112 @@ class CoreDataStore:
             return None
         return {
             "execution_span_id": row["execution_span_id"],
+            "session_id": row["session_id"],
             "status": row["status"],
             "payload": json.loads(row["payload_json"]),
             "started_at": row["started_at"],
             "completed_at": row["completed_at"],
         }
+
+    def get_execution_spans_for_session(
+        self,
+        session_id: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM execution_spans
+            WHERE session_id = ?
+            ORDER BY started_at DESC, execution_span_id DESC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+        return [
+            {
+                "execution_span_id": row["execution_span_id"],
+                "session_id": row["session_id"],
+                "status": row["status"],
+                "payload": json.loads(row["payload_json"]),
+                "started_at": row["started_at"],
+                "completed_at": row["completed_at"],
+            }
+            for row in rows
+        ]
+
+    def get_approval_request(self, approval_request_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM approval_requests WHERE approval_request_id = ?",
+            (approval_request_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "approval_request_id": row["approval_request_id"],
+            "session_id": row["session_id"],
+            "source_execution_span_id": row["source_execution_span_id"],
+            "tool_name": row["tool_name"],
+            "status": row["status"],
+            "payload": json.loads(row["payload_json"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def get_approval_requests(
+        self,
+        *,
+        session_id: str | None = None,
+        source_execution_span_id: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM approval_requests WHERE 1 = 1"
+        params: list[Any] = []
+        if session_id is not None:
+            sql += " AND session_id = ?"
+            params.append(session_id)
+        if source_execution_span_id is not None:
+            sql += " AND source_execution_span_id = ?"
+            params.append(source_execution_span_id)
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC, approval_request_id DESC LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [
+            {
+                "approval_request_id": row["approval_request_id"],
+                "session_id": row["session_id"],
+                "source_execution_span_id": row["source_execution_span_id"],
+                "tool_name": row["tool_name"],
+                "status": row["status"],
+                "payload": json.loads(row["payload_json"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    def get_approval_decisions(
+        self,
+        approval_request_id: str,
+    ) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM approval_decisions WHERE approval_request_id = ? ORDER BY created_at",
+            (approval_request_id,),
+        ).fetchall()
+        return [
+            {
+                "approval_decision_id": row["approval_decision_id"],
+                "approval_request_id": row["approval_request_id"],
+                "session_id": row["session_id"],
+                "decision": row["decision"],
+                "payload": json.loads(row["payload_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def get_facts(
         self,
@@ -359,6 +596,35 @@ class CoreDataStore:
             for row in rows
         ]
 
+    def get_long_term_memories(
+        self,
+        *,
+        source_execution_span_id: str | None = None,
+        semantic_topic: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM long_term_memories WHERE 1 = 1"
+        params: list[Any] = []
+        if source_execution_span_id is not None:
+            sql += " AND source_execution_span_id = ?"
+            params.append(source_execution_span_id)
+        if semantic_topic is not None:
+            sql += " AND semantic_topic = ?"
+            params.append(semantic_topic)
+        sql += " ORDER BY created_at DESC, memory_id DESC LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [
+            {
+                "memory_id": row["memory_id"],
+                "source_execution_span_id": row["source_execution_span_id"],
+                "semantic_topic": row["semantic_topic"],
+                "payload": json.loads(row["payload_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
     def get_audit_record(self, audit_id: str) -> dict[str, Any] | None:
         row = self._conn.execute(
             "SELECT * FROM audit_records WHERE audit_id = ?",
@@ -369,6 +635,7 @@ class CoreDataStore:
         return {
             "audit_id": row["audit_id"],
             "execution_span_id": row["execution_span_id"],
+            "session_id": row["session_id"],
             "status": row["status"],
             "payload": json.loads(row["payload_json"]),
             "created_at": row["created_at"],
@@ -384,6 +651,14 @@ class CoreDataStore:
             "facts": self.get_facts(execution_span_id),
             "policy_decisions": self.get_policy_decisions(execution_span_id),
             "memory_candidates": self.get_memory_candidates(execution_span_id),
+            "approval_requests": self.get_approval_requests(
+                source_execution_span_id=execution_span_id,
+                limit=20,
+            ),
+            "long_term_memories": self.get_long_term_memories(
+                source_execution_span_id=execution_span_id,
+                limit=20,
+            ),
             "audit_record": self.get_audit_record(audit_id),
         }
 

@@ -2,7 +2,7 @@
     [string]$PythonExe = "D:/Compiler/anaconda/envs/zephyr/python.exe",
     [string]$Node = "unit-01",
     [string]$AppId = "neuro_unit_app",
-    [string]$ArtifactFile = "build/neurolink_unit/llext/neuro_unit_app.llext",
+    [string]$ArtifactFile = "build/neurolink_unit_app/neuro_unit_app.llext",
     [string]$ActivateLeaseId = "lease-act-017b-001",
     [string]$ActivateLeaseResource = "update/app/neuro_unit_app/activate",
     [int]$LeaseTtlMs = 120000,

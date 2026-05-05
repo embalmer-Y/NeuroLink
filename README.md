@@ -2,9 +2,9 @@
 
 NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
 
-The project is currently closed at release `1.2.0`. The canonical host CLI advertises `RELEASE_TARGET = "1.2.0"`.
+The project is currently on closed release `1.2.1`. The canonical host CLI advertises `RELEASE_TARGET = "1.2.1"`.
 
-Release `1.2.0` closes the local AI Core baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, bounded Agent event ingestion, and a credential-safe provider smoke check. The validated release `1.1.10` Unit/demo platform remains the hardware baseline for follow-up provider or live-event integration work.
+Release `1.2.0` remains the earlier local AI Core baseline. Release `1.2.1` is now the closed Core-Agent baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, guarded real-provider wiring, approval-gated resumable tool execution, and bounded real Neuro CLI control integration validated on the connected DNESP32S3B hardware path. The validated release `1.1.10` Unit/demo platform remains the underlying hardware/runtime baseline for later provider or live-event follow-up work.
 
 ## Project Layout
 
@@ -139,6 +139,6 @@ Capability map:
 Release progress and architecture closure notes live in:
 
 - `PROJECT_PROGRESS.md`
-- `docs/project/RELEASE_1.2.0_MAF_CORE_AGENT_PLAN.md`
+- `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.2.0` closes the local AI Core baseline after Python compile, Core tests, Neuro CLI tests, Core dry-run smoke, MAF provider smoke, Problems, and whitespace gates passed. Real model-provider calls, long-running live event daemons, and additional hardware smoke are post-baseline integration tracks.
+Release `1.2.1` is closed as the current Core-Agent baseline. Remaining work such as broader real-provider execution, long-running live event ingestion, and wider hardware/operator-path parity is intentionally deferred to the next release line instead of being treated as an open gate on `1.2.1`.

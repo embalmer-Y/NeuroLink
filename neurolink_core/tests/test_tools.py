@@ -45,18 +45,66 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertEqual(decision.reason, "side_effect_level_not_allowed_in_no_model_slice")
         self.assertEqual(decision.side_effect_level, SideEffectLevel.DESTRUCTIVE)
 
+    def test_read_only_policy_marks_approval_required_contracts_as_denied(self) -> None:
+        contract = ToolContract(
+            tool_name="system_restart_app",
+            description="restart app",
+            side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+            approval_required=True,
+        )
+
+        decision = ReadOnlyToolPolicy().evaluate_contract(contract)
+
+        self.assertFalse(decision.allowed)
+        self.assertTrue(decision.approval_required)
+        self.assertEqual(decision.reason, "approval_required_tool_blocked_in_no_model_slice")
+
     def test_manifest_exposes_state_sync_contract(self) -> None:
         adapter = FakeUnitToolAdapter()
 
         manifest = adapter.tool_manifest()
-        self.assertEqual(len(manifest), 1)
-        contract = manifest[0]
+        self.assertEqual(len(manifest), 9)
+        contract = adapter.describe_tool("system_state_sync")
+        assert contract is not None
         self.assertEqual(contract.tool_name, "system_state_sync")
         self.assertEqual(contract.side_effect_level, SideEffectLevel.READ_ONLY)
         self.assertEqual(contract.required_resources, ())
         self.assertFalse(contract.approval_required)
         self.assertTrue(contract.retryable)
         self.assertEqual(contract.argv_template[2:4], ("system", "state-sync"))
+
+    def test_manifest_exposes_query_and_capability_contracts(self) -> None:
+        adapter = FakeUnitToolAdapter()
+
+        tool_names = {contract.tool_name for contract in adapter.tool_manifest()}
+
+        self.assertEqual(
+            tool_names,
+            {
+                "system_query_device",
+                "system_query_apps",
+                "system_query_leases",
+                "system_state_sync",
+                "system_capabilities",
+                "system_restart_app",
+                "system_start_app",
+                "system_stop_app",
+                "system_unload_app",
+            },
+        )
+
+        restart_contract = adapter.describe_tool("system_restart_app")
+        assert restart_contract is not None
+        self.assertTrue(restart_contract.approval_required)
+        self.assertEqual(
+            restart_contract.side_effect_level,
+            SideEffectLevel.APPROVAL_REQUIRED,
+        )
+        for tool_name in ("system_start_app", "system_stop_app", "system_unload_app"):
+            contract = adapter.describe_tool(tool_name)
+            assert contract is not None
+            self.assertTrue(contract.approval_required)
+            self.assertEqual(contract.side_effect_level, SideEffectLevel.APPROVAL_REQUIRED)
 
     def test_describe_tool_returns_none_for_unknown_tool(self) -> None:
         adapter = FakeUnitToolAdapter()
@@ -88,14 +136,28 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
             ["evt-1"],
         )
 
+    def test_query_execution_returns_structured_result_payload(self) -> None:
+        adapter = FakeUnitToolAdapter()
+
+        result = adapter.execute("system_query_device", {})
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["contract"]["name"], "system_query_device")
+        self.assertEqual(result.payload["result"]["replies"][0]["payload"]["status"], "ok")
+
     def test_parse_cli_manifest_payload_returns_typed_contracts(self) -> None:
         adapter = FakeUnitToolAdapter()
 
         contracts = adapter.parse_tool_manifest_payload(adapter.tool_manifest_payload())
 
-        self.assertEqual(len(contracts), 1)
-        self.assertEqual(contracts[0].tool_name, "system_state_sync")
-        self.assertEqual(contracts[0].resource, "state sync aggregate")
+        self.assertEqual(len(contracts), 9)
+        parsed = {contract.tool_name: contract for contract in contracts}
+        self.assertEqual(parsed["system_state_sync"].resource, "state sync aggregate")
+        self.assertEqual(parsed["system_query_device"].resource, "device query plane")
+        self.assertTrue(parsed["system_restart_app"].approval_required)
+        self.assertTrue(parsed["system_start_app"].approval_required)
+        self.assertTrue(parsed["system_stop_app"].approval_required)
+        self.assertTrue(parsed["system_unload_app"].approval_required)
 
     def test_parse_state_sync_payload_returns_typed_snapshot(self) -> None:
         adapter = FakeUnitToolAdapter()
@@ -125,9 +187,13 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["schema_version"], TOOL_MANIFEST_SCHEMA_VERSION)
-        self.assertEqual(len(payload["tools"]), 1)
-        self.assertEqual(payload["tools"][0]["name"], "system_state_sync")
-        self.assertEqual(payload["tools"][0]["side_effect_level"], "read_only")
+        names = {tool["name"] for tool in payload["tools"]}
+        self.assertIn("system_state_sync", names)
+        self.assertIn("system_query_device", names)
+        self.assertIn("system_restart_app", names)
+        self.assertIn("system_start_app", names)
+        self.assertIn("system_stop_app", names)
+        self.assertIn("system_unload_app", names)
 
 
 class TestNeuroCliToolAdapter(unittest.TestCase):
@@ -260,6 +326,70 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         )
         self.assertEqual(len(calls), 2)
 
+    def test_execute_reads_query_device_from_cli_json(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            calls.append(argv)
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_query_device",
+                                    "description": "device query",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "query",
+                                        "device",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "device query plane",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            self.assertIn("query", argv)
+            self.assertIn("device", argv)
+            self.assertEqual(timeout_seconds, 10)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "payload": {"request_id": "req-1"},
+                        "replies": [
+                            {
+                                "ok": True,
+                                "payload": {"status": "ok", "network_state": "NETWORK_READY"},
+                            }
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        result = adapter.execute("system_query_device", {})
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(
+            result.payload["result"]["replies"][0]["payload"]["network_state"],
+            "NETWORK_READY",
+        )
+        self.assertEqual(len(calls), 2)
+
     def test_execute_returns_structured_failure_for_top_level_error(self) -> None:
         def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
             if "tool-manifest" in argv:
@@ -295,6 +425,54 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertEqual(result.payload["failure_status"], "partial_failure")
         self.assertEqual(result.payload["failure_class"], "top_level_status_failure")
+
+    def test_execute_returns_nested_failure_for_query_reply_status(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_query_device",
+                                    "description": "device query",
+                                    "argv_template": ["python", "wrapper.py", "query", "device", "--output", "json"],
+                                    "resource": "device query plane",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "payload": {"request_id": "req-1"},
+                        "replies": [
+                            {
+                                "ok": True,
+                                "payload": {"status": "not_implemented", "status_code": 501},
+                            }
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        result = adapter.execute("system_query_device", {})
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.payload["failure_status"], "not_implemented")
+        self.assertEqual(result.payload["failure_class"], "nested_payload_status_failure")
 
     def test_execute_preserves_payload_status_on_nonzero_exit(self) -> None:
         def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
@@ -343,6 +521,7 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         self.assertEqual(payload["schema_version"], TOOL_MANIFEST_SCHEMA_VERSION)
         tool_names = [item["name"] for item in payload["tools"]]
         self.assertIn("system_state_sync", tool_names)
+        self.assertIn("system_stop_app", tool_names)
 
     def test_cli_tool_manifest_can_use_neuro_cli_adapter(self) -> None:
         out = io.StringIO()
@@ -356,6 +535,216 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         self.assertEqual(payload["schema_version"], TOOL_MANIFEST_SCHEMA_VERSION)
         tool_names = [item["name"] for item in payload["tools"]]
         self.assertIn("system_state_sync", tool_names)
+        self.assertIn("system_restart_app", tool_names)
+        self.assertIn("system_start_app", tool_names)
+        self.assertIn("system_stop_app", tool_names)
+        self.assertIn("system_unload_app", tool_names)
+
+    def test_execute_restart_app_maps_to_real_app_stop_start_commands(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            calls.append(argv)
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_query_apps",
+                                    "description": "apps query",
+                                    "argv_template": ["python", "wrapper.py", "query", "apps", "--output", "json"],
+                                    "resource": "app query plane",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_query_leases",
+                                    "description": "leases query",
+                                    "argv_template": ["python", "wrapper.py", "query", "leases", "--output", "json"],
+                                    "resource": "lease query plane",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_restart_app",
+                                    "description": "restart app",
+                                    "argv_template": ["python", "wrapper.py", "app", "stop", "--output", "json"],
+                                    "resource": "app control plane",
+                                    "required_arguments": ["--node", "--app-id", "--lease-id"],
+                                    "side_effect_level": "approval_required",
+                                    "approval_required": True,
+                                    "lease_requirements": ["app_control_lease"],
+                                    "timeout_seconds": 15,
+                                },
+                            ],
+                        }
+                    ),
+                )
+            if "query" in argv and "apps" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "replies": [
+                                {"ok": True, "payload": {"status": "ok", "app_count": 1, "apps": [{"app_id": "neuro_demo_gpio"}]}}
+                            ],
+                        }
+                    ),
+                )
+            if "query" in argv and "leases" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "replies": [
+                                {"ok": True, "payload": {"status": "ok", "leases": [{"resource": "app/neuro_demo_gpio/control", "lease_id": "lease-gpio-001"}]}}
+                            ],
+                        }
+                    ),
+                )
+            if "app" in argv and "stop" in argv:
+                self.assertIn("--app-id", argv)
+                self.assertIn("neuro_demo_gpio", argv)
+                self.assertIn("--lease-id", argv)
+                self.assertIn("lease-gpio-001", argv)
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {"ok": True, "status": "ok", "replies": [{"ok": True, "payload": {"status": "ok", "app_id": "neuro_demo_gpio"}}]}
+                    ),
+                )
+            self.assertIn("app", argv)
+            self.assertIn("start", argv)
+            self.assertIn("--app-id", argv)
+            self.assertIn("neuro_demo_gpio", argv)
+            self.assertIn("--lease-id", argv)
+            self.assertIn("lease-gpio-001", argv)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {"ok": True, "status": "ok", "replies": [{"ok": True, "payload": {"status": "ok", "app_id": "neuro_demo_gpio"}}]}
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        result = adapter.execute("system_restart_app", {})
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["resolved_args"]["app_id"], "neuro_demo_gpio")
+        self.assertEqual(result.payload["resolved_args"]["lease_id"], "lease-gpio-001")
+        self.assertEqual(result.payload["stop_result"]["status"], "ok")
+        self.assertEqual(result.payload["start_result"]["status"], "ok")
+        self.assertGreaterEqual(len(calls), 4)
+
+    def test_execute_single_control_tools_map_to_real_app_commands(self) -> None:
+        for tool_name, action in (
+            ("system_start_app", "start"),
+            ("system_stop_app", "stop"),
+            ("system_unload_app", "unload"),
+        ):
+            with self.subTest(tool_name=tool_name):
+                calls: list[list[str]] = []
+
+                def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                    calls.append(argv)
+                    if "tool-manifest" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps(
+                                {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                                    "tools": [
+                                        {
+                                            "name": "system_query_apps",
+                                            "description": "apps query",
+                                            "argv_template": ["python", "wrapper.py", "query", "apps", "--output", "json"],
+                                            "resource": "app query plane",
+                                            "required_arguments": ["--node"],
+                                            "side_effect_level": "read_only",
+                                        },
+                                        {
+                                            "name": "system_query_leases",
+                                            "description": "leases query",
+                                            "argv_template": ["python", "wrapper.py", "query", "leases", "--output", "json"],
+                                            "resource": "lease query plane",
+                                            "required_arguments": ["--node"],
+                                            "side_effect_level": "read_only",
+                                        },
+                                        {
+                                            "name": tool_name,
+                                            "description": f"{action} app",
+                                            "argv_template": ["python", "wrapper.py", "app", action, "--output", "json"],
+                                            "resource": "app control plane",
+                                            "required_arguments": ["--node", "--app-id", "--lease-id"],
+                                            "side_effect_level": "approval_required",
+                                            "approval_required": True,
+                                            "lease_requirements": ["app_control_lease"],
+                                            "timeout_seconds": 15,
+                                        },
+                                    ],
+                                }
+                            ),
+                        )
+                    if "query" in argv and "apps" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps(
+                                {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "replies": [
+                                        {"ok": True, "payload": {"status": "ok", "app_count": 1, "apps": [{"app_id": "neuro_demo_gpio"}]}}
+                                    ],
+                                }
+                            ),
+                        )
+                    if "query" in argv and "leases" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps(
+                                {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "replies": [
+                                        {"ok": True, "payload": {"status": "ok", "leases": [{"resource": "app/neuro_demo_gpio/control", "lease_id": "lease-gpio-001"}]}}
+                                    ],
+                                }
+                            ),
+                        )
+                    self.assertIn("app", argv)
+                    self.assertIn(action, argv)
+                    self.assertIn("--app-id", argv)
+                    self.assertIn("neuro_demo_gpio", argv)
+                    self.assertIn("--lease-id", argv)
+                    self.assertIn("lease-gpio-001", argv)
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {"ok": True, "status": "ok", "replies": [{"ok": True, "payload": {"status": "ok", "app_id": "neuro_demo_gpio", "action": action}}]}
+                        ),
+                    )
+
+                adapter = NeuroCliToolAdapter(runner=runner)
+
+                result = adapter.execute(tool_name, {})
+
+                self.assertEqual(result.status, "ok")
+                self.assertEqual(result.payload["resolved_args"]["app_id"], "neuro_demo_gpio")
+                self.assertEqual(result.payload["resolved_args"]["lease_id"], "lease-gpio-001")
+                self.assertEqual(result.payload["result"]["status"], "ok")
+                self.assertGreaterEqual(len(calls), 3)
 
     def test_real_wrapper_state_sync_returns_structured_result(self) -> None:
         adapter = NeuroCliToolAdapter(python_executable=sys.executable, timeout_seconds=1)

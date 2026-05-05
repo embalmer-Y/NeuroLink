@@ -3,7 +3,7 @@ from __future__ import annotations
 import neuro_protocol as protocol
 
 
-RELEASE_TARGET = "1.2.0"
+RELEASE_TARGET = "1.2.1"
 
 
 def release_label(suffix: str) -> str:
@@ -337,7 +337,7 @@ WORKFLOW_PLANS = {
             "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases",
             "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource update/app/neuro_unit_app/activate --lease-id "
             f"{release_label('deploy')}-lease --ttl-ms 120000",
-            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy prepare --app-id neuro_unit_app --file build/neurolink_unit/llext/neuro_unit_app.llext",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy prepare --app-id neuro_unit_app --file build/neurolink_unit_app/neuro_unit_app.llext",
             "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy verify --app-id neuro_unit_app",
             "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy activate --app-id neuro_unit_app --lease-id "
             f"{release_label('deploy')}-lease --start-args release={RELEASE_TARGET}",
@@ -348,7 +348,7 @@ WORKFLOW_PLANS = {
             "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
         ],
         "artifacts": [
-            "build/neurolink_unit/llext/neuro_unit_app.llext",
+            "build/neurolink_unit_app/neuro_unit_app.llext",
             "applocation/NeuroLink/smoke-evidence",
         ],
         "json_contract": {
