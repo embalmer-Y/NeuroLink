@@ -48,7 +48,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     side_effect_level=SideEffectLevel.DESTRUCTIVE,
                 )
 
-            def execute(self, tool_name: str, args: dict) -> None:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> None:
                 del tool_name, args
                 self.executed = True
                 raise AssertionError("policy should block before adapter execution")
@@ -110,6 +110,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         )
         self.assertEqual(result.steps[-1], "notification_dispatch")
         self.assertIsNotNone(audit_record)
+        assert audit_record is not None
         self.assertEqual(audit_record["session_id"], result.session_id)
         self.assertEqual(audit_record["payload"]["adapter_runtime"]["adapter_kind"], "fake")
         self.assertEqual(
@@ -234,10 +235,94 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         payload = run_no_model_dry_run(memory_backend="local")
 
         self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(payload["memory_runtime"]["backend_kind"], "local_sqlite")
+        self.assertFalse(payload["memory_runtime"]["fallback_active"])
         self.assertEqual(len(payload["execution_evidence"]["long_term_memories"]), 2)
         self.assertEqual(
             payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["committed_memory_count"],
             2,
+        )
+        self.assertEqual(
+            payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["memory_runtime"],
+            payload["memory_runtime"],
+        )
+
+    def test_mem0_memory_backend_falls_back_to_local_when_unavailable(self) -> None:
+        with mock.patch("neurolink_core.memory.find_spec", return_value=None):
+            payload = run_no_model_dry_run(memory_backend="mem0")
+
+        self.assertEqual(payload["memory_runtime"]["backend_kind"], "mem0_sidecar")
+        self.assertTrue(payload["memory_runtime"]["fallback_active"])
+        self.assertFalse(payload["memory_runtime"]["package_available"])
+        self.assertEqual(
+            payload["memory_runtime"]["unavailable_reason"],
+            "mem0_package_not_installed",
+        )
+        self.assertEqual(payload["memory_runtime"]["last_lookup_status"], "fallback_local_sqlite")
+        self.assertEqual(payload["memory_runtime"]["last_commit_status"], "fallback_local_sqlite")
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(
+            payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["memory_runtime"],
+            payload["memory_runtime"],
+        )
+
+    def test_mem0_memory_backend_uses_injected_sidecar_and_sqlite_mirror(self) -> None:
+        class FakeMem0Client:
+            def __init__(self) -> None:
+                self.search_calls: list[dict[str, Any]] = []
+                self.add_calls: list[dict[str, Any]] = []
+
+            def search(self, query: str, user_id: str, limit: int) -> dict[str, Any]:
+                self.search_calls.append(
+                    {"query": query, "user_id": user_id, "limit": limit}
+                )
+                return {"results": [{"id": "mem0-existing-001", "memory": "prior state"}]}
+
+            def add(
+                self,
+                message: str,
+                user_id: str,
+                metadata: dict[str, Any],
+            ) -> dict[str, Any]:
+                memory_id = f"mem0-new-{len(self.add_calls) + 1:03d}"
+                self.add_calls.append(
+                    {
+                        "message": message,
+                        "user_id": user_id,
+                        "metadata": metadata,
+                    }
+                )
+                return {"id": memory_id}
+
+        client = FakeMem0Client()
+
+        payload = run_no_model_dry_run(
+            memory_backend="mem0",
+            mem0_client=client,
+        )
+
+        self.assertEqual(payload["memory_runtime"]["backend_kind"], "mem0_sidecar")
+        self.assertFalse(payload["memory_runtime"]["fallback_active"])
+        self.assertTrue(payload["memory_runtime"]["sidecar_configured"])
+        self.assertEqual(
+            payload["memory_runtime"]["last_lookup_status"],
+            "sidecar_and_local_sqlite",
+        )
+        self.assertEqual(
+            payload["memory_runtime"]["last_commit_status"],
+            "sidecar_and_sqlite_mirror",
+        )
+        self.assertEqual(
+            payload["memory_runtime"]["sidecar_memory_ids"],
+            ["mem0-new-001", "mem0-new-002"],
+        )
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(len(client.search_calls), 1)
+        self.assertEqual(len(client.add_calls), 2)
+        self.assertEqual(client.add_calls[0]["user_id"], "neurolink-core")
+        self.assertEqual(
+            client.add_calls[0]["metadata"]["agent_id"],
+            "neurolink-rational",
         )
 
     def test_local_memory_backend_reuses_prior_memories_on_next_run(self) -> None:
@@ -260,6 +345,42 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             second["execution_evidence"]["audit_record"]["payload"]["session_context"]["memory_lookup_count"],
             0,
         )
+
+    def test_prompt_safe_context_summarizes_history_and_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            run_no_model_dry_run(
+                db_path,
+                session_id="prompt-safe-session-001",
+                memory_backend="local",
+            )
+            second = run_no_model_dry_run(
+                db_path,
+                session_id="prompt-safe-session-001",
+                memory_backend="local",
+            )
+
+        session_context = second["execution_evidence"]["audit_record"]["payload"]["session_context"]
+        prompt_context = session_context["prompt_safe_context"]
+
+        self.assertEqual(
+            prompt_context["schema_version"],
+            "1.2.2-prompt-safe-context-v1",
+        )
+        self.assertEqual(prompt_context["session_id"], "prompt-safe-session-001")
+        self.assertEqual(prompt_context["history"]["previous_execution_count"], 1)
+        self.assertEqual(len(prompt_context["history"]["previous_executions"]), 1)
+        self.assertNotIn(
+            "payload",
+            prompt_context["history"]["previous_executions"][0],
+        )
+        self.assertGreater(prompt_context["memory"]["lookup_count"], 0)
+        self.assertLessEqual(len(prompt_context["memory"]["items"]), 5)
+        self.assertEqual(
+            prompt_context["safety_boundaries"]["can_execute_tools_directly"],
+            False,
+        )
+        self.assertIn("previous_execution_spans", session_context)
 
     def test_cli_no_model_dry_run_outputs_json(self) -> None:
         out = io.StringIO()
@@ -319,7 +440,12 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         class FakeProviderClient:
             provider_client_kind = "test_client"
 
-            def decide(self, frame, memory_items, profile):
+            def decide(
+                self,
+                frame: Any,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+            ) -> dict[str, Any]:
                 del frame, memory_items, profile
                 return {
                     "delegated": True,
@@ -327,7 +453,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     "salience": 88,
                 }
 
-            def plan(self, decision, frame, profile, available_tools, session_context):
+            def plan(
+                self,
+                decision: Any,
+                frame: Any,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any]:
                 del decision, frame, profile
                 self.available_tools = available_tools
                 self.session_context = session_context
@@ -365,19 +498,82 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["command"], "agent-run")
+        self.assertEqual(payload["runtime_mode"], "real_llm")
         self.assertEqual(payload["maf_runtime"]["provider_mode"], "real_provider")
+        self.assertIn("affective_model_call", payload["steps"])
         self.assertEqual(payload["tool_results"][0]["tool_name"], "system_query_device")
         self.assertEqual(payload["final_response"]["salience"], 88)
+        self.assertEqual(
+            payload["model_call_evidence"]["call_status"],
+            "model_call_succeeded",
+        )
+        self.assertTrue(payload["model_call_evidence"]["executes_model_call"])
+        self.assertEqual(
+            payload["model_call_evidence"]["provider_client_kind"],
+            "test_client",
+        )
+        self.assertEqual(
+            payload["model_call_evidence"]["decision"],
+            {
+                "delegated": True,
+                "reason": "real_provider_affective_decision",
+                "salience": 88,
+            },
+        )
+        audit_session_context = payload["execution_evidence"]["audit_record"]["payload"]["session_context"]
+        self.assertEqual(
+            audit_session_context["model_call_evidence"],
+            payload["model_call_evidence"],
+        )
         self.assertEqual(
             {item["provider_client_kind"] for item in payload["maf_runtime"]["agent_adapters"]},
             {"test_client"},
         )
+        agent_run_evidence = payload["agent_run_evidence"]
+        self.assertEqual(
+            agent_run_evidence["schema_version"],
+            "1.2.2-agent-run-evidence-v1",
+        )
+        self.assertTrue(agent_run_evidence["ok"])
+        self.assertEqual(agent_run_evidence["runtime_mode"], "real_llm")
+        self.assertEqual(
+            agent_run_evidence["provider_runtime"]["provider_mode"],
+            "real_provider",
+        )
+        self.assertEqual(
+            agent_run_evidence["rational_backend"]["backend_kind"],
+            "maf_provider_client",
+        )
+        self.assertEqual(
+            agent_run_evidence["memory_runtime"]["backend_kind"],
+            "fake",
+        )
+        self.assertEqual(
+            agent_run_evidence["model_call_evidence"],
+            payload["model_call_evidence"],
+        )
+        self.assertEqual(
+            agent_run_evidence["prompt_safe_context"]["schema_version"],
+            "1.2.2-prompt-safe-context-v1",
+        )
+        self.assertFalse(
+            agent_run_evidence["prompt_safe_context"]["safety_boundaries"]["can_execute_tools_directly"]
+        )
+        self.assertEqual(agent_run_evidence["db_counts"], payload["db_counts"])
+        self.assertEqual(agent_run_evidence["evidence_counts"]["policy_decisions"], 1)
+        self.assertEqual(agent_run_evidence["evidence_counts"]["tool_results"], 1)
+        self.assertTrue(agent_run_evidence["audit"]["audit_record_present"])
 
     def test_workflow_rejects_real_provider_plan_for_unknown_manifest_tool(self) -> None:
         class FakeProviderClient:
             provider_client_kind = "test_client"
 
-            def decide(self, frame, memory_items, profile):
+            def decide(
+                self,
+                frame: Any,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+            ) -> dict[str, Any]:
                 del frame, memory_items, profile
                 return {
                     "delegated": True,
@@ -385,7 +581,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     "salience": 93,
                 }
 
-            def plan(self, decision, frame, profile, available_tools, session_context):
+            def plan(
+                self,
+                decision: Any,
+                frame: Any,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any]:
                 self.available_tools = available_tools
                 self.session_context = session_context
                 del decision, frame, profile
@@ -426,6 +629,152 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             payload["execution_evidence"]["audit_record"]["payload"]["session_context"],
         )
 
+    def test_real_provider_receives_prompt_safe_context_only(self) -> None:
+        class CapturingProviderClient:
+            provider_client_kind = "test_client"
+
+            def __init__(self) -> None:
+                self.memory_items: list[dict[str, Any]] = []
+                self.session_context: dict[str, Any] = {}
+
+            def decide(
+                self,
+                frame: Any,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+            ) -> dict[str, Any]:
+                del frame, profile
+                self.memory_items = memory_items
+                return {
+                    "delegated": True,
+                    "reason": "real_provider_affective_decision",
+                    "salience": 88,
+                }
+
+            def plan(
+                self,
+                decision: Any,
+                frame: Any,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any]:
+                del decision, frame, profile, available_tools
+                self.session_context = session_context
+                return {
+                    "tool_name": "system_query_device",
+                    "args": {"source": "real-provider"},
+                    "reason": "real_provider_rational_plan",
+                }
+
+        client = CapturingProviderClient()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            run_no_model_dry_run(
+                db_path,
+                session_id="prompt-safe-provider-001",
+                memory_backend="local",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "secret", "OPENAI_MODEL": "gpt-4.1-mini"},
+                clear=False,
+            ):
+                with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+                    payload = run_no_model_dry_run(
+                        db_path,
+                        session_id="prompt-safe-provider-001",
+                        maf_provider_mode="real_provider",
+                        allow_model_call=True,
+                        memory_backend="local",
+                        provider_client=client,
+                    )
+
+        audit_session_context = payload["execution_evidence"]["audit_record"]["payload"]["session_context"]
+        self.assertEqual(
+            client.session_context["schema_version"],
+            "1.2.2-prompt-safe-context-v1",
+        )
+        self.assertNotIn("previous_execution_spans", client.session_context)
+        self.assertNotIn("model_call_evidence", client.session_context)
+        self.assertIn("prompt_safe_context", audit_session_context)
+        self.assertEqual(
+            audit_session_context["prompt_safe_context"],
+            client.session_context,
+        )
+        self.assertTrue(client.memory_items)
+        self.assertNotIn("payload", client.memory_items[0])
+
+    def test_copilot_rational_backend_requires_allow_model_call(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "copilot_rational_backend_requires_allow_model_call",
+        ):
+            run_no_model_dry_run(rational_backend="copilot")
+
+    def test_cli_agent_run_rejects_copilot_rational_backend_without_allow_flag(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "agent-run",
+                    "--input-text",
+                    "check current device status",
+                    "--rational-backend",
+                    "copilot",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            payload["failure_status"],
+            "copilot_rational_backend_requires_allow_model_call",
+        )
+
+    def test_copilot_rational_backend_can_drive_agent_run_with_injected_agent(self) -> None:
+        class FakeCopilotAgent:
+            def __init__(self, default_options: dict[str, Any]) -> None:
+                self.default_options = default_options
+
+            async def __aenter__(self) -> "FakeCopilotAgent":
+                return self
+
+            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+                del exc_type, exc, tb
+
+            async def run(self, prompt: str) -> str:
+                self.prompt = prompt
+                return (
+                    '{"tool_name":"system_query_device",'
+                    '"args":{"source":"copilot"},'
+                    '"reason":"copilot_selected_device_query"}'
+                )
+
+        created_agents: list[FakeCopilotAgent] = []
+
+        def agent_factory(default_options: dict[str, Any]) -> FakeCopilotAgent:
+            agent = FakeCopilotAgent(default_options)
+            created_agents.append(agent)
+            return agent
+
+        payload = run_no_model_dry_run(
+            events=build_user_prompt_event("check current device status"),
+            allow_model_call=True,
+            rational_backend="copilot",
+            copilot_agent_factory=agent_factory,
+        )
+
+        self.assertEqual(payload["tool_results"][0]["tool_name"], "system_query_device")
+        rational_backend = payload["agent_run_evidence"]["rational_backend"]
+        self.assertEqual(rational_backend["backend_kind"], "github_copilot_sdk")
+        self.assertTrue(rational_backend["model_call_allowed"])
+        self.assertFalse(rational_backend["can_execute_tools_directly"])
+        self.assertTrue(payload["agent_run_evidence"]["ok"])
+        self.assertIn("1.2.2-prompt-safe-context-v1", created_agents[0].prompt)
+        self.assertIn("system_query_device", created_agents[0].prompt)
+
     def test_cli_no_model_dry_run_can_use_local_memory_backend(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
@@ -444,6 +793,24 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["committed_memory_count"],
             2,
         )
+
+    def test_cli_no_model_dry_run_can_request_mem0_with_local_fallback(self) -> None:
+        out = io.StringIO()
+        with mock.patch("neurolink_core.memory.find_spec", return_value=None):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "no-model-dry-run",
+                        "--memory-backend",
+                        "mem0",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["memory_runtime"]["backend_kind"], "mem0_sidecar")
+        self.assertTrue(payload["memory_runtime"]["fallback_active"])
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
 
     def test_cli_session_inspect_reports_existing_session_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -569,6 +936,15 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         )
         self.assertEqual(len(payload["session"]["pending_approval_requests"]), 1)
         self.assertIn("waiting for explicit approval", payload["final_response"]["text"])
+        self.assertTrue(payload["agent_run_evidence"]["ok"])
+        self.assertEqual(
+            payload["agent_run_evidence"]["evidence_counts"]["approval_requests"],
+            1,
+        )
+        self.assertEqual(
+            payload["agent_run_evidence"]["evidence_counts"]["tool_results"],
+            1,
+        )
 
     def test_cli_agent_run_routes_other_app_control_requests_to_pending_approval(self) -> None:
         for input_text, expected_tool_name in (
@@ -1846,6 +2222,112 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["db_counts"]["perception_events"], 2)
         self.assertEqual(payload["tool_results"][0]["tool_name"], "system_state_sync")
 
+    def test_cli_agent_run_rejects_real_tool_adapter_gate_with_fake_adapter(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "agent-run",
+                    "--input-text",
+                    "check current device status",
+                    "--require-real-tool-adapter",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            payload["failure_status"],
+            "require_real_tool_adapter_requires_neuro_cli_adapter",
+        )
+
+    def test_cli_agent_run_reports_real_tool_adapter_release_gate(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-tool-manifest-v1",
+                            "tools": [
+                                {
+                                    "name": "system_query_device",
+                                    "description": "query device",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "query",
+                                        "device",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "device query plane",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "payload": {
+                            "request_id": "req-real-adapter-test",
+                        },
+                        "replies": [
+                            {
+                                "ok": True,
+                                "payload": {
+                                    "network_state": "NETWORK_READY",
+                                    "status": "ok",
+                                },
+                            }
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "agent-run",
+                        "--input-text",
+                        "check current device status",
+                        "--tool-adapter",
+                        "neuro-cli",
+                        "--require-real-tool-adapter",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        agent_run_evidence = payload["agent_run_evidence"]
+        self.assertTrue(agent_run_evidence["release_gate_require_real_tool_adapter"])
+        self.assertTrue(agent_run_evidence["real_tool_adapter_present"])
+        self.assertTrue(agent_run_evidence["real_tool_execution_succeeded"])
+        self.assertEqual(
+            agent_run_evidence["tool_adapter_runtime"]["adapter_kind"],
+            "neuro-cli",
+        )
+        self.assertTrue(
+            agent_run_evidence["closure_gates"]["real_tool_adapter_present"]
+        )
+        self.assertTrue(
+            agent_run_evidence["closure_gates"]["real_tool_execution_succeeded"]
+        )
+        self.assertTrue(agent_run_evidence["ok"])
+
     def test_data_store_query_and_topic_index_follow_priority_and_topic_filters(self) -> None:
         data_store = CoreDataStore()
         workflow = NoModelCoreWorkflow(data_store=data_store)
@@ -1937,6 +2419,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         audit_record = data_store.get_audit_record(result.audit_id)
 
         self.assertIsNotNone(audit_record)
+        assert audit_record is not None
         self.assertEqual(result.tool_results[0]["status"], "error")
         self.assertEqual(
             audit_record["payload"]["adapter_runtime"]["adapter_kind"], "neuro-cli"

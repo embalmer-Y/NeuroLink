@@ -11,6 +11,12 @@ from typing import Any, Protocol, cast
 
 from .agents import AffectiveDecision, FakeAffectiveAgent, FakeRationalAgent, RationalPlan
 from .common import PerceptionFrame
+from .rational_backends import (
+    CopilotSdkRationalBackend,
+    DeterministicRationalBackend,
+    ProviderRationalBackend,
+    RationalBackend,
+)
 
 
 MAF_RUNTIME_SCHEMA_VERSION = "1.2.0-maf-runtime-v1"
@@ -228,8 +234,38 @@ def build_maf_runtime_profile(
 def maf_provider_smoke_status(
     *,
     allow_model_call: bool = False,
+    execute_model_call: bool = False,
     env: Mapping[str, str] | None = None,
+    provider_client: MafProviderClient | None = None,
 ) -> dict[str, Any]:
+    if execute_model_call and not allow_model_call:
+        runtime_profile = build_maf_runtime_profile(
+            provider_mode=MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            env=env,
+        )
+        return {
+            "schema_version": MAF_PROVIDER_SMOKE_SCHEMA_VERSION,
+            "ok": False,
+            "status": "error",
+            "reason": "execute_model_call_requires_allow_model_call",
+            "smoke_mode": "model_call_smoke",
+            "model_call_allowed": False,
+            "model_call_requested": True,
+            "framework_package_available": runtime_profile.framework_package_available,
+            "credentials_available": runtime_profile.provider_config.credentials_available,
+            "present_env_vars": list(runtime_profile.provider_config.credential_env_vars),
+            "maf_runtime": {
+                **runtime_profile.to_dict(),
+                "agent_adapters": [
+                    {"agent_role": "affective", "agent_adapter": "deterministic_fake_affective"},
+                    {"agent_role": "rational", "agent_adapter": "deterministic_fake_rational"},
+                ],
+            },
+            "requires_model_credentials": True,
+            "call_status": "model_call_not_allowed",
+            "executes_model_call": False,
+        }
+
     requested_mode = (
         MafProviderMode.REAL_PROVIDER.value
         if allow_model_call
@@ -255,13 +291,20 @@ def maf_provider_smoke_status(
     else:
         status = "skipped"
         reason = "model_identifier_not_configured"
-    return {
+    payload: dict[str, Any] = {
         "schema_version": MAF_PROVIDER_SMOKE_SCHEMA_VERSION,
         "ok": True,
         "status": status,
         "reason": reason,
-        "smoke_mode": "provider_call_opt_in" if allow_model_call else "availability_only",
+        "smoke_mode": (
+            "model_call_smoke"
+            if execute_model_call
+            else "provider_call_opt_in"
+            if allow_model_call
+            else "availability_only"
+        ),
         "model_call_allowed": allow_model_call,
+        "model_call_requested": execute_model_call,
         "framework_package_available": framework_package_available,
         "credentials_available": credentials_available,
         "present_env_vars": present_env_vars,
@@ -280,6 +323,54 @@ def maf_provider_smoke_status(
         ),
         "executes_model_call": False,
     }
+    if not execute_model_call:
+        return payload
+    if not runnable:
+        payload["call_status"] = "model_call_skipped_not_ready"
+        return payload
+
+    smoke_frame = PerceptionFrame(
+        frame_id="frame-provider-smoke-001",
+        event_ids=("evt-provider-smoke-001",),
+        highest_priority=80,
+        topics=("provider.smoke",),
+    )
+    try:
+        resolved_provider_client = provider_client or build_default_maf_provider_client(
+            runtime_profile,
+            env=env,
+        )
+        decision = _coerce_affective_decision(
+            resolved_provider_client.decide(
+                smoke_frame,
+                [],
+                runtime_profile,
+            )
+        )
+    except Exception as exc:
+        payload["ok"] = False
+        payload["status"] = "error"
+        payload["reason"] = "model_call_failed"
+        payload["call_status"] = "model_call_failed"
+        payload["failure_class"] = exc.__class__.__name__
+        payload["failure_status"] = str(exc)
+        payload["executes_model_call"] = True
+        return payload
+
+    payload["status"] = "ready"
+    payload["reason"] = "model_call_succeeded"
+    payload["call_status"] = "model_call_succeeded"
+    payload["executes_model_call"] = True
+    payload["affective_decision"] = decision.to_dict()
+    payload["model_call_evidence"] = {
+        "agent_role": "affective",
+        "frame_id": smoke_frame.frame_id,
+        "event_ids": list(smoke_frame.event_ids),
+        "provider_kind": runtime_profile.provider_config.provider_kind,
+        "provider_client_kind": _provider_client_kind(resolved_provider_client),
+        "response_schema": "AffectiveDecision",
+    }
+    return payload
 
 
 class MafProviderNotReadyError(RuntimeError):
@@ -556,20 +647,19 @@ def build_default_maf_provider_client(
 
 
 def _coerce_affective_decision(payload: dict[str, Any]) -> AffectiveDecision:
+    delegated = payload.get("delegated")
+    reason = payload.get("reason")
+    salience = payload.get("salience")
+    if not isinstance(delegated, bool):
+        raise ValueError("provider_affective_decision_delegated_must_be_bool")
+    if not isinstance(reason, str) or not reason:
+        raise ValueError("provider_affective_decision_reason_must_be_string")
+    if not isinstance(salience, int) or salience < 0 or salience > 100:
+        raise ValueError("provider_affective_decision_salience_out_of_range")
     return AffectiveDecision(
-        delegated=bool(payload.get("delegated", False)),
-        reason=str(payload.get("reason") or "real_provider_affective_decision"),
-        salience=int(payload.get("salience", 0)),
-    )
-
-
-def _coerce_rational_plan(payload: dict[str, Any] | None) -> RationalPlan | None:
-    if payload is None:
-        return None
-    return RationalPlan(
-        tool_name=str(payload.get("tool_name") or "system_state_sync"),
-        args=dict(payload.get("args") or {}),
-        reason=str(payload.get("reason") or "real_provider_rational_plan"),
+        delegated=delegated,
+        reason=reason,
+        salience=salience,
     )
 
 
@@ -637,15 +727,19 @@ class MafRationalAgentAdapter:
         self,
         agent: FakeRationalAgent | None = None,
         profile: MafRuntimeProfile | None = None,
+        backend: RationalBackend | None = None,
     ) -> None:
-        self.agent = agent or FakeRationalAgent()
         self.profile = profile or build_maf_runtime_profile()
+        self.backend = backend or DeterministicRationalBackend(
+            agent or FakeRationalAgent()
+        )
 
     def runtime_metadata(self) -> dict[str, Any]:
         return {
             **self.profile.to_dict(),
             "agent_role": "rational",
             "agent_adapter": "deterministic_fake_rational",
+            "rational_backend": self.backend.runtime_metadata(),
         }
 
     def plan(
@@ -656,7 +750,7 @@ class MafRationalAgentAdapter:
         available_tools: list[dict[str, Any]] | None = None,
         session_context: dict[str, Any] | None = None,
     ) -> RationalPlan | None:
-        return self.agent.plan(
+        return self.backend.plan(
             decision,
             frame,
             available_tools=available_tools,
@@ -676,6 +770,11 @@ class RealMafRationalAgentAdapter:
         if not self.profile.provider_ready_for_model_call:
             raise MafProviderNotReadyError(_provider_not_ready_message(self.profile))
         self.provider_client = provider_client or PlaceholderMafProviderClient()
+        self.backend = ProviderRationalBackend(
+            provider_client=self.provider_client,
+            profile=self.profile,
+            provider_client_kind=_provider_client_kind(self.provider_client),
+        )
 
     def runtime_metadata(self) -> dict[str, Any]:
         return {
@@ -687,6 +786,7 @@ class RealMafRationalAgentAdapter:
                 self.provider_client,
                 PlaceholderMafProviderClient,
             ),
+            "rational_backend": self.backend.runtime_metadata(),
         }
 
     def plan(
@@ -697,14 +797,11 @@ class RealMafRationalAgentAdapter:
         available_tools: list[dict[str, Any]] | None = None,
         session_context: dict[str, Any] | None = None,
     ) -> RationalPlan | None:
-        return _coerce_rational_plan(
-            self.provider_client.plan(
-                decision,
-                frame,
-                self.profile,
-                available_tools or [],
-                session_context or {},
-            )
+        return self.backend.plan(
+            decision,
+            frame,
+            available_tools=available_tools,
+            session_context=session_context,
         )
 
 
@@ -724,8 +821,23 @@ def build_affective_agent_adapter(
 def build_rational_agent_adapter(
     profile: MafRuntimeProfile | None = None,
     provider_client: MafProviderClient | None = None,
+    rational_backend: str = "auto",
+    allow_model_call: bool = False,
+    copilot_agent_factory: Any | None = None,
 ) -> MafRationalAgentAdapter | RealMafRationalAgentAdapter:
     resolved_profile = profile or build_maf_runtime_profile()
+    if rational_backend == "copilot":
+        return MafRationalAgentAdapter(
+            profile=resolved_profile,
+            backend=CopilotSdkRationalBackend(
+                allow_model_call=allow_model_call,
+                agent_factory=copilot_agent_factory,
+            ),
+        )
+    if rational_backend == "deterministic":
+        return MafRationalAgentAdapter(profile=resolved_profile)
+    if rational_backend not in {"auto", "provider"}:
+        raise ValueError("rational_backend_must_be_auto_deterministic_provider_or_copilot")
     if resolved_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value:
         return RealMafRationalAgentAdapter(
             profile=resolved_profile,

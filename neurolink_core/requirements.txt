@@ -1,0 +1,16 @@
+# Core runtime dependencies for the release-1.2.2 real-LLM track.
+#
+# Keep this file separate from neuro_cli/requirements.txt so host-control and
+# model/memory dependencies can be installed independently.
+
+# Microsoft Agent Framework runtime. The exact version should be pinned during
+# the first provider implementation slice after validating the active package
+# release against the current MAF APIs used by neurolink_core.maf.
+agent-framework
+
+# Mem0 long-term memory sidecar client. The exact package/version must be pinned
+# when the Mem0 adapter lands and its local or service-backed mode is selected.
+mem0ai
+
+--pre
+agent-framework-github-copilot

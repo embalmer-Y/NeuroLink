@@ -62,15 +62,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dry_run.add_argument(
         "--memory-backend",
-        choices=("fake", "local"),
+        choices=("fake", "local", "mem0"),
         default="fake",
         help="Select the long-term memory backend for dry-run lookup and candidate commit behavior",
+    )
+    dry_run.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
     )
     dry_run.add_argument(
         "--tool-adapter",
         choices=("fake", "neuro-cli"),
         default="fake",
         help="Select the tool adapter implementation for delegated tool execution",
+    )
+    dry_run.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter in release-gate evidence; fails closed with the fake adapter",
     )
 
     agent_run = subparsers.add_parser("agent-run")
@@ -102,15 +113,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_run.add_argument(
         "--memory-backend",
-        choices=("fake", "local"),
+        choices=("fake", "local", "mem0"),
         default="fake",
         help="Select the long-term memory backend for agent-run lookup and candidate commit behavior",
+    )
+    agent_run.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
     )
     agent_run.add_argument(
         "--tool-adapter",
         choices=("fake", "neuro-cli"),
         default="fake",
         help="Select the tool adapter implementation for delegated tool execution",
+    )
+    agent_run.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter in release-gate evidence; fails closed with the fake adapter",
     )
 
     tool_manifest = subparsers.add_parser("tool-manifest")
@@ -157,6 +179,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Opt in to a future real-provider smoke call when package and model configuration are available",
     )
+    maf_smoke.add_argument(
+        "--execute-model-call",
+        action="store_true",
+        help="Actually execute the provider smoke model call; requires --allow-model-call",
+    )
     return parser
 
 
@@ -180,6 +207,20 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     if args.command == "no-model-dry-run":
+        if args.require_real_tool_adapter and args.tool_adapter != "neuro-cli":
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "release_gate_request_invalid",
+                        "failure_status": "require_real_tool_adapter_requires_neuro_cli_adapter",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
         if args.db != ":memory:":
             Path(args.db).parent.mkdir(parents=True, exist_ok=True)
         tool_adapter = (
@@ -208,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
                 maf_provider_mode=args.maf_provider_mode,
                 allow_model_call=args.allow_model_call,
                 memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
             )
         except (MafProviderNotReadyError, ValueError) as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
@@ -215,6 +258,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, sort_keys=True))
         return 0
     if args.command == "agent-run":
+        if args.require_real_tool_adapter and args.tool_adapter != "neuro-cli":
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "release_gate_request_invalid",
+                        "failure_status": "require_real_tool_adapter_requires_neuro_cli_adapter",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
         if args.db != ":memory:":
             Path(args.db).parent.mkdir(parents=True, exist_ok=True)
         tool_adapter = (
@@ -241,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
                 maf_provider_mode=args.maf_provider_mode,
                 allow_model_call=args.allow_model_call,
                 memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
             )
         except (MafProviderNotReadyError, ValueError) as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
@@ -336,13 +395,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, sort_keys=True))
         return 0
     if args.command == "maf-provider-smoke":
-        print(
-            json.dumps(
-                maf_provider_smoke_status(allow_model_call=args.allow_model_call),
-                sort_keys=True,
-            )
+        payload = maf_provider_smoke_status(
+            allow_model_call=args.allow_model_call,
+            execute_model_call=args.execute_model_call,
         )
-        return 0
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     raise AssertionError(f"unhandled command: {args.command}")
 
 

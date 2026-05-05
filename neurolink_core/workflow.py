@@ -16,10 +16,13 @@ from .maf import (
     build_maf_runtime_profile,
     build_rational_agent_adapter,
 )
-from .memory import FakeLongTermMemory, LocalCandidateBackedMemory, LongTermMemory
+from .memory import FakeLongTermMemory, LongTermMemory, build_memory_backend
 from .policy import ReadOnlyToolPolicy
-from .session import CoreSessionManager
+from .session import CoreSessionManager, build_prompt_safe_context
 from .tools import FakeUnitToolAdapter, ToolContract, ToolExecutionResult
+
+
+AGENT_RUN_EVIDENCE_SCHEMA_VERSION = "1.2.2-agent-run-evidence-v1"
 
 
 def _extract_observed_resource_names(leases: list[Any]) -> list[str]:
@@ -356,10 +359,13 @@ class NoModelCoreWorkflow:
         affective_agent: Any | None = None,
         rational_agent: Any | None = None,
         memory: LongTermMemory | None = None,
-        tool_adapter: FakeUnitToolAdapter | None = None,
+        tool_adapter: Any | None = None,
         tool_policy: ReadOnlyToolPolicy | None = None,
         maf_runtime_profile: MafRuntimeProfile | None = None,
         provider_client: Any | None = None,
+        rational_backend: str = "auto",
+        allow_model_call: bool = False,
+        copilot_agent_factory: Any | None = None,
         event_router: PerceptionEventRouter | None = None,
         session_manager: CoreSessionManager | None = None,
     ) -> None:
@@ -374,6 +380,9 @@ class NoModelCoreWorkflow:
         self.rational_agent = rational_agent or build_rational_agent_adapter(
             self.maf_runtime_profile,
             provider_client=provider_client,
+            rational_backend=rational_backend,
+            allow_model_call=allow_model_call,
+            copilot_agent_factory=copilot_agent_factory,
         )
         self.memory = memory or FakeLongTermMemory()
         self.tool_adapter = tool_adapter or FakeUnitToolAdapter()
@@ -436,12 +445,14 @@ class NoModelCoreWorkflow:
             "execution_span_id": execution_span_id,
             **initial_session_context,
             "maf_runtime": self.maf_runtime_metadata(),
+            "memory_runtime": self.memory_runtime_metadata(),
             **({"target_app_id": target_app_id} if target_app_id else {}),
         }
 
         steps.append("long_term_memory_lookup_stub")
         memory_items = self.memory.lookup(frame)
         session_context["memory_lookup_count"] = len(memory_items)
+        session_context["memory_runtime"] = self.memory_runtime_metadata()
         candidate_payloads: list[dict[str, Any]] = []
         if hasattr(self.memory, "propose_candidates"):
             for candidate in self.memory.propose_candidates(frame):
@@ -464,18 +475,42 @@ class NoModelCoreWorkflow:
             )
             session_context["committed_memory_count"] = len(committed_memory_ids)
             session_context["committed_memory_ids"] = committed_memory_ids
+            session_context["memory_runtime"] = self.memory_runtime_metadata()
 
-        steps.append("affective_arbitration")
-        decision = self.affective_agent.decide(frame, memory_items)
-
-        steps.append("rational_delegate_optional")
         available_tools = self._available_tool_context()
         session_context["available_tools"] = available_tools
+        prompt_safe_context = build_prompt_safe_context(
+            session_context,
+            frame=frame,
+            memory_items=memory_items,
+            available_tools=available_tools,
+        )
+        session_context["prompt_safe_context"] = prompt_safe_context
+
+        affective_step = (
+            "affective_model_call"
+            if self.maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value
+            else "affective_arbitration"
+        )
+        steps.append(affective_step)
+        safe_memory_items = cast(
+            list[dict[str, Any]],
+            prompt_safe_context["memory"]["items"],
+        )
+        decision = self.affective_agent.decide(frame, safe_memory_items)
+        model_call_evidence = self._build_model_call_evidence(
+            frame,
+            decision,
+            self.maf_runtime_metadata(),
+        )
+        session_context["model_call_evidence"] = model_call_evidence
+
+        steps.append("rational_delegate_optional")
         plan = self.rational_agent.plan(
             decision,
             frame,
             available_tools=available_tools,
-            session_context=session_context,
+            session_context=prompt_safe_context,
         )
 
         steps.append("tool_and_unit_execution")
@@ -648,6 +683,18 @@ class NoModelCoreWorkflow:
             "agent_adapters": agent_adapters,
         }
 
+    def memory_runtime_metadata(self) -> dict[str, Any]:
+        runtime_metadata = getattr(self.memory, "runtime_metadata", None)
+        if callable(runtime_metadata):
+            return cast(dict[str, Any], runtime_metadata())
+        return {
+            "backend_kind": "unknown",
+            "backend_runtime": "unknown",
+            "requires_external_service": False,
+            "fallback_active": False,
+            "can_execute_tools_directly": False,
+        }
+
     def _available_tool_context(self) -> list[dict[str, Any]]:
         tool_manifest = getattr(self.tool_adapter, "tool_manifest", None)
         if not callable(tool_manifest):
@@ -747,6 +794,44 @@ class NoModelCoreWorkflow:
         }
 
     @staticmethod
+    def _build_model_call_evidence(
+        frame: PerceptionFrame,
+        decision: AffectiveDecision,
+        maf_runtime: dict[str, Any],
+    ) -> dict[str, Any]:
+        provider_config = cast(dict[str, Any], maf_runtime.get("provider_config") or {})
+        agent_adapters = cast(list[Any], maf_runtime.get("agent_adapters") or [])
+        affective_adapter: dict[str, Any] = {}
+        for adapter in agent_adapters:
+            if not isinstance(adapter, dict):
+                continue
+            adapter_payload = cast(dict[str, Any], adapter)
+            if adapter_payload.get("agent_role") == "affective":
+                affective_adapter = adapter_payload
+                break
+        real_provider_enabled = bool(maf_runtime.get("real_provider_enabled", False))
+        provider_call_supported = bool(
+            affective_adapter.get("provider_call_supported", False)
+        )
+        return {
+            "agent_role": "affective",
+            "call_status": (
+                "model_call_succeeded"
+                if real_provider_enabled and provider_call_supported
+                else "deterministic_fake"
+            ),
+            "executes_model_call": real_provider_enabled and provider_call_supported,
+            "frame_id": frame.frame_id,
+            "event_ids": list(frame.event_ids),
+            "provider_kind": str(provider_config.get("provider_kind") or "unknown"),
+            "provider_client_kind": str(
+                affective_adapter.get("provider_client_kind") or "deterministic_fake"
+            ),
+            "response_schema": "AffectiveDecision",
+            "decision": decision.to_dict(),
+        }
+
+    @staticmethod
     def _build_final_response(
         frame: PerceptionFrame,
         decision: AffectiveDecision,
@@ -790,7 +875,11 @@ def run_no_model_dry_run(
     allow_model_call: bool = False,
     memory: Any | None = None,
     memory_backend: str = "fake",
+    mem0_client: Any | None = None,
     provider_client: Any | None = None,
+    rational_backend: str = "auto",
+    copilot_agent_factory: Any | None = None,
+    require_real_tool_adapter: bool = False,
 ) -> dict[str, Any]:
     data_store = CoreDataStore(db_path)
     try:
@@ -803,10 +892,12 @@ def run_no_model_dry_run(
                 resolved_provider_client = build_default_maf_provider_client(
                     maf_runtime_profile
                 )
-        resolved_memory = memory or (
-            LocalCandidateBackedMemory(data_store)
-            if memory_backend == "local"
-            else FakeLongTermMemory()
+        if rational_backend == "copilot" and not allow_model_call:
+            raise ValueError("copilot_rational_backend_requires_allow_model_call")
+        resolved_memory = memory or build_memory_backend(
+            memory_backend,
+            data_store,
+            mem0_client=mem0_client,
         )
         workflow = NoModelCoreWorkflow(
             data_store=data_store,
@@ -814,6 +905,9 @@ def run_no_model_dry_run(
             tool_adapter=tool_adapter,
             maf_runtime_profile=maf_runtime_profile,
             provider_client=resolved_provider_client,
+            rational_backend=rational_backend,
+            allow_model_call=allow_model_call,
+            copilot_agent_factory=copilot_agent_factory,
         )
         result = workflow.run(
             events if events is not None else sample_events(),
@@ -825,6 +919,20 @@ def run_no_model_dry_run(
         )
         payload = result.to_dict()
         payload["maf_runtime"] = workflow.maf_runtime_metadata()
+        payload["memory_runtime"] = workflow.memory_runtime_metadata()
+        payload["release_gate_require_real_tool_adapter"] = require_real_tool_adapter
+        execution_evidence = data_store.build_execution_evidence(
+            result.execution_span_id,
+            result.audit_id,
+        )
+        payload["runtime_mode"] = (
+            "real_llm"
+            if maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value
+            else "deterministic"
+        )
+        audit_payload = cast(dict[str, Any], execution_evidence["audit_record"]["payload"])
+        session_context = cast(dict[str, Any], audit_payload.get("session_context") or {})
+        payload["model_call_evidence"] = session_context.get("model_call_evidence")
         payload["db_counts"] = {
             "perception_events": data_store.count("perception_events"),
             "execution_spans": data_store.count("execution_spans"),
@@ -844,10 +952,7 @@ def run_no_model_dry_run(
             "topic": topic,
             "recent_topics": data_store.get_recent_topics(limit=min(query_limit, 10)),
         }
-        payload["execution_evidence"] = data_store.build_execution_evidence(
-            result.execution_span_id,
-            result.audit_id,
-        )
+        payload["execution_evidence"] = execution_evidence
         payload["event_source"] = "provided" if events is not None else "sample"
         payload["session"] = {
             **workflow.session_manager.load_snapshot(
@@ -856,9 +961,121 @@ def run_no_model_dry_run(
                 limit=5,
             ).to_dict()
         }
+        payload["agent_run_evidence"] = _build_agent_run_evidence(payload)
         return payload
     finally:
         data_store.close()
+
+
+def _build_agent_run_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    maf_runtime = cast(dict[str, Any], payload.get("maf_runtime") or {})
+    memory_runtime = cast(dict[str, Any], payload.get("memory_runtime") or {})
+    model_call_evidence = cast(dict[str, Any] | None, payload.get("model_call_evidence"))
+    execution_evidence = cast(dict[str, Any], payload.get("execution_evidence") or {})
+    audit_record = cast(dict[str, Any] | None, execution_evidence.get("audit_record"))
+    audit_payload = cast(dict[str, Any], (audit_record or {}).get("payload") or {})
+    tool_adapter_runtime = cast(dict[str, Any], audit_payload.get("adapter_runtime") or {})
+    session_context = cast(dict[str, Any], audit_payload.get("session_context") or {})
+    prompt_safe_context = cast(dict[str, Any], session_context.get("prompt_safe_context") or {})
+    db_counts = cast(dict[str, Any], payload.get("db_counts") or {})
+    tool_results = cast(list[Any], payload.get("tool_results") or [])
+    policy_decisions = cast(list[Any], execution_evidence.get("policy_decisions") or [])
+    approval_requests = cast(list[Any], execution_evidence.get("approval_requests") or [])
+    rational_backend = _extract_rational_backend_metadata(maf_runtime)
+    prompt_safety_boundaries = cast(
+        dict[str, Any],
+        prompt_safe_context.get("safety_boundaries") or {},
+    )
+    prompt_memory = cast(dict[str, Any], prompt_safe_context.get("memory") or {})
+    real_tool_adapter_required = bool(payload.get("release_gate_require_real_tool_adapter", False))
+    real_tool_adapter_present = tool_adapter_runtime.get("adapter_kind") == "neuro-cli"
+    real_tool_execution_succeeded = False
+    for result in tool_results:
+        if not isinstance(result, dict):
+            continue
+        result_payload = cast(dict[str, Any], result)
+        if result_payload.get("status") == "ok":
+            real_tool_execution_succeeded = True
+            break
+    closure_gates: dict[str, bool] = {
+        "provider_runtime_metadata_present": bool(maf_runtime),
+        "rational_backend_metadata_present": bool(rational_backend),
+        "memory_runtime_metadata_present": bool(memory_runtime),
+        "model_call_evidence_present": model_call_evidence is not None,
+        "prompt_safe_context_present": bool(prompt_safe_context),
+        "db_counts_present": bool(db_counts),
+        "execution_evidence_present": bool(execution_evidence),
+        "policy_or_pending_evidence_present": bool(policy_decisions or approval_requests),
+        "tool_result_or_pending_approval_present": bool(tool_results or approval_requests),
+        "audit_record_present": audit_record is not None,
+        "final_response_present": bool(payload.get("final_response")),
+        "provider_context_is_prompt_safe": (
+            prompt_safe_context.get("schema_version") == "1.2.2-prompt-safe-context-v1"
+        ),
+        "direct_tool_execution_by_model_disabled": bool(
+            prompt_safety_boundaries.get("can_execute_tools_directly") is False
+        ),
+    }
+    if real_tool_adapter_required:
+        closure_gates["real_tool_adapter_present"] = real_tool_adapter_present
+        closure_gates["real_tool_execution_succeeded"] = real_tool_execution_succeeded
+    return {
+        "schema_version": AGENT_RUN_EVIDENCE_SCHEMA_VERSION,
+        "workflow": "agent-run",
+        "runtime_mode": payload.get("runtime_mode"),
+        "provider_runtime": {
+            "provider_mode": maf_runtime.get("provider_mode"),
+            "real_provider_enabled": maf_runtime.get("real_provider_enabled"),
+            "provider_ready_for_model_call": maf_runtime.get(
+                "provider_ready_for_model_call"
+            ),
+            "agent_adapter_count": len(maf_runtime.get("agent_adapters") or []),
+        },
+        "rational_backend": rational_backend,
+        "memory_runtime": memory_runtime,
+        "tool_adapter_runtime": tool_adapter_runtime,
+        "release_gate_require_real_tool_adapter": real_tool_adapter_required,
+        "real_tool_adapter_present": real_tool_adapter_present,
+        "real_tool_execution_succeeded": real_tool_execution_succeeded,
+        "model_call_evidence": model_call_evidence,
+        "prompt_safe_context": {
+            "schema_version": prompt_safe_context.get("schema_version"),
+            "memory_lookup_count": prompt_memory.get("lookup_count"),
+            "available_tool_count": len(prompt_safe_context.get("available_tools") or []),
+            "pending_approval_count": len(prompt_safe_context.get("pending_approvals") or []),
+            "safety_boundaries": prompt_safety_boundaries,
+        },
+        "db_counts": db_counts,
+        "evidence_counts": {
+            "facts": len(execution_evidence.get("facts") or []),
+            "policy_decisions": len(policy_decisions),
+            "memory_candidates": len(execution_evidence.get("memory_candidates") or []),
+            "long_term_memories": len(execution_evidence.get("long_term_memories") or []),
+            "approval_requests": len(approval_requests),
+            "tool_results": len(tool_results),
+        },
+        "audit": {
+            "audit_id": payload.get("audit_id"),
+            "audit_record_present": audit_record is not None,
+            "session_id": payload.get("session_id"),
+        },
+        "final_response": payload.get("final_response"),
+        "closure_gates": closure_gates,
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _extract_rational_backend_metadata(maf_runtime: dict[str, Any]) -> dict[str, Any]:
+    for adapter in cast(list[Any], maf_runtime.get("agent_adapters") or []):
+        if not isinstance(adapter, dict):
+            continue
+        adapter_payload = cast(dict[str, Any], adapter)
+        if adapter_payload.get("agent_role") != "rational":
+            continue
+        rational_backend = adapter_payload.get("rational_backend")
+        if isinstance(rational_backend, dict):
+            return cast(dict[str, Any], rational_backend)
+    return {}
 
 
 def apply_approval_decision(

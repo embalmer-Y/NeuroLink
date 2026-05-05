@@ -169,6 +169,65 @@ Minimum release-1.2.1 local workflow steps:
 
 UT anchor: `UT-CORE-MAF-*`
 
+### 4.4 Release 1.2.2 Real LLM Execution Profile
+
+Release 1.2.2 promotes the Core runtime from a deterministic local baseline into
+a real LLM-driven Agent path while keeping the release-1.2.1 workflow,
+persistence, policy, approval, tool-adapter, and audit boundaries intact.
+
+Implementation rules:
+
+1. The Affective Agent uses Microsoft Agent Framework with a generic
+  OpenAI-compatible chat API as the first real model path.
+2. Generic provider configuration uses `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and
+  `OPENAI_MODEL`. Azure OpenAI compatibility may remain, but it is not the
+  release-1.2.2 certification target.
+3. The Rational Agent is selected through a modular backend protocol. The
+  GitHub Copilot production backend uses Microsoft Agent Framework's Python
+  GitHub Copilot provider package `agent-framework-github-copilot --pre`,
+  `agent_framework.github.GitHubCopilotAgent`, and the Copilot CLI-backed
+  runtime documented by Microsoft Learn.
+4. Rational backends may return only validated `RationalPlan` objects or `None`.
+  They may not execute Unit tools, call Neuro CLI directly, or bypass Core
+  policy and approval checks.
+5. Mem0 is the default long-term memory sidecar for real runtime operation.
+  SQLite-backed local memory remains the deterministic fallback and test backend.
+6. Live model calls are explicit opt-in during development and validation.
+  Default unit tests continue to use deterministic fakes or injected clients.
+7. All model, backend, and memory outputs must be represented in execution
+  evidence and audit payloads without storing secret values.
+
+GitHub Copilot Rational backend configuration:
+
+1. The backend is selected explicitly with `--rational-backend copilot`.
+2. Live Copilot calls require `--allow-model-call` and are never the default
+  path for tests or local dry-runs.
+3. Supported Copilot provider environment variables are `GITHUB_COPILOT_CLI_PATH`,
+  `GITHUB_COPILOT_MODEL`, `GITHUB_COPILOT_TIMEOUT`, and
+  `GITHUB_COPILOT_LOG_LEVEL`; runtime evidence reports only variable names and
+  readiness metadata, not secret or endpoint values.
+4. The backend must run with no shell/file/URL/MCP permissions enabled; it may
+  propose only a JSON `RationalPlan` or `null` for Core policy evaluation.
+
+Minimum release-1.2.2 real workflow steps:
+
+1. `event_ingress`
+2. `database_persistence`
+3. `perception_frame_build`
+4. `session_context_load`
+5. `long_term_memory_lookup`
+6. `affective_model_call`
+7. `rational_backend_delegate_optional`
+8. `rational_plan_validation`
+9. `policy_and_approval_gate`
+10. `tool_and_unit_execution_or_pending_approval`
+11. `memory_candidate_commit`
+12. `audit_seal`
+13. `user_response`
+
+UT anchors: `UT-CORE-MAF-REAL-*`, `UT-CORE-RATIONAL-BACKEND-*`,
+`UT-CORE-MEMORY-*`
+
 ## 5. Subsystem Design
 
 ### 5.1 Ingress Layer

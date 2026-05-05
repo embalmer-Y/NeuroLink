@@ -147,6 +147,10 @@ Unit 主要面向 MCU 场景，基于 Zephyr RTOS 构建，最低要求如下：
 9. release 1.2.1 起，AI Core 的当前原生 Agent 实现以 Microsoft Agent Framework
   Python 运行时为主路径：`Agent` 承担感性/理性推理节点，Workflow 承担
   感知、落库、委派、工具执行、策略审计等确定性编排。
+10. release 1.2.2 起，AI Core 进入真实 LLM 驱动实现线：感性 Agent 通过
+  Microsoft Agent Framework 调用通用 OpenAI-compatible API；理性 Agent 通过
+  可替换 backend 产生内部计划，首个目标生产 backend 为 GitHub Copilot SDK；
+  长期记忆默认采用 Mem0 sidecar，SQLite 本地记忆保留为 fallback。
 
 ## 6. High-Level Architecture
 

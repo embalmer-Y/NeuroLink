@@ -1,3 +1,494 @@
+2026-05-05: Closed release-1.2.2 after adding the Chinese AI Core runbook, rerunning the final real-runtime closure gates, and promoting the canonical Neuro CLI release marker. Added `docs/project/AI_CORE_RUNBOOK_ZH.md` as the Chinese operator startup and validation guide, linked it from `README.md` and the release plan, and promoted `RELEASE_TARGET` from `1.2.1` to `1.2.2` in both the Neuro CLI entrypoint and workflow catalog. Final validation passed for Affective live model smoke with `qwen-plus`, Mem0 sidecar smoke with `fallback_active=false`, serial-required hardware preflight on `/dev/ttyACM0`, read-only real Neuro CLI adapter gate, full combined real runtime gate with real Affective + GitHub Copilot Rational + Mem0 + Neuro CLI, Core tests (`95 passed, 6 subtests passed`), Neuro CLI tests (`124 passed`), and CRLF-aware diff check. Deferred long-running daemon/event-stream validation, provider matrix expansion, broader hardware matrix coverage, and multi-Core federation remain next-release follow-ups. - Copilot
+
+#### EXEC-249 Release 1.2.2 Final Closure And Promotion
+
+- Status: completed; release-1.2.2 is closed against the current Linux operator host and connected DNESP32S3B evidence set
+- Owner: GitHub Copilot completing release-1.2.2 closure
+- Scope:
+  - add a Chinese Core startup and validation guide
+  - link English and Chinese Core runbooks from public release docs
+  - rerun final provider, memory, hardware, adapter, combined runtime, and regression gates
+  - promote the canonical Neuro CLI release identity to `1.2.2`
+  - keep secrets out of project files and evidence summaries
+- Touched files:
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/neuro_cli/README.md`
+  - `applocation/NeuroLink/neuro_cli/skill/README.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - Chinese runbook now documents Core startup, provider config, Copilot backend, Mem0 sidecar, hardware preflight, release gates, session/approval commands, and troubleshooting
+  - README now points to both English and Chinese AI Core runbooks
+  - release plan now records final closure results
+  - `RELEASE_TARGET` now reports `1.2.2` through Neuro CLI capabilities and workflow catalog labels
+- Final validation evidence:
+  - `neurolink_core.cli maf-provider-smoke --help`, `agent-run --help`, and `no-model-dry-run --help` passed
+  - direct Neuro CLI capabilities check reported `release_target=1.2.2`
+  - Affective live smoke passed with `call_status=model_call_succeeded`, `executes_model_call=true`, and provider client `agent_framework_openai`
+  - Mem0 smoke passed with `backend_kind=mem0_sidecar`, `sidecar_configured=true`, `fallback_active=false`, and `long_term_memories=2`
+  - serial-required preflight passed with `status=ready`, serial `/dev/ttyACM0`, router `7447`, and query `status=ok`
+  - read-only real Neuro CLI adapter gate passed with `real_tool_adapter_present=true`, `real_tool_execution_succeeded=true`, and tool result `status=ok`
+  - combined real runtime gate passed with `runtime_mode=real_llm`, Rational backend `github_copilot_sdk`, Mem0 non-fallback runtime, and successful real Neuro CLI tool execution
+  - `neurolink_core/tests` passed with `95 passed, 6 subtests passed`
+  - `neuro_cli/tests/test_neuro_cli.py` passed with `124 passed`
+  - CRLF-aware `git diff --check` passed
+- Final progress estimate:
+  - implementation progress: 100%
+  - release-closure progress: 100%
+- Deferred next-release follow-ups:
+  - long-running daemon/event-stream validation
+  - provider matrix expansion beyond the validated OpenAI-compatible `qwen-plus` path
+  - broader hardware matrix coverage
+  - multi-Core federation
+
+2026-05-05: Started release-1.2.2 closure preparation by adding the operator-facing AI Core startup runbook and wiring it into the release documentation. The new `docs/project/AI_CORE_RUNBOOK.md` explains the Core runtime shape, prerequisites, environment variables, deterministic dry-run mode, non-calling provider readiness, explicit Affective live model smoke, Mem0 sidecar smoke, read-only real Neuro CLI adapter gate, full combined real runtime gate, session/approval commands, troubleshooting, and the release-1.2.2 closure checklist. Updated `README.md` to point operators to the runbook and updated the release plan with a closure plan that separates final validation and release identity promotion from next-release follow-ups. - Copilot
+
+#### EXEC-248 Release 1.2.2 Closure Plan And Core Runbook
+
+- Status: completed for closure-plan kickoff and Core operator documentation
+- Owner: GitHub Copilot preparing release-1.2.2 closure
+- Scope:
+  - document how other operators start and validate `neurolink_core`
+  - document deterministic, provider, Mem0, Copilot, real Neuro CLI, and combined startup modes
+  - document required environment variables without embedding secret values
+  - document common failures from the real validation pass, including unsupported model and endpoint drift
+  - add a closure plan before release identity promotion
+- Touched files:
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - Core runbook now provides copy-paste startup commands for local dry run, provider readiness, live Affective smoke, Mem0 sidecar smoke, read-only real Neuro CLI gate, and full combined real runtime gate
+  - release plan now has an explicit closure plan
+  - README now points operators to the Core runbook
+  - release identity promotion remains a final operator decision after closure evidence acceptance
+
+2026-05-05: Closed the release-1.2.2 real LLM combined evidence gate after correcting the OpenAI-compatible chat model configuration. The first explicit Affective live smoke against DashScope failed with provider error `Unsupported model: qwen3.5-omni-plus`; a retry with `OPENAI_MODEL=qwen-plus` succeeded with `call_status=model_call_succeeded`, `executes_model_call=true`, provider client `agent_framework_openai`, and a validated `AffectiveDecision`. Updated the local runtime environment to use `qwen-plus` for `OPENAI_MODEL` and the Mem0 LLM model while keeping `text-embedding-v4` at 1536 dimensions for embeddings and keeping the API key outside `MEM0_CONFIG_JSON`. Then ran a real Mem0 smoke with `--memory-backend mem0`, which reported `backend_kind=mem0_sidecar`, `sidecar_configured=true`, `fallback_active=false`, `last_lookup_status=sidecar_and_local_sqlite`, and `last_commit_status=sidecar_and_sqlite_mirror`. Finally ran the full combined `agent-run` using real Affective provider mode, GitHub Copilot Rational backend, Mem0 memory, and the real Neuro CLI adapter gate. The combined evidence reported `agent_run_evidence.ok=true`, `runtime_mode=real_llm`, `model_call_evidence.executes_model_call=true`, Rational backend `github_copilot_sdk`, Mem0 `fallback_active=false`, `real_tool_adapter_present=true`, and `real_tool_execution_succeeded=true`; the read-only Unit query returned `board=dnesp32s3b`, `network_state=NETWORK_READY`, `session_ready=true`, and `status=ok`. - Copilot
+
+#### EXEC-247 Real LLM Combined Evidence Gate
+
+- Status: completed for the release-1.2.2 combined real-runtime evidence gate
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - execute the explicit Affective live model-call smoke
+  - correct unsupported OpenAI-compatible model configuration after live provider feedback
+  - execute real Mem0 sidecar memory smoke
+  - execute the combined real runtime with real Affective, Copilot Rational, Mem0, and real Neuro CLI adapter evidence
+  - keep evidence secret-safe and avoid writing API keys into project files or `MEM0_CONFIG_JSON`
+- Result:
+  - `qwen3.5-omni-plus` was rejected by the provider chat path as unsupported
+  - `qwen-plus` succeeded for the Affective OpenAI-compatible live smoke
+  - local runtime environment now uses `OPENAI_MODEL=qwen-plus`; Mem0 LLM config also uses `qwen-plus`
+  - Mem0 real smoke succeeded with `sidecar_configured=true`, `fallback_active=false`, `last_lookup_status=sidecar_and_local_sqlite`, and `last_commit_status=sidecar_and_sqlite_mirror`
+  - combined `agent-run` succeeded with `agent_run_evidence.ok=true`
+  - combined evidence used `runtime_mode=real_llm`, Affective `model_call_succeeded`, Rational backend `github_copilot_sdk`, memory backend `mem0_sidecar`, and real tool adapter `neuro-cli`
+  - combined read-only Unit query returned `board=dnesp32s3b`, `ipv4=192.168.2.67`, `network_state=NETWORK_READY`, `session_ready=true`, `zenoh_mode=client`, and `status=ok`
+- Verification evidence:
+  - `maf-provider-smoke --allow-model-call --execute-model-call` passed with `OPENAI_MODEL=qwen-plus`
+  - `no-model-dry-run --memory-backend mem0 --session-id mem0-real-smoke-001` passed with Mem0 sidecar active and SQLite mirror evidence
+  - `agent-run --input-text "Please query current device status for node unit-01." --maf-provider-mode real_provider --allow-model-call --rational-backend copilot --memory-backend mem0 --tool-adapter neuro-cli --require-real-tool-adapter --session-id release-122-combined-001` passed with all closure gates true
+- Updated progress estimate:
+  - implementation progress: 94%
+  - release-closure progress: 90%
+- Remaining work:
+  - run a final focused/full regression suite after the real-runtime changes are recorded
+  - decide whether to promote release identity from the closed `1.2.1` baseline to `1.2.2`
+  - record any next-release follow-ups such as long-running daemon/event-stream validation or provider matrix expansion
+
+2026-05-05: Closed the release-1.2.2 read-only real Neuro CLI hardware adapter gate after the Unit was reattached. Used the existing project automation instead of ad-hoc UART handling: `prepare_dnesp32s3b_wsl.sh --attach-only` confirmed `/dev/ttyACM0`, `prepare_dnesp32s3b_wsl.sh --device /dev/ttyACM0 --node unit-01 --capture-duration-sec 30` restored board network readiness, and UART evidence showed `NETWORK_READY` at board IPv4 `192.168.2.67`. The remaining no-reply was endpoint drift: `serial zenoh show` reported `tcp/192.168.2.94:7447` while the active WSL host IP was `192.168.2.90`; applying `serial zenoh set tcp/192.168.2.90:7447 --port /dev/ttyACM0` changed the Unit endpoint, after which serial-required preflight returned `status=ready`. The release gate run `agent-run --tool-adapter neuro-cli --require-real-tool-adapter --session-id neuro-cli-gate-readonly-004` completed without model calls and reported `agent_run_evidence.ok=true`, `real_tool_adapter_present=true`, `real_tool_execution_succeeded=true`, one read-only `system_query_device` result, and Unit payload `board=dnesp32s3b`, `network_state=NETWORK_READY`, `session_ready=true`, `status=ok`. - Copilot
+
+#### EXEC-246 Real Neuro CLI Hardware Gate Closure
+
+- Status: completed for the required read-only real Neuro CLI release gate
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - use existing project helper scripts for WSL USB attach, UART network preparation, preflight, and serial Zenoh endpoint recovery
+  - close the release-1.2.2 real tool adapter gate without executing model or embedding calls
+  - preserve side-effecting app control behind existing approval/lease gates
+- Result:
+  - `prepare_dnesp32s3b_wsl.sh --attach-only` confirmed `serial_device=/dev/ttyACM0`
+  - UART preparation restored board network readiness and captured `NETWORK_READY` at `192.168.2.67`
+  - diagnosed router endpoint drift from stale `tcp/192.168.2.94:7447` to current host `tcp/192.168.2.90:7447`
+  - `serial zenoh set tcp/192.168.2.90:7447 --port /dev/ttyACM0` applied the runtime endpoint override; a follow-up `serial zenoh show` confirmed the new endpoint
+  - canonical preflight returned `status=ready`, `ready=true`, `serial.present=true`, `artifact_present=true`, and `query.status=ok`
+  - Core `agent-run` release gate returned `agent_run_evidence.ok=true`, `real_tool_adapter_present=true`, and `real_tool_execution_succeeded=true`
+  - the read-only Unit query reply reported `board=dnesp32s3b`, `network_state=NETWORK_READY`, `session_ready=true`, and `status=ok`
+- Verification evidence:
+  - `bash applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh --attach-only` passed with `/dev/ttyACM0`
+  - `bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --node unit-01 --auto-start-router --require-serial --install-missing-cli-deps --output json` passed with `status=ready`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli agent-run --input-text "Please query current device status for node unit-01." --tool-adapter neuro-cli --require-real-tool-adapter --session-id neuro-cli-gate-readonly-004` passed the real adapter gate
+- Updated progress estimate:
+  - implementation progress: 88%
+  - release-closure progress: 78%
+- Remaining gates:
+  - explicit live Affective model-call smoke
+  - explicit real Mem0 lookup/add smoke
+  - full combined evidence run with real Affective, Copilot Rational, Mem0, and real Neuro CLI once model/embedding calls are approved
+
+2026-05-05: Audited release-1.2.2 plan progress after making the real Neuro CLI hardware path a required gate. Current implementation progress is estimated at 82% overall: WS-1 planning/docs is complete, WS-2 provider configuration and evidence are implemented with the live Affective model call still pending operator approval, WS-3 Rational/Copilot backend is implemented and live-smoked, WS-4 Mem0 runtime is implemented and locally configured with the real sidecar client able to initialize, WS-5 workflow/CLI/evidence is implemented, and WS-6 validation is mostly complete except for the required live Affective call, real Mem0 memory smoke, successful read-only hardware query, and full combined release gate. Also reconciled the release plan overview so the bounded read-only hardware smoke is consistently described as required rather than optional. No model or embedding calls were executed during this audit. - Copilot
+
+#### EXEC-245 Release 1.2.2 Progress Audit And Gate Readiness
+
+- Status: completed for non-model progress audit and documentation consistency
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Current estimate:
+  - implementation progress: 82%
+  - release-closure progress: 70%
+- Workstream status:
+  - WS-1 Planning and contract baseline: 100%
+  - WS-2 OpenAI-compatible MAF Affective provider: 85%, pending explicit live Affective model-call smoke
+  - WS-3 Modular Rational backend: 100%, including GitHub Copilot SDK backend and live Copilot smoke
+  - WS-4 Memory runtime: 85%, pending explicit real Mem0 lookup/add smoke because it may call embedding/model services
+  - WS-5 Real LLM workflow and CLI: 90%, pending full combined runtime gate
+  - WS-6 Validation and closure: 55%, pending live Affective, live Mem0, successful read-only real Neuro CLI Unit query, and combined evidence run
+- Non-model readiness evidence:
+  - Affective provider availability smoke reports `status=ready`, `provider_ready_for_model_call=true`, and `executes_model_call=false`
+  - Mem0 config parses successfully with OpenAI-compatible LLM provider, `text-embedding-v4`, 1536 dimensions, Qdrant vector store, and no API key embedded in `MEM0_CONFIG_JSON`
+  - Mem0 sidecar client initialization reports `backend_kind=mem0_sidecar`, `package_available=true`, `sidecar_configured=true`, and `fallback_active=false`
+  - real Neuro CLI gate implementation is complete, but the live read-only hardware query remains blocked by `no_reply_board_not_attached` until the Unit serial device is visible and the board replies
+  - latest Linux preflight with `--auto-start-router` reports router listening on `7447`, artifact present, no serial devices, and query status `no_reply`
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - release plan overview now matches WS-6, validation gate, and DoD wording: bounded read-only real Neuro CLI hardware smoke is required for release closure
+  - project ledger now separates implementation percentage from release-closure percentage so configuration-complete but not-yet-called model/memory gates are not overcounted
+
+2026-05-05: Continued release-1.2.2 gate hardening after promoting the real Neuro CLI hardware path from optional smoke to a required read-only release gate. Added an explicit `--require-real-tool-adapter` CLI flag for `no-model-dry-run` and `agent-run`; it fails closed unless `--tool-adapter neuro-cli` is selected, propagates the requirement into workflow payloads, and records `tool_adapter_runtime`, `release_gate_require_real_tool_adapter`, `real_tool_adapter_present`, and the conditional `real_tool_adapter_present` closure gate inside `agent_run_evidence`. This keeps default deterministic tests unchanged while giving release closure a machine-readable proof that Core used the real Neuro CLI adapter for Unit-facing tool execution. - Copilot
+
+#### EXEC-244 Real Neuro CLI Tool Adapter Release Gate
+
+- Status: completed for explicit real-adapter gate selection and Agent-readable evidence; live hardware smoke remains to be run without model calls first
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - promote read-only real Neuro CLI tool-adapter execution to a release-1.2.2 gate
+  - add a CLI switch that fails closed if the release gate is requested with the fake adapter
+  - record adapter runtime metadata in `agent_run_evidence`
+  - keep the gate conditional so local deterministic tests and non-gate dry runs remain stable
+  - update the release plan so bounded real hardware query is no longer described as optional
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `--require-real-tool-adapter` to `no-model-dry-run` and `agent-run`
+  - gate requests now return `require_real_tool_adapter_requires_neuro_cli_adapter` unless `--tool-adapter neuro-cli` is selected
+  - workflow payloads now carry `release_gate_require_real_tool_adapter`
+  - `agent_run_evidence` now includes `tool_adapter_runtime`, `release_gate_require_real_tool_adapter`, and `real_tool_adapter_present`
+  - `agent_run_evidence.closure_gates.real_tool_adapter_present` and `real_tool_execution_succeeded` are enforced only when the release gate is explicitly requested
+  - first non-model live gate attempts reached the real Neuro CLI adapter but returned `no_reply` from `neuro/unit-01/query/device`, so the tightened hardware gate correctly remains open until Unit replies successfully
+  - Linux preflight with `--auto-start-router` confirmed the router can listen on `7447` and the deployable artifact is present, but classified the current hardware blocker as `no_reply_board_not_attached` because no `/dev/ttyACM*` or `/dev/ttyUSB*` serial device is visible on this host
+  - release plan now requires a bounded read-only Neuro CLI hardware gate for closure while keeping side-effecting app control approval-gated
+
+2026-05-05: Closed the release-1.2.2 GitHub Copilot live-smoke prerequisite after operator OAuth authorization. Installed and verified the real GitHub Copilot CLI at `/home/emb/.local/bin/copilot` (`GitHub Copilot CLI 1.0.40`) plus `agent-framework-github-copilot`, confirmed non-interactive CLI auth with a minimal `OK` prompt, then ran `neurolink-core agent-run --rational-backend copilot --allow-model-call` with `GITHUB_COPILOT_CLI_PATH=/home/emb/.local/bin/copilot`. The successful live smoke used the Microsoft Agent Framework GitHub Copilot backend in plan-only mode, kept `can_execute_tools_directly=false`, let Core policy allow the read-only `system_query_device` plan, and produced one policy decision plus one tool result (`NETWORK_READY`, `status=ok`) with `agent_run_evidence.ok=true`. - Copilot
+
+#### EXEC-240-LIVE GitHub Copilot CLI Auth And Rational Backend Live Smoke
+
+- Status: completed for local operator host authentication and live Copilot Rational backend smoke
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - install and verify the real GitHub Copilot CLI outside the VS Code wrapper path
+  - verify GitHub Copilot CLI OAuth authentication after operator authorization
+  - verify the Python GitHub Copilot Agent Framework provider is importable
+  - run a live `agent-run` using `--rational-backend copilot --allow-model-call`
+  - prove the Copilot backend remains plan-only while Core performs policy and tool execution
+- Result:
+  - installed CLI at `/home/emb/.local/bin/copilot`
+  - verified `/home/emb/.local/bin/copilot --version` reports `GitHub Copilot CLI 1.0.40`
+  - verified `agent-framework-github-copilot` and `agent_framework.github` are available in the release venv
+  - confirmed non-interactive CLI auth with `copilot -p "Reply with OK only." --allow-all-tools --available-tools '' --disable-builtin-mcps --disallow-temp-dir --silent`
+  - ran live Core smoke with `GITHUB_COPILOT_CLI_PATH=/home/emb/.local/bin/copilot` and `GITHUB_COPILOT_TIMEOUT=120`
+  - smoke evidence reported `rational_backend.backend_kind=github_copilot_sdk`, `backend_runtime=agent_framework_github_copilot`, `model_call_allowed=true`, `package_available=true`, and `can_execute_tools_directly=false`
+  - Core policy allowed read-only `system_query_device` with `reason=read_only_policy_allows_tool`
+  - tool result returned `network_state=NETWORK_READY` and `status=ok`
+  - closure evidence reported `agent_run_evidence.ok=true`
+- Verification evidence:
+  - `cd /tmp && GITHUB_COPILOT_CLI_PATH=/home/emb/.local/bin/copilot /home/emb/.local/bin/copilot -p "Reply with OK only." --allow-all-tools --available-tools '' --disable-builtin-mcps --disallow-temp-dir --silent` returned `OK`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && GITHUB_COPILOT_CLI_PATH=/home/emb/.local/bin/copilot GITHUB_COPILOT_TIMEOUT=120 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli agent-run --input-text "Please use the system_query_device tool to query current device status for node unit-01." --rational-backend copilot --allow-model-call --session-id copilot-live-smoke-002` completed with `status=ok` and `agent_run_evidence.ok=true`
+
+2026-05-05: Continued release-1.2.2 with `EXEC-240`, binding the Rational backend seam to the Microsoft Agent Framework GitHub Copilot provider documented at Microsoft Learn. Added `CopilotSdkRationalBackend` around `agent_framework.github.GitHubCopilotAgent`, using `agent-framework-github-copilot --pre` as the Core dependency surface and the documented `GITHUB_COPILOT_CLI_PATH`, `GITHUB_COPILOT_MODEL`, `GITHUB_COPILOT_TIMEOUT`, and `GITHUB_COPILOT_LOG_LEVEL` configuration variables. The backend remains plan-only: it sends prompt-safe context, available tool summaries, and safety boundaries to Copilot, requires explicit `--allow-model-call`, does not enable shell/file/URL/MCP permissions, and validates the returned JSON through the existing strict `RationalPlan` validator before Core policy/tool/audit handling. Added `--rational-backend copilot` for `no-model-dry-run` and `agent-run`, kept `auto` as the default, and covered the path with injected-agent tests so CI remains network-free and deterministic. - Copilot
+
+#### EXEC-240 GitHub Copilot SDK Rational Backend
+
+- Status: completed for Microsoft Agent Framework GitHub Copilot provider binding with injected-client test coverage
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Source reference:
+  - Microsoft Learn GitHub Copilot Agents provider page for Python: `agent-framework-github-copilot --pre`, `agent_framework.github.GitHubCopilotAgent`, Copilot CLI authentication, and `GITHUB_COPILOT_*` configuration variables
+- Scope:
+  - implement a Copilot SDK Rational backend behind the existing `RationalBackend` protocol
+  - keep live Copilot calls explicit opt-in with `--allow-model-call`
+  - expose `--rational-backend copilot` while preserving `auto` default behavior
+  - keep Copilot plan-only and unable to execute shell/file/URL/MCP/tool actions directly
+  - validate Copilot output as `RationalPlan | None` before manifest/policy evaluation
+  - update Core dependency and documentation surfaces with the concrete provider package/API details
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/rational_backends.py`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/requirements.txt`
+  - `applocation/NeuroLink/neurolink_core/tests/test_rational_backends.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/docs/project/AI_CORE_LLD.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `CopilotSdkRationalBackend` using `GitHubCopilotAgent` with JSON-only instructions
+  - added runtime metadata for package name, package availability, Copilot CLI auth requirement, configured `GITHUB_COPILOT_*` env var names, explicit model-call gate, and `can_execute_tools_directly=false`
+  - added injected `agent_factory` support so tests and CI do not require network, Copilot CLI auth, or live model calls
+  - added Rational backend selection to MAF adapter construction and workflow execution
+  - added CLI `--rational-backend {auto,deterministic,provider,copilot}` to `no-model-dry-run` and `agent-run`
+  - added gate behavior so `rational_backend=copilot` fails closed unless `allow_model_call` / `--allow-model-call` is present
+  - updated Core requirements to include pre-release `agent-framework-github-copilot`
+  - updated AI Core LLD and README with concrete Copilot provider package/import/configuration behavior
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_rational_backends.py neurolink_core/tests/test_neurolink_core.py -q` passed with `50 passed, 3 subtests passed`
+  - diagnostics reported no errors for `neurolink_core/rational_backends.py`, `neurolink_core/maf.py`, `neurolink_core/workflow.py`, `neurolink_core/cli.py`, `neurolink_core/tests/test_rational_backends.py`, `neurolink_core/tests/test_neurolink_core.py`, `docs/project/AI_CORE_LLD.md`, and `README.md`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `93 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware validation
+- Remaining live-smoke prerequisite:
+  - actual Copilot live smoke requires `agent-framework-github-copilot` installation plus GitHub Copilot CLI installed and authenticated on the operator host; local tests use injected agents by design
+
+2026-05-05: Continued release-1.2.2 with `EXEC-243`, adding the Agent-readable real LLM `agent-run` closure evidence spine. `run_no_model_dry_run()` now emits top-level `agent_run_evidence` with schema `1.2.2-agent-run-evidence-v1`, collecting provider runtime metadata, Rational backend metadata, memory runtime metadata, model-call evidence, prompt-safe context summary, database counts, execution evidence counts, audit presence, final response, and closure-gate booleans. The closure evidence is generated from existing persisted/audited data rather than creating a second execution path, so deterministic, mocked real-provider, read-only tool, Copilot Rational backend, and approval-gated flows all keep the same policy/tool/audit boundaries. Added tests that prove mocked real-provider `agent-run` reports a successful closure spine and that approval-gated `agent-run` flows include pending approval evidence. - Copilot
+
+#### EXEC-243 Real LLM Agent-Run Evidence And Closure Tests
+
+- Status: completed for mocked real-provider workflow evidence closure; external Copilot SDK backend remains blocked on SDK package/API details
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - add one top-level evidence payload that directly maps to release-1.2.2 workflow/safety closure gates
+  - include provider runtime metadata, Rational backend metadata, memory runtime metadata, model-call evidence, prompt-safe context summary, database counts, persisted evidence counts, audit presence, and final response
+  - preserve existing execution path; closure evidence is assembled from workflow payload and persisted audit/evidence records
+  - cover mocked real-provider `agent-run` and approval-gated `agent-run` evidence in tests
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `AGENT_RUN_EVIDENCE_SCHEMA_VERSION = "1.2.2-agent-run-evidence-v1"`
+  - added `_build_agent_run_evidence()` to assemble closure evidence from runtime payload, audit session context, db counts, tool results, and execution evidence
+  - added Rational backend metadata extraction from MAF runtime agent adapters
+  - `agent_run_evidence.closure_gates` now reports whether provider metadata, Rational backend metadata, memory metadata, model-call evidence, prompt-safe context, database counts, persisted evidence, policy/pending approval evidence, tool/pending approval evidence, audit record, final response, prompt-safe provider context, and disabled direct model tool execution are all present
+  - mocked real-provider `agent-run` now asserts a successful `agent_run_evidence.ok` closure path with model-call, Rational backend, memory runtime, prompt-safe context, policy/tool, db, audit, and final-response evidence
+  - approval-gated `agent-run` now asserts closure evidence includes pending approval and tool-result counts
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q` passed with `39 passed, 3 subtests passed`
+  - diagnostics reported no errors for `neurolink_core/workflow.py` and `neurolink_core/tests/test_neurolink_core.py`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `87 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware validation
+- Superseded note:
+  - `EXEC-240` is now implemented against the Microsoft Agent Framework GitHub Copilot provider; live smoke still requires the operator host to install the package and authenticate the GitHub Copilot CLI
+
+2026-05-05: Continued release-1.2.2 with `EXEC-242`, adding prompt-safe session and memory context assembly for real-provider Affective/Rational execution. Added a bounded `prompt_safe_context` schema that summarizes session identity, current frame, prior execution history, pending approvals, long-term memory lookup results, memory runtime, MAF runtime, available tool summaries, and explicit safety boundaries without exposing raw execution span payloads or full audit context to model/provider calls. The workflow now keeps full internal `session_context` for audit evidence while routing provider-facing Affective memory items and Rational session context through the safe summary. This preserves deterministic behavior, keeps `target_app_id` available for app-control planning, and prevents provider backends from receiving raw history blobs, pending approval payloads, or model-call evidence as planning input. - Copilot
+
+#### EXEC-242 Prompt-Safe Session And Memory Context Assembly
+
+- Status: completed for bounded provider-facing context assembly and workflow routing
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - create a prompt-safe context schema for session/history/memory/runtime/tool summaries
+  - summarize prior execution spans instead of passing raw span payloads to providers
+  - summarize pending approval requests without exposing full approval payloads
+  - summarize long-term memory lookup results into bounded memory items
+  - keep full audit `session_context` available internally while routing provider calls through `prompt_safe_context`
+  - keep safety boundaries explicit: model context only, no direct tool execution, Core policy/approval/lease gates remain authoritative
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/session.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `PROMPT_SAFE_CONTEXT_SCHEMA_VERSION = "1.2.2-prompt-safe-context-v1"`
+  - added `build_prompt_safe_context()` and focused summarizers for execution spans, approvals, memory items, runtime metadata, MAF runtime, and tool contracts
+  - workflow now records `session_context.prompt_safe_context` for audit evidence
+  - real-provider Affective calls receive bounded memory summaries rather than raw memory rows
+  - real-provider Rational planning receives `prompt_safe_context` rather than the full internal session context
+  - full internal audit context still records `available_tools`, `model_call_evidence`, memory runtime, and other execution evidence for traceability
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q` passed with `39 passed, 3 subtests passed`
+  - diagnostics reported no errors for `neurolink_core/session.py`, `neurolink_core/workflow.py`, and `neurolink_core/tests/test_neurolink_core.py`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `87 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware validation
+- Next action:
+  - continue with `EXEC-243`: real LLM `agent-run` workflow evidence and closure tests, using the existing model-call evidence, Rational backend metadata, memory runtime metadata, and prompt-safe context as the evidence spine
+
+2026-05-05: Continued release-1.2.2 with `EXEC-241`, adding the first Mem0 sidecar memory backend shape while preserving deterministic SQLite fallback behavior. The Core memory contract now reports runtime metadata, `--memory-backend mem0` is an explicit CLI/runtime option, and `Mem0SidecarMemory` can use an injected Mem0-compatible client for lookup/add while mirroring committed candidates into the local SQLite long-term memory table for audit evidence. When the Mem0 package/client is unavailable, the same backend reports `fallback_active=true` and safely falls back to the local SQLite candidate store instead of failing the Core run. Workflow payloads and audit session context now include `memory_runtime` so Agent-readable evidence can distinguish fake, local SQLite, sidecar-backed, and fallback memory paths without exposing secrets. - Copilot
+
+#### EXEC-241 Mem0 Sidecar Backend And SQLite Fallback Evidence
+
+- Status: completed for explicit Mem0 backend selection, injected sidecar smoke coverage, and deterministic local fallback
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - extend the long-term memory contract with runtime metadata
+  - keep fake and local SQLite memory backends deterministic and metadata-bearing
+  - add a Mem0 sidecar memory wrapper that can call a compatible `search` / `add` client when configured
+  - mirror sidecar-committed memory candidates into SQLite for audit/evidence continuity
+  - make Mem0 unavailability visible as structured fallback metadata instead of a runtime crash
+  - expose memory runtime evidence through workflow payloads and audited session context
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/memory.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `runtime_metadata()` to the memory protocol surface
+  - added metadata for fake and local SQLite memory backends
+  - added `Mem0SidecarMemory` with injected-client support, sidecar lookup/add calls, SQLite mirror commit, sidecar memory ID evidence, and safe fallback status
+  - added `build_memory_backend()` for `fake`, `local`, and `mem0` selection
+  - added `--memory-backend mem0` to `no-model-dry-run` and `agent-run`
+  - added top-level `memory_runtime` output and matching audit `session_context.memory_runtime`
+  - kept Core default memory behavior unchanged at `fake` for deterministic tests and local development
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q` passed with `37 passed, 3 subtests passed`
+  - diagnostics reported no errors for `neurolink_core/memory.py`, `neurolink_core/workflow.py`, `neurolink_core/cli.py`, and `neurolink_core/tests/test_neurolink_core.py`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `85 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware validation
+- Next action:
+  - continue with prompt-safe session and memory context assembly so Affective/Rational provider calls receive bounded, secret-safe memory context instead of raw execution-history blobs
+
+2026-05-05: Continued release-1.2.2 with `EXEC-239`, extracting the Rational planning seam into a backend protocol before binding the future GitHub Copilot SDK implementation. Added `neurolink_core.rational_backends` with a narrow `RationalBackend` protocol, deterministic fallback backend, provider-backed backend, and strict `RationalPlan` payload validation. Refactored the existing MAF Rational adapters so deterministic and real-provider planning both flow through this backend layer while preserving current class names and public behavior. Runtime metadata now exposes `rational_backend` details, including backend kind, provider client kind when applicable, and an explicit `can_execute_tools_directly=false` safety marker. This keeps Rational backends as plan producers only; Unit tool execution remains inside the existing manifest, policy, approval, adapter, and audit path. - Copilot
+
+#### EXEC-239 Rational Backend Protocol And Deterministic Fallback
+
+- Status: completed for creating the replaceable Rational backend seam required before Copilot SDK integration
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - introduce a backend protocol for Rational planning
+  - move deterministic fake Rational behavior behind a backend wrapper
+  - move provider-backed Rational planning behind the same backend protocol
+  - validate provider-returned `RationalPlan` payloads strictly before workflow policy evaluation
+  - expose backend runtime metadata for later audit and integration evidence
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/rational_backends.py`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_rational_backends.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `RationalBackend` as the narrow replaceable planning protocol
+  - added `DeterministicRationalBackend` around the existing `FakeRationalAgent` rules
+  - added `ProviderRationalBackend` around the existing provider-client plan call path
+  - added `validate_rational_plan_payload()` so provider/Copilot-style outputs must include a non-empty `tool_name`, object `args`, and non-empty `reason`
+  - refactored `MafRationalAgentAdapter` and `RealMafRationalAgentAdapter` to use backend instances internally
+  - exposed `rational_backend` metadata and `can_execute_tools_directly=false` so future Copilot SDK work remains explicitly bounded to plan proposal
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_rational_backends.py neurolink_core/tests/test_maf.py -q` passed with `22 passed`
+  - diagnostics reported no errors for `neurolink_core/rational_backends.py`, `neurolink_core/maf.py`, `neurolink_core/tests/test_rational_backends.py`, and `neurolink_core/tests/test_maf.py`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `82 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - diagnostics reported no errors for `neurolink_core/rational_backends.py`, `neurolink_core/maf.py`, and `PROJECT_PROGRESS.md`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware validation
+- Next action:
+  - run full regression validation, then continue with `EXEC-240`: GitHub Copilot SDK Rational backend once SDK package/API details are supplied
+
+2026-05-05: Continued release-1.2.2 with `EXEC-238`, carrying the structured Affective provider path from smoke into the real `agent-run` workflow evidence. The workflow now marks real-provider Affective execution as `affective_model_call`, emits a top-level `runtime_mode` and `model_call_evidence`, and persists the same model-call evidence inside the audited session context. The evidence is deliberately secret-safe: it records the Affective role, frame/event identifiers, provider kind, provider client kind, response schema, call status, and validated `AffectiveDecision`, but does not include prompts, endpoint values, or credential values. This keeps the release-1.2.2 real-LLM path observable without weakening the existing policy, tool, approval, and audit boundaries. - Copilot
+
+#### EXEC-238 Workflow Affective Model-Call Evidence
+
+- Status: completed for wiring structured Affective provider evidence into `agent-run`
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - make real-provider workflow runs distinguish Affective model calls from deterministic arbitration
+  - expose model-call evidence at the top-level `agent-run`/dry-run payload
+  - persist the same evidence inside audit session context for traceability
+  - keep evidence secret-safe and free of prompt, endpoint, or credential contents
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - real-provider workflow runs now append `affective_model_call` instead of the deterministic `affective_arbitration` step
+  - payloads now include `runtime_mode="real_llm"` for real provider mode and `runtime_mode="deterministic"` otherwise
+  - payloads now include `model_call_evidence` derived from audited session context
+  - audit records now retain `session_context.model_call_evidence` so provider-backed Affective decisions can be traced through execution evidence
+  - existing policy and manifest checks still run after Rational planning, so model-backed decisions do not bypass tool safety
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k "real_provider or model_call"` passed with `3 passed, 31 deselected`
+  - diagnostics reported no errors for `neurolink_core/workflow.py`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `77 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - diagnostics reported no errors for `neurolink_core/workflow.py` and `PROJECT_PROGRESS.md`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware validation
+- Next action:
+  - run full regression validation, then continue with `EXEC-239`: Rational backend protocol and deterministic fallback migration
+
+2026-05-05: Continued release-1.2.2 with `EXEC-237`, implementing the first OpenAI-compatible provider smoke contract for the real-LLM Core line. The MAF provider smoke path now has an explicit two-step live-call gate: `--allow-model-call` marks operator consent for provider calls, while `--execute-model-call` requests an actual Affective model-call smoke and is rejected unless consent is present. The smoke contract now reports whether a call was requested, whether it executed, secret-safe provider readiness metadata, structured call status, and Affective decision evidence when the provider call succeeds. Also tightened real-provider Affective output coercion so model responses must provide `delegated: bool`, non-empty `reason: str`, and `salience` in the 0-100 range instead of being silently coerced. Generic OpenAI-compatible configuration remains driven by `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `OPENAI_MODEL`, with diagnostics exposing env var names and readiness but not secret values or endpoint contents. - Copilot
+
+#### EXEC-237 OpenAI-Compatible Provider Smoke Contract
+
+- Status: completed for the first release-1.2.2 provider configuration hardening and real-call smoke contract slice
+- Owner: GitHub Copilot continuing the real-LLM Core release line
+- Scope:
+  - make MAF provider smoke distinguish availability-only checks from explicit live model-call smoke
+  - require both operator consent and explicit execution request before any provider smoke call executes
+  - add structured Affective decision validation for real-provider outputs
+  - prove generic OpenAI-compatible configuration remains secret-safe
+- Touched files:
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - added `execute_model_call` support to `maf_provider_smoke_status()` and exposed it through `neurolink-core maf-provider-smoke --execute-model-call`
+  - kept default smoke non-calling and cost-safe; `--execute-model-call` without `--allow-model-call` now returns a structured error and CLI exit code `2`
+  - added successful smoke evidence fields for injected or real providers: `affective_decision`, `model_call_evidence`, `provider_kind`, and provider client kind
+  - added structured failure reporting for invalid Affective provider output
+  - tightened `_coerce_affective_decision()` so malformed provider JSON cannot silently become a valid decision
+  - added tests for generic OpenAI-compatible readiness, secret redaction, live-call gating, successful injected provider smoke, invalid output failure, and CLI gating behavior
+- Verification evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -q` passed with `17 passed`
+  - diagnostics reported no errors for `neurolink_core/maf.py`, `neurolink_core/cli.py`, and `neurolink_core/tests/test_maf.py`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `77 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware validation
+- Next action:
+  - continue with broader validation and then start `EXEC-238`: structured Affective model-call path inside the real `agent-run` workflow
+
+2026-05-05: Started release-1.2.2 implementation with the real-LLM Core kickoff slice. Added the release plan for the new track, updated the top-level release-facing README, documented the HLD and AI Core LLD deltas for real MAF/OpenAI-compatible Affective execution, modular Rational backend selection with GitHub Copilot SDK as the target production backend, and Mem0-backed long-term memory with SQLite fallback. Added a separate `neurolink_core/requirements.txt` dependency surface so Core model/memory dependencies can evolve independently from Neuro CLI host-control dependencies. The canonical Neuro CLI `RELEASE_TARGET` intentionally remains `1.2.1` until the 1.2.2 acceptance gates are green. - Copilot
+
+#### EXEC-236 Release-1.2.2 Real LLM Core Kickoff
+
+- Status: completed for starting the release-1.2.2 implementation track and establishing the executable planning baseline
+- Owner: GitHub Copilot starting the real-LLM Core release line
+- Scope:
+  - create the release-1.2.2 plan for true LLM-driven Core execution
+  - record fixed decisions for OpenAI-compatible Affective Agent calls, modular Rational backends, Copilot SDK target backend, and Mem0 memory
+  - update HLD and AI Core LLD boundaries without changing the closed release-1.2.1 runtime behavior
+  - add a separate Core dependency surface for MAF, memory, and future Copilot SDK packages
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
+  - `applocation/NeuroLink/docs/project/HLD.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_LLD.md`
+  - `applocation/NeuroLink/neurolink_core/requirements.txt`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - release-1.2.2 is now explicitly scoped as the active real-LLM Core line on top of the closed release-1.2.1 baseline
+  - Affective execution is planned around MAF plus a generic OpenAI-compatible API entrypoint using `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `OPENAI_MODEL`
+  - Rational execution is planned as backend-pluggable, with GitHub Copilot SDK as the first target production backend once SDK package/API details are supplied
+  - Mem0 is documented as the default long-term memory sidecar and SQLite local memory remains the deterministic fallback
+  - Core model/memory dependencies are separated from Neuro CLI dependencies
+- Verification evidence:
+  - diagnostics reported no errors for `README.md`, `RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`, `HLD.md`, `AI_CORE_LLD.md`, `PROJECT_PROGRESS.md`, and `neurolink_core/requirements.txt`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q` passed with `72 passed, 6 subtests passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q` passed with `124 passed`
+  - `git -C /home/emb/project/zephyrproject/applocation/NeuroLink -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` passed for CRLF-aware Markdown validation
+- Next action:
+  - continue with `EXEC-237`: OpenAI-compatible provider configuration hardening and real-call smoke contract
+
 2026-05-05: Marked release-1.2.1 as closed after reviewing the accumulated Core, CLI, approval, hardware, and script hardening evidence against the release plan gates. The local MAF-shaped Core baseline, Agent-facing Neuro CLI contracts, approval-gated resumable control flow, bounded real command-path bridge, DNESP32S3B approval-decision hardware proof, and post-hardware artifact-path hardening are now all recorded in the execution ledger. No additional code changes were required for closure; the remaining open items are explicitly reclassified as next-release follow-up tracks rather than unresolved release-1.2.1 blockers. - Copilot
 
 #### EXEC-235 Release-1.2.1 Closure Review

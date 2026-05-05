@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This directory is the canonical release-1.2.1 home for the Neuro CLI skill
+This directory is the canonical release-1.2.2 home for the Neuro CLI skill
 package. It keeps the Agent-facing skill contract, references, and templates
 beside the CLI implementation that owns the commands.
 

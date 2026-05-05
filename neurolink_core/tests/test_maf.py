@@ -72,6 +72,35 @@ class TestMafRuntimeBoundary(unittest.TestCase):
             "gpt-4.1-mini",
         )
 
+    def test_runtime_profile_reports_generic_openai_compatible_configuration_without_secrets(self) -> None:
+        with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+            profile = build_maf_runtime_profile(
+                provider_mode=MafProviderMode.REAL_PROVIDER.value,
+                env={
+                    "OPENAI_BASE_URL": "https://provider.example/v1",
+                    "OPENAI_API_KEY": "secret-value-that-must-not-leak",
+                    "OPENAI_MODEL": "generic-chat-model",
+                },
+            )
+
+        payload = profile.to_dict()
+        encoded = json.dumps(payload, sort_keys=True)
+        self.assertTrue(payload["provider_ready_for_model_call"])
+        self.assertEqual(
+            payload["provider_config"]["provider_kind"],
+            "openai_compatible",
+        )
+        self.assertEqual(
+            payload["provider_config"]["endpoint_env_var"],
+            "OPENAI_BASE_URL",
+        )
+        self.assertEqual(
+            payload["provider_config"]["model_env_var"],
+            "OPENAI_MODEL",
+        )
+        self.assertNotIn("secret-value-that-must-not-leak", encoded)
+        self.assertNotIn("https://provider.example/v1", encoded)
+
     def test_deterministic_maf_adapters_delegate_to_fake_agents(self) -> None:
         frame = PerceptionFrame(
             frame_id="frame-test",
@@ -92,6 +121,13 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertEqual(plan.args["event_ids"], ["evt-1"])
         self.assertEqual(affective.runtime_metadata()["agent_role"], "affective")
         self.assertEqual(rational.runtime_metadata()["agent_role"], "rational")
+        self.assertEqual(
+            rational.runtime_metadata()["rational_backend"]["backend_kind"],
+            "deterministic_fake",
+        )
+        self.assertFalse(
+            rational.runtime_metadata()["rational_backend"]["can_execute_tools_directly"]
+        )
 
     def test_real_provider_adapter_factory_fails_closed_when_not_ready(self) -> None:
         profile = build_maf_runtime_profile(
@@ -193,6 +229,14 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertIsInstance(rational, RealMafRationalAgentAdapter)
         self.assertTrue(affective.runtime_metadata()["provider_call_supported"])
         self.assertTrue(rational.runtime_metadata()["provider_call_supported"])
+        self.assertEqual(
+            rational.runtime_metadata()["rational_backend"]["backend_kind"],
+            "maf_provider_client",
+        )
+        self.assertEqual(
+            rational.runtime_metadata()["rational_backend"]["provider_client_kind"],
+            "custom",
+        )
         self.assertTrue(decision.delegated)
         self.assertEqual(decision.salience, 91)
         self.assertIsNotNone(plan)
@@ -370,6 +414,128 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertEqual(payload["call_status"], "model_call_not_requested")
         self.assertEqual(payload["maf_runtime"]["provider_mode"], "real_provider")
 
+    def test_provider_smoke_rejects_execute_model_call_without_allow_flag(self) -> None:
+        payload = maf_provider_smoke_status(execute_model_call=True)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(
+            payload["reason"],
+            "execute_model_call_requires_allow_model_call",
+        )
+        self.assertEqual(payload["call_status"], "model_call_not_allowed")
+        self.assertFalse(payload["executes_model_call"])
+
+    def test_provider_smoke_executes_affective_call_with_injected_provider(self) -> None:
+        class FakeProviderClient:
+            provider_client_kind = "test_smoke_client"
+            last_frame: PerceptionFrame
+
+            def decide(
+                self,
+                frame: PerceptionFrame,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+            ) -> dict[str, Any]:
+                del memory_items, profile
+                self.last_frame = frame
+                return {
+                    "delegated": True,
+                    "reason": "provider_smoke_affective_decision",
+                    "salience": 80,
+                }
+
+            def plan(
+                self,
+                decision: AffectiveDecision,
+                frame: PerceptionFrame,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any] | None:
+                del decision, frame, profile, available_tools, session_context
+                return None
+
+        client = FakeProviderClient()
+        with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+            payload = maf_provider_smoke_status(
+                allow_model_call=True,
+                execute_model_call=True,
+                env={
+                    "OPENAI_BASE_URL": "https://provider.example/v1",
+                    "OPENAI_API_KEY": "secret",
+                    "OPENAI_MODEL": "generic-chat-model",
+                },
+                provider_client=client,
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(payload["reason"], "model_call_succeeded")
+        self.assertEqual(payload["smoke_mode"], "model_call_smoke")
+        self.assertTrue(payload["model_call_allowed"])
+        self.assertTrue(payload["model_call_requested"])
+        self.assertTrue(payload["executes_model_call"])
+        self.assertEqual(payload["call_status"], "model_call_succeeded")
+        self.assertEqual(
+            payload["affective_decision"],
+            {
+                "delegated": True,
+                "reason": "provider_smoke_affective_decision",
+                "salience": 80,
+            },
+        )
+        self.assertEqual(
+            payload["model_call_evidence"]["provider_client_kind"],
+            "test_smoke_client",
+        )
+        self.assertEqual(client.last_frame.frame_id, "frame-provider-smoke-001")
+
+    def test_provider_smoke_reports_structured_failure_for_invalid_affective_output(self) -> None:
+        class InvalidProviderClient:
+            provider_client_kind = "invalid_test_client"
+
+            def decide(
+                self,
+                frame: PerceptionFrame,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+            ) -> dict[str, Any]:
+                del frame, memory_items, profile
+                return {"delegated": "yes", "reason": "bad", "salience": 80}
+
+            def plan(
+                self,
+                decision: AffectiveDecision,
+                frame: PerceptionFrame,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any] | None:
+                del decision, frame, profile, available_tools, session_context
+                return None
+
+        with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+            payload = maf_provider_smoke_status(
+                allow_model_call=True,
+                execute_model_call=True,
+                env={
+                    "OPENAI_API_KEY": "secret",
+                    "OPENAI_MODEL": "generic-chat-model",
+                },
+                provider_client=InvalidProviderClient(),
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["reason"], "model_call_failed")
+        self.assertEqual(payload["call_status"], "model_call_failed")
+        self.assertEqual(payload["failure_class"], "ValueError")
+        self.assertEqual(
+            payload["failure_status"],
+            "provider_affective_decision_delegated_must_be_bool",
+        )
+
     def test_cli_maf_provider_smoke_outputs_json(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
@@ -384,6 +550,19 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertEqual(
             {item["agent_role"] for item in payload["maf_runtime"]["agent_adapters"]},
             {"affective", "rational"},
+        )
+
+    def test_cli_maf_provider_smoke_rejects_execute_without_allow(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["maf-provider-smoke", "--execute-model-call"])
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            payload["reason"],
+            "execute_model_call_requires_allow_model_call",
         )
 
 

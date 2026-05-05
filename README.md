@@ -2,9 +2,11 @@
 
 NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
 
-The project is currently on closed release `1.2.1`. The canonical host CLI advertises `RELEASE_TARGET = "1.2.1"`.
+The project is currently on closed release `1.2.2`. The canonical host CLI advertises `RELEASE_TARGET = "1.2.2"`.
 
 Release `1.2.0` remains the earlier local AI Core baseline. Release `1.2.1` is now the closed Core-Agent baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, guarded real-provider wiring, approval-gated resumable tool execution, and bounded real Neuro CLI control integration validated on the connected DNESP32S3B hardware path. The validated release `1.1.10` Unit/demo platform remains the underlying hardware/runtime baseline for later provider or live-event follow-up work.
+
+Release `1.2.2` is the closed real-LLM Core line. Core can run through a real MAF/OpenAI-compatible Affective Agent call, a modular Rational Agent backend using the Microsoft Agent Framework GitHub Copilot provider, and a Mem0-backed long-term memory path with SQLite fallback while preserving the existing policy, lease, approval, tool-adapter, and audit boundaries.
 
 ## Project Layout
 
@@ -33,6 +35,24 @@ The Neuro CLI dependency set is defined in:
 
 ```bash
 applocation/NeuroLink/neuro_cli/requirements.txt
+```
+
+The AI Core model and memory dependency set for the release-1.2.2 track is defined separately in:
+
+```bash
+applocation/NeuroLink/neurolink_core/requirements.txt
+```
+
+The GitHub Copilot Rational backend uses `agent-framework-github-copilot` and
+requires the GitHub Copilot CLI to be installed and authenticated. Runtime use is
+explicitly gated with `--rational-backend copilot --allow-model-call`; default
+Core tests and dry-runs remain deterministic or injected-client based.
+
+The AI Core operator startup and validation guide is documented in:
+
+```bash
+applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md
+applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md
 ```
 
 ## Environment Setup
@@ -92,6 +112,11 @@ bash applocation/NeuroLink/neuro_unit/tests/unit/run_ut_linux.sh
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli maf-provider-smoke --output json
 ```
 
+For release-1.2.2 real runtime startup modes, including Affective live model
+smoke, Mem0 sidecar smoke, Copilot Rational backend, and the real Neuro CLI
+adapter gate, follow `docs/project/AI_CORE_RUNBOOK.md` or the Chinese guide at
+`docs/project/AI_CORE_RUNBOOK_ZH.md`.
+
 ### C style
 
 ```bash
@@ -139,6 +164,7 @@ Capability map:
 Release progress and architecture closure notes live in:
 
 - `PROJECT_PROGRESS.md`
+- `docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
 - `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.2.1` is closed as the current Core-Agent baseline. Remaining work such as broader real-provider execution, long-running live event ingestion, and wider hardware/operator-path parity is intentionally deferred to the next release line instead of being treated as an open gate on `1.2.1`.
+Release `1.2.2` is closed as the current real-LLM Core baseline. Remaining work such as long-running live event ingestion, provider matrix expansion, broader hardware/operator-path parity, and multi-Core federation is intentionally deferred to the next release line instead of being treated as an open gate on `1.2.2`.
