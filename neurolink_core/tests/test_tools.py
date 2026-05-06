@@ -4,14 +4,19 @@ import sys
 import unittest
 
 from contextlib import redirect_stdout
+from typing import Any
 
 from neurolink_core.cli import main as core_cli_main
 from neurolink_core.policy import ReadOnlyToolPolicy
 from neurolink_core.tools import (
+    ACTIVATION_HEALTH_SCHEMA_VERSION,
     CommandExecutionResult,
     NeuroCliToolAdapter,
     STATE_SYNC_SCHEMA_VERSION,
+    StateSyncSnapshot,
+    StateSyncSurface,
     TOOL_MANIFEST_SCHEMA_VERSION,
+    observe_activation_health,
     FakeUnitToolAdapter,
     SideEffectLevel,
     ToolContract,
@@ -63,7 +68,7 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         adapter = FakeUnitToolAdapter()
 
         manifest = adapter.tool_manifest()
-        self.assertEqual(len(manifest), 9)
+        self.assertEqual(len(manifest), 11)
         contract = adapter.describe_tool("system_state_sync")
         assert contract is not None
         self.assertEqual(contract.tool_name, "system_state_sync")
@@ -85,6 +90,8 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
                 "system_query_apps",
                 "system_query_leases",
                 "system_state_sync",
+                "system_activation_health_guard",
+                "system_rollback_app",
                 "system_capabilities",
                 "system_restart_app",
                 "system_start_app",
@@ -136,6 +143,95 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
             ["evt-1"],
         )
 
+    def test_activation_health_observer_reports_healthy_for_running_target_app(self) -> None:
+        adapter = FakeUnitToolAdapter()
+
+        observation = observe_activation_health(adapter, app_id="neuro_unit_app")
+
+        self.assertEqual(observation.schema_version, ACTIVATION_HEALTH_SCHEMA_VERSION)
+        self.assertEqual(observation.classification, "healthy")
+        self.assertEqual(observation.reason, "target_app_running_after_activate")
+        self.assertTrue(observation.app_present)
+        self.assertEqual(observation.observed_app_state, "running")
+
+    def test_activation_health_observer_reports_rollback_required_when_app_missing(self) -> None:
+        class MissingAppAdapter(FakeUnitToolAdapter):
+            def build_state_sync_snapshot(self, args: dict[str, Any]) -> StateSyncSnapshot:
+                del args
+                return StateSyncSnapshot(
+                    status="ok",
+                    state={
+                        "device": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={"status": "ok", "network_state": "NETWORK_READY"},
+                        ),
+                        "apps": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={"status": "ok", "app_count": 0, "apps": []},
+                        ),
+                        "leases": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={"status": "ok", "leases": []},
+                        ),
+                    },
+                    recommended_next_actions=("inspect app state",),
+                )
+
+        observation = observe_activation_health(MissingAppAdapter(), app_id="neuro_unit_app")
+
+        self.assertEqual(observation.classification, "rollback_required")
+        self.assertEqual(observation.reason, "target_app_missing_after_activate")
+        self.assertTrue(observation.ready_for_rollback_consideration)
+
+    def test_activation_health_observer_reports_no_reply_when_state_sync_fails(self) -> None:
+        class FailingAdapter:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> Any:
+                del tool_name, args
+                return type(
+                    "Result",
+                    (),
+                    {
+                        "status": "error",
+                        "payload": {
+                            "failure_status": "no_reply",
+                        },
+                    },
+                )()
+
+        observation = observe_activation_health(FailingAdapter(), app_id="neuro_unit_app")
+
+        self.assertEqual(observation.classification, "no_reply")
+        self.assertEqual(observation.reason, "no_reply")
+
+    def test_activation_health_guard_execution_returns_structured_observation(self) -> None:
+        adapter = FakeUnitToolAdapter()
+
+        result = adapter.execute(
+            "system_activation_health_guard",
+            {"app_id": "neuro_unit_app", "app": "neuro_unit_app"},
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["contract"]["name"], "system_activation_health_guard")
+        self.assertEqual(result.payload["activation_health"]["classification"], "healthy")
+        self.assertEqual(result.payload["state_sync"]["status"], "ok")
+
+    def test_rollback_app_execution_returns_structured_result(self) -> None:
+        adapter = FakeUnitToolAdapter()
+
+        result = adapter.execute(
+            "system_rollback_app",
+            {"app_id": "neuro_unit_app", "lease_id": "lease-rb-001", "reason": "guarded"},
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["contract"]["name"], "system_rollback_app")
+        self.assertEqual(result.payload["result"]["payload"]["requested_action"], "rollback_app")
+        self.assertEqual(result.payload["result"]["payload"]["requested_app"], "neuro_unit_app")
+
     def test_query_execution_returns_structured_result_payload(self) -> None:
         adapter = FakeUnitToolAdapter()
 
@@ -150,10 +246,19 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
 
         contracts = adapter.parse_tool_manifest_payload(adapter.tool_manifest_payload())
 
-        self.assertEqual(len(contracts), 9)
+        self.assertEqual(len(contracts), 11)
         parsed = {contract.tool_name: contract for contract in contracts}
         self.assertEqual(parsed["system_state_sync"].resource, "state sync aggregate")
+        self.assertEqual(
+            parsed["system_activation_health_guard"].resource,
+            "post-activation health observation",
+        )
+        self.assertEqual(
+            parsed["system_rollback_app"].resource,
+            "neuro/<node>/update/app/<app-id>/rollback",
+        )
         self.assertEqual(parsed["system_query_device"].resource, "device query plane")
+        self.assertTrue(parsed["system_rollback_app"].approval_required)
         self.assertTrue(parsed["system_restart_app"].approval_required)
         self.assertTrue(parsed["system_start_app"].approval_required)
         self.assertTrue(parsed["system_stop_app"].approval_required)
@@ -189,11 +294,25 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertEqual(payload["schema_version"], TOOL_MANIFEST_SCHEMA_VERSION)
         names = {tool["name"] for tool in payload["tools"]}
         self.assertIn("system_state_sync", names)
+        self.assertIn("system_activation_health_guard", names)
+        self.assertIn("system_rollback_app", names)
         self.assertIn("system_query_device", names)
         self.assertIn("system_restart_app", names)
         self.assertIn("system_start_app", names)
         self.assertIn("system_stop_app", names)
         self.assertIn("system_unload_app", names)
+
+    def test_cli_activation_health_guard_outputs_structured_observation(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["activation-health-guard", "--app-id", "neuro_unit_app"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["command"], "activation-health-guard")
+        self.assertEqual(payload["health_observation"]["classification"], "healthy")
+        self.assertEqual(payload["tool_adapter_runtime"]["adapter_kind"], "fake")
 
 
 class TestNeuroCliToolAdapter(unittest.TestCase):
@@ -239,7 +358,7 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
 
         contract = adapter.describe_tool("system_state_sync")
 
-        self.assertIsNotNone(contract)
+        assert contract is not None
         self.assertEqual(contract.tool_name, "system_state_sync")
         self.assertEqual(contract.resource, "state sync aggregate")
 
@@ -521,6 +640,8 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         self.assertEqual(payload["schema_version"], TOOL_MANIFEST_SCHEMA_VERSION)
         tool_names = [item["name"] for item in payload["tools"]]
         self.assertIn("system_state_sync", tool_names)
+        self.assertIn("system_activation_health_guard", tool_names)
+        self.assertIn("system_rollback_app", tool_names)
         self.assertIn("system_stop_app", tool_names)
 
     def test_cli_tool_manifest_can_use_neuro_cli_adapter(self) -> None:
@@ -535,10 +656,200 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         self.assertEqual(payload["schema_version"], TOOL_MANIFEST_SCHEMA_VERSION)
         tool_names = [item["name"] for item in payload["tools"]]
         self.assertIn("system_state_sync", tool_names)
+        self.assertIn("system_activation_health_guard", tool_names)
+        self.assertIn("system_rollback_app", tool_names)
         self.assertIn("system_restart_app", tool_names)
         self.assertIn("system_start_app", tool_names)
         self.assertIn("system_stop_app", tool_names)
         self.assertIn("system_unload_app", tool_names)
+
+    def test_execute_rollback_app_maps_to_real_deploy_rollback_command(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            calls.append(argv)
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_query_apps",
+                                    "description": "apps query",
+                                    "argv_template": ["python", "wrapper.py", "query", "apps", "--output", "json"],
+                                    "resource": "app query plane",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_query_leases",
+                                    "description": "leases query",
+                                    "argv_template": ["python", "wrapper.py", "query", "leases", "--output", "json"],
+                                    "resource": "lease query plane",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_rollback_app",
+                                    "description": "rollback app",
+                                    "argv_template": ["python", "wrapper.py", "deploy", "rollback", "--output", "json"],
+                                    "resource": "neuro/<node>/update/app/<app-id>/rollback",
+                                    "required_arguments": ["--node", "--app-id", "--lease-id"],
+                                    "side_effect_level": "approval_required",
+                                    "approval_required": True,
+                                    "lease_requirements": ["update_rollback_lease"],
+                                    "timeout_seconds": 15,
+                                },
+                            ],
+                        }
+                    ),
+                )
+            if "query" in argv and "apps" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "replies": [
+                                {"ok": True, "payload": {"status": "ok", "app_count": 1, "apps": [{"app_id": "neuro_demo_gpio"}]}}
+                            ],
+                        }
+                    ),
+                )
+            if "query" in argv and "leases" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "replies": [
+                                {"ok": True, "payload": {"status": "ok", "leases": [{"resource": "update/app/neuro_demo_gpio/rollback", "lease_id": "lease-rb-001"}]}}
+                            ],
+                        }
+                    ),
+                )
+            self.assertIn("deploy", argv)
+            self.assertIn("rollback", argv)
+            self.assertIn("--app-id", argv)
+            self.assertIn("neuro_demo_gpio", argv)
+            self.assertIn("--lease-id", argv)
+            self.assertIn("lease-rb-001", argv)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {"ok": True, "status": "ok", "replies": [{"ok": True, "payload": {"status": "ok", "app_id": "neuro_demo_gpio", "action": "rollback"}}]}
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        result = adapter.execute("system_rollback_app", {"app_id": "neuro_demo_gpio", "reason": "guarded"})
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["resolved_args"]["app_id"], "neuro_demo_gpio")
+        self.assertEqual(result.payload["resolved_args"]["lease_id"], "lease-rb-001")
+        self.assertEqual(result.payload["result"]["status"], "ok")
+        self.assertGreaterEqual(len(calls), 3)
+
+    def test_execute_activation_health_guard_from_cli_json(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            calls.append(argv)
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "system",
+                                        "state-sync",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_activation_health_guard",
+                                    "description": "activation health",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "system",
+                                        "state-sync",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "post-activation health observation",
+                                    "required_arguments": ["--node", "--app-id"],
+                                    "side_effect_level": "read_only",
+                                },
+                            ],
+                        }
+                    ),
+                )
+            self.assertIn("state-sync", argv)
+            self.assertEqual(timeout_seconds, 10)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "schema_version": STATE_SYNC_SCHEMA_VERSION,
+                        "state": {
+                            "device": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {"status": "ok", "network_state": "NETWORK_READY"},
+                            },
+                            "apps": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {
+                                    "status": "ok",
+                                    "app_count": 1,
+                                    "apps": [{"app_id": "neuro_unit_app", "state": "running", "status": "active"}],
+                                },
+                            },
+                            "leases": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {"status": "ok", "leases": []},
+                            },
+                        },
+                        "recommended_next_actions": [
+                            "activation health is good; continue observation and preserve evidence"
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        result = adapter.execute("system_activation_health_guard", {"app_id": "neuro_unit_app"})
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["activation_health"]["classification"], "healthy")
+        self.assertEqual(result.payload["state_sync"]["status"], "ok")
+        self.assertEqual(len(calls), 2)
 
     def test_execute_restart_app_maps_to_real_app_stop_start_commands(self) -> None:
         calls: list[list[str]] = []
@@ -758,6 +1069,71 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         self.assertEqual(result.payload["failure_class"], "top_level_status_failure")
         self.assertTrue(result.payload["failure_status"])
 
+    def test_activation_health_observer_uses_real_adapter_state_sync(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": ["python", "wrapper.py", "system", "state-sync", "--output", "json"],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "schema_version": STATE_SYNC_SCHEMA_VERSION,
+                        "state": {
+                            "device": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {"network_state": "NETWORK_READY", "status": "ok"},
+                            },
+                            "apps": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {
+                                    "status": "ok",
+                                    "app_count": 1,
+                                    "apps": [{"app_id": "neuro_unit_app", "state": "running", "status": "active"}],
+                                },
+                            },
+                            "leases": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {"status": "ok", "leases": []},
+                            },
+                        },
+                        "recommended_next_actions": [
+                            "activation health is good; continue observation and preserve evidence"
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        observation = observe_activation_health(adapter, app_id="neuro_unit_app")
+
+        self.assertEqual(observation.classification, "healthy")
+        self.assertEqual(observation.observed_app_state, "running")
+
     def test_collect_agent_events_reads_jsonl_rows(self) -> None:
         def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
             self.assertIn("--output", argv)
@@ -775,6 +1151,173 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
 
         self.assertEqual([row["event_id"] for row in rows], ["evt-1", "evt-2"])
         self.assertEqual(rows[0]["semantic_topic"], "unit.callback")
+
+    def test_collect_app_events_reads_json_payload(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            self.assertIn("--output", argv)
+            self.assertIn("json", argv)
+            self.assertIn("app-events", argv)
+            self.assertIn("neuro_demo_app", argv)
+            self.assertGreaterEqual(timeout_seconds, 2)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                        "listener_mode": "callback",
+                        "handler_audit": {"enabled": False, "executed": 0},
+                        "events": [
+                            {
+                                "keyexpr": "neuro/unit-01/event/app/neuro_demo_app/callback",
+                                "payload": {
+                                    "schema_version": 2,
+                                    "message_kind": "callback_event",
+                                    "app_id": "neuro_demo_app",
+                                    "event_name": "callback",
+                                    "invoke_count": 3,
+                                    "start_count": 1,
+                                },
+                                "payload_encoding": "cbor-v2",
+                            }
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        payload = adapter.collect_app_events("neuro_demo_app", duration=2, max_events=1)
+
+        self.assertEqual(payload["subscription"], "neuro/unit-01/event/app/neuro_demo_app/**")
+        self.assertEqual(payload["events"][0]["event_id"], "appevt-neuro_demo_app-callback-3-1")
+        self.assertEqual(payload["events"][0]["source_kind"], "unit_app")
+        self.assertEqual(payload["events"][0]["source_node"], "unit-01")
+        self.assertEqual(payload["events"][0]["source_app"], "neuro_demo_app")
+        self.assertEqual(payload["events"][0]["event_type"], "callback")
+        self.assertEqual(payload["events"][0]["semantic_topic"], "unit.callback")
+
+    def test_collect_live_events_reads_unit_event_payload(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            self.assertIn("--output", argv)
+            self.assertIn("json", argv)
+            self.assertIn("events", argv)
+            self.assertNotIn("app-events", argv)
+            self.assertGreaterEqual(timeout_seconds, 2)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "subscription": "neuro/unit-01/event/**",
+                        "listener_mode": "callback",
+                        "handler_audit": {"enabled": False, "executed": 0},
+                        "events": [
+                            {
+                                "keyexpr": "neuro/unit-01/event/health",
+                                "payload": {
+                                    "semantic_topic": "unit.health.degraded",
+                                    "event_type": "health",
+                                    "health": "degraded",
+                                    "priority": 30,
+                                    "timestamp_wall": "2026-05-07T00:00:00Z",
+                                },
+                                "payload_encoding": "json",
+                            }
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        payload = adapter.collect_live_events(duration=2, max_events=1)
+
+        self.assertEqual(payload["subscription"], "neuro/unit-01/event/**")
+        self.assertEqual(payload["events"][0]["source_kind"], "unit")
+        self.assertEqual(payload["events"][0]["source_node"], "unit-01")
+        self.assertEqual(payload["events"][0]["event_type"], "health")
+        self.assertEqual(payload["events"][0]["semantic_topic"], "unit.health.degraded")
+        self.assertEqual(payload["events"][0]["priority"], 30)
+        self.assertEqual(payload["events"][0]["timestamp_wall"], "2026-05-07T00:00:00Z")
+
+    def test_collect_live_events_maps_update_activate_failure_to_operational_topic(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            self.assertIn("events", argv)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "subscription": "neuro/unit-01/event/**",
+                        "listener_mode": "callback",
+                        "handler_audit": {"enabled": False, "executed": 0},
+                        "events": [
+                            {
+                                "keyexpr": "neuro/unit-01/event/update",
+                                "payload": {
+                                    "message_kind": "update_event",
+                                    "app_id": "neuro_unit_app",
+                                    "stage": "activate",
+                                    "status": "rollback_required",
+                                },
+                                "payload_encoding": "cbor-v2",
+                            }
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        payload = adapter.collect_live_events(duration=2, max_events=1)
+
+        self.assertEqual(payload["events"][0]["semantic_topic"], "unit.lifecycle.activate_failed")
+        self.assertEqual(payload["events"][0]["event_type"], "unit.lifecycle.activate_failed")
+        self.assertEqual(payload["events"][0]["source_app"], "neuro_unit_app")
+
+    def test_collect_live_events_maps_state_event_to_online_and_endpoint_drift_topics(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            self.assertIn("events", argv)
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "subscription": "neuro/unit-01/event/**",
+                        "listener_mode": "callback",
+                        "handler_audit": {"enabled": False, "executed": 0},
+                        "events": [
+                            {
+                                "keyexpr": "neuro/unit-01/event/state",
+                                "payload": {
+                                    "message_kind": "state_event",
+                                    "network_state": "NETWORK_READY",
+                                },
+                                "payload_encoding": "cbor-v2",
+                            },
+                            {
+                                "keyexpr": "neuro/unit-01/event/state",
+                                "payload": {
+                                    "message_kind": "state_event",
+                                    "expected_endpoint": "tcp/192.168.2.95:7447",
+                                    "observed_endpoint": "tcp/192.168.2.94:7447",
+                                },
+                                "payload_encoding": "cbor-v2",
+                            },
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        payload = adapter.collect_live_events(duration=2, max_events=2)
+
+        self.assertEqual(payload["events"][0]["semantic_topic"], "unit.state.online")
+        self.assertEqual(payload["events"][1]["semantic_topic"], "unit.network.endpoint_drift")
 
 
 if __name__ == "__main__":

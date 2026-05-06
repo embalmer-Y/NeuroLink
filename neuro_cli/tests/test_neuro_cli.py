@@ -961,6 +961,37 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], "endpoint_verify_failed")
 
+    def test_serial_zenoh_set_tolerates_success_output_with_following_warning(self) -> None:
+        args = Namespace(
+            output="json",
+            serial_zenoh_command="set",
+            endpoint="tcp/192.168.2.90:7447",
+        )
+        with mock.patch.object(
+            neuro_cli,
+            "run_serial_shell_command",
+            return_value={
+                "ok": False,
+                "status": "shell_error",
+                "output": (
+                    "app zenoh_connect_set tcp/192.168.2.90:7447\r\n"
+                    "zenoh connect override applied: tcp/192.168.2.90:7447\r\n"
+                    "[00:10:16.293,000] <wrn> neurolink_unit: tcp probe connect failed: "
+                    "endpoint=tcp/192.168.2.94:7447 errno=116\r\n"
+                ),
+                "error": "serial shell reported an error",
+            },
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = neuro_cli.handle_serial_zenoh(None, args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["endpoint"], "tcp/192.168.2.90:7447")
+
     def test_serial_workflow_plans_document_uart_recovery_contracts(self) -> None:
         expected = {
             "serial-discover": "serial list",
@@ -1208,6 +1239,41 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertEqual(keyexpr, "neuro/unit-01/update/app/neuro_unit_app/activate")
         self.assertEqual(sent_payload["lease_id"], "lease-1")
         self.assertEqual(sent_payload["start_args"], "mode=demo,profile=release")
+
+    def test_main_grouped_deploy_rollback_payload_path(self) -> None:
+        code, payload, collect = self._run_main_with_collect_result(
+            [
+                "--output",
+                "json",
+                "deploy",
+                "rollback",
+                "--app-id",
+                "neuro_unit_app",
+                "--lease-id",
+                "lease-rollback-1",
+                "--reason",
+                "rollback requested by guarded recovery review",
+            ],
+            {
+                "ok": True,
+                "keyexpr": "neuro/unit-01/update/app/neuro_unit_app/rollback",
+                "payload": {"request_id": "req-1"},
+                "replies": [
+                    {"ok": True, "payload": {"status": "ok", "app_id": "neuro_unit_app"}}
+                ],
+            },
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        keyexpr = collect.call_args[0][1]
+        sent_payload = collect.call_args[0][2]
+        self.assertEqual(keyexpr, "neuro/unit-01/update/app/neuro_unit_app/rollback")
+        self.assertEqual(sent_payload["lease_id"], "lease-rollback-1")
+        self.assertEqual(
+            sent_payload["reason"],
+            "rollback requested by guarded recovery review",
+        )
 
     def test_main_grouped_app_unload_payload_path(self) -> None:
         code, payload, collect = self._run_main_with_collect_result(
@@ -1908,6 +1974,25 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         self.assertNotIn("release-1.1.7-memory-evidence", source_text)
         self.assertNotIn("release-1.1.7-closure", source_text)
         self.assertNotIn("neuro_unit_app-1.1.7-cbor-v2", source_text)
+
+    def test_sample_app_source_identity_matches_release_target(self) -> None:
+        project_root = NEURO_CLI_DIR.parent
+        sample_app_source = (
+            project_root / "subprojects" / "neuro_unit_app" / "src" / "main.c"
+        )
+        source_text = sample_app_source.read_text(encoding="utf-8")
+
+        self.assertIn(
+            f'static const char app_version[] = "{neuro_cli.RELEASE_TARGET}";',
+            source_text,
+        )
+        self.assertIn(
+            f'static const char app_build_id[] = "neuro_unit_app-{neuro_cli.RELEASE_TARGET}-cbor-v2";',
+            source_text,
+        )
+        self.assertIn(".major = 1,", source_text)
+        self.assertIn(".minor = 2,", source_text)
+        self.assertIn(".patch = 2,", source_text)
 
     def test_canonical_skill_package_contains_required_resources(self) -> None:
         project_root = NEURO_CLI_DIR.parent

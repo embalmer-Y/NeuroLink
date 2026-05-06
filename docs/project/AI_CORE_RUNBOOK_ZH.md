@@ -215,7 +215,88 @@ source /home/emb/.bashrc
 8. `real_tool_adapter_present=true`。
 9. `real_tool_execution_succeeded=true`。
 
-## 5. Session 与 approval 命令
+## 5. Release-1.2.3 事件与审批命令
+
+### 5.1 确定性事件回放
+
+通过标准 workflow 路径回放一组有序事件 fixture：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-replay \
+  --db /tmp/neurolink-core.db \
+  --events-file /tmp/activate_failed_events.json
+```
+
+这个命令用于验证 `unit.lifecycle.activate_failed` 的处理、事件持久化事实，以及
+approval-bounded recovery evidence，而不需要先把 live subscriber 提升为 release gate。
+
+回放多轮 daemon fixture，用于验证跨轮 dedupe 和 DB-backed restart continuity：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-daemon \
+  --db /tmp/neurolink-core.db \
+  --events-file /tmp/event_daemon_fixture.json
+```
+
+执行 bounded real event-ingest smoke，直接对 app callback 订阅做 Core 侧摄取验证：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke \
+  --db /tmp/neurolink-core.db \
+  --app-id <app-id> \
+  --duration 5 \
+  --max-events 1
+```
+
+这个命令用于证明 Core 可以把真实 Neuro CLI `monitor app-events` 输出接入标准
+workflow，而无需先把长驻 live subscriber 提升为 release gate。
+
+执行 bounded real event-ingest smoke，直接对通用 Unit `event/**` 订阅做 Core 侧摄取验证：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke \
+  --event-source unit \
+  --db /tmp/neurolink-core.db \
+  --duration 45 \
+  --max-events 4 \
+  --ready-file /tmp/neurolink-unit-ready.flag
+```
+
+当你需要让 Core 摄取原始 `lease_event`、`state_event`、`update_event` 等
+通用 Unit framework 事件，而不是只看 app callback 时，使用这个模式。
+
+如果要重复做 release-1.2.3 closure probe，优先使用协同脚本，而不是手工开两个终端：
+
+```bash
+bash applocation/NeuroLink/scripts/run_unit_live_event_probe.sh \
+  --mode state-online
+```
+
+`--mode` 可切换为 `callback` 或 `update-activate`。
+
+### 5.2 Activation Health Guard
+
+通过只读 state-sync 面观察指定 app 的激活后健康状态：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli activation-health-guard \
+  --app-id <app-id> \
+  --tool-adapter neuro-cli
+```
+
+重点查看 `health_observation.classification` 和
+`health_observation.ready_for_rollback_consideration`。如果结果是
+`rollback_required`，表示进入 operator review，而不是自动回滚。
+
+对 `live-event-smoke`，重点查看输出中的 `live_event_ingest.subscription`、
+`live_event_ingest.collected_event_count`、`event_source`，以及
+`agent_run_evidence.real_tool_adapter_present`。
+
+对于 generic Unit 模式，还要检查最终 response 中的 topics，确认原始 framework
+事件已经被提升为 `unit.state.online`、`unit.lifecycle.activate_failed` 等
+operational topic，而不是停留在低层事件名。
+
+### 5.3 Session 与 approval 检查
 
 查看 Core session：
 
@@ -229,6 +310,13 @@ source /home/emb/.bashrc
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli approval-inspect --approval-request-id <approval-request-id>
 ```
 
+针对 guarded rollback，重点检查以下 JSON 字段：
+
+1. `approval_context.recovery_candidate_summary`
+2. `approval_context.operator_requirements.matching_lease_ids`
+3. `approval_context.source_execution_evidence.facts` 中的 `activation_health_observation` 与 `recovery_candidate`
+4. `approval_context.source_execution_evidence.audit_record.payload.activation_health_summary`
+
 提交 approval decision：
 
 ```bash
@@ -237,6 +325,8 @@ source /home/emb/.bashrc
   --decision approve \
   --tool-adapter neuro-cli
 ```
+
+只有当 recovery summary、target app、rollback lease ownership 三者一致时，才批准 guarded rollback。
 
 带副作用的 app control 仍然必须走 approval gate。除非明确要验证这些 gate，否则不要用真实 adapter 执行 app lifecycle 命令。
 

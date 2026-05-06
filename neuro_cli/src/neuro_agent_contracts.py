@@ -175,6 +175,65 @@ def build_tool_manifest_payload(
             },
         },
         {
+            "name": "system_activation_health_guard",
+            "description": "Classify post-activation health from read-only state sync evidence before any recovery action.",
+            "argv_template": [
+                "python",
+                NEURO_CLI_WRAPPER_RELATIVE_PATH,
+                "system",
+                "state-sync",
+                "--output",
+                "json",
+            ],
+            "resource": "post-activation health observation",
+            "required_arguments": ["--node", "--app-id"],
+            "side_effect_level": "read_only",
+            "timeout_seconds": 10,
+            "retryable": True,
+            "approval_required": False,
+            "lease_requirements": [],
+            "cleanup_hints": [
+                "treat rollback as an operator decision after reviewing health evidence"
+            ],
+            "output_contract": {
+                "format": "json",
+                "top_level_ok": True,
+                "classification_statuses": [
+                    "healthy",
+                    "degraded",
+                    "no_reply",
+                    "rollback_required",
+                ],
+            },
+        },
+        {
+            "name": "system_rollback_app",
+            "description": "Rollback a staged app update after explicit operator approval.",
+            "argv_template": [
+                "python",
+                NEURO_CLI_WRAPPER_RELATIVE_PATH,
+                "deploy",
+                "rollback",
+                "--output",
+                "json",
+            ],
+            "resource": capability_matrix["update_rollback"]["resource"],
+            "required_arguments": ["--node", "--app-id", "--lease-id"],
+            "side_effect_level": "approval_required",
+            "timeout_seconds": 15,
+            "retryable": False,
+            "approval_required": True,
+            "lease_requirements": ["update_rollback_lease"],
+            "cleanup_hints": [
+                "confirm rollback evidence, lease ownership, and target app identity before resume"
+            ],
+            "output_contract": {
+                "format": "json",
+                "top_level_ok": True,
+                "failure_statuses": control_failure_statuses,
+            },
+        },
+        {
             "name": "system_capabilities",
             "description": "Read stable Neuro CLI protocol, workflow, and agent runtime metadata.",
             "argv_template": [

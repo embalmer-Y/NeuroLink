@@ -678,6 +678,19 @@ class CoreDataStore:
         rows = self._conn.execute(sql, (limit,)).fetchall()
         return [row["semantic_topic"] for row in rows if row["semantic_topic"]]
 
+    def get_recent_dedupe_keys(self, limit: int = 1000) -> list[str]:
+        rows = self._conn.execute(
+            """
+            SELECT dedupe_key
+            FROM perception_events
+            WHERE dedupe_key IS NOT NULL AND dedupe_key != ''
+            ORDER BY timestamp_wall DESC, created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [str(row["dedupe_key"]) for row in rows if row["dedupe_key"]]
+
     def build_frame(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         if not events:
             return {}

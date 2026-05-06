@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ from .policy import SideEffectLevel
 
 TOOL_MANIFEST_SCHEMA_VERSION = "1.2.0-tool-manifest-v1"
 STATE_SYNC_SCHEMA_VERSION = "1.2.0-state-sync-v1"
+ACTIVATION_HEALTH_SCHEMA_VERSION = "1.2.3-activation-health-v1"
 APP_CONTROL_TOOL_ACTIONS = {
     "system_start_app": "start",
     "system_stop_app": "stop",
@@ -156,6 +158,36 @@ class ToolExecutionResult:
 
 
 @dataclass(frozen=True)
+class ActivationHealthObservation:
+    app_id: str
+    classification: str
+    reason: str
+    ready_for_rollback_consideration: bool
+    device_status: str
+    network_state: str
+    app_status: str
+    app_present: bool
+    observed_app_state: str
+    recommended_next_actions: tuple[str, ...]
+    schema_version: str = ACTIVATION_HEALTH_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "app_id": self.app_id,
+            "classification": self.classification,
+            "reason": self.reason,
+            "ready_for_rollback_consideration": self.ready_for_rollback_consideration,
+            "device_status": self.device_status,
+            "network_state": self.network_state,
+            "app_status": self.app_status,
+            "app_present": self.app_present,
+            "observed_app_state": self.observed_app_state,
+            "recommended_next_actions": list(self.recommended_next_actions),
+        }
+
+
+@dataclass(frozen=True)
 class CommandExecutionResult:
     exit_code: int
     stdout: str
@@ -282,6 +314,64 @@ class FakeUnitToolAdapter:
                         "no_reply",
                         "query_failed",
                         "error_reply",
+                        "parse_failed",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_activation_health_guard",
+                description="Classify post-activation health from read-only state sync evidence before any recovery action.",
+                side_effect_level=SideEffectLevel.READ_ONLY,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "system",
+                    "state-sync",
+                    "--output",
+                    "json",
+                ),
+                resource="post-activation health observation",
+                required_arguments=("--node", "--app-id"),
+                timeout_seconds=10,
+                retryable=True,
+                cleanup_hint="treat rollback as an operator decision after reviewing health evidence",
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "classification_statuses": [
+                        "healthy",
+                        "degraded",
+                        "no_reply",
+                        "rollback_required",
+                    ],
+                },
+            ),
+            ToolContract(
+                tool_name="system_rollback_app",
+                description="Rollback a staged app update after explicit operator approval.",
+                side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+                argv_template=(
+                    "python",
+                    "neuro_cli/scripts/invoke_neuro_cli.py",
+                    "deploy",
+                    "rollback",
+                    "--output",
+                    "json",
+                ),
+                resource="neuro/<node>/update/app/<app-id>/rollback",
+                required_arguments=("--node", "--app-id", "--lease-id"),
+                required_resources=("update_rollback_lease",),
+                timeout_seconds=15,
+                retryable=False,
+                approval_required=True,
+                cleanup_hint="confirm rollback evidence, lease ownership, and target app identity before resume",
+                output_contract={
+                    "format": "json",
+                    "top_level_ok": True,
+                    "failure_statuses": [
+                        "approval_required",
+                        "lease_missing",
+                        "control_failed",
                         "parse_failed",
                     ],
                 },
@@ -455,6 +545,26 @@ class FakeUnitToolAdapter:
 
     def build_state_sync_snapshot(self, args: dict[str, Any]) -> StateSyncSnapshot:
         event_ids = list(args.get("event_ids") or [])
+        target_app_id = str(args.get("app_id") or args.get("app") or "")
+        apps_payload: dict[str, Any] = {
+            "status": "ok",
+            "app_count": 0,
+            "apps": [],
+            "observed_event_ids": event_ids,
+        }
+        if target_app_id:
+            apps_payload = {
+                "status": "ok",
+                "app_count": 1,
+                "apps": [
+                    {
+                        "app_id": target_app_id,
+                        "state": "running",
+                        "status": "active",
+                    }
+                ],
+                "observed_event_ids": event_ids,
+            }
         device = StateSyncSurface(
             ok=True,
             status="ok",
@@ -467,12 +577,7 @@ class FakeUnitToolAdapter:
         apps = StateSyncSurface(
             ok=True,
             status="ok",
-            payload={
-                "status": "ok",
-                "app_count": 0,
-                "apps": [],
-                "observed_event_ids": event_ids,
-            },
+            payload=apps_payload,
         )
         leases = StateSyncSurface(
             ok=True,
@@ -544,6 +649,19 @@ class FakeUnitToolAdapter:
                     ),
                 },
             }
+        elif tool_name == "system_rollback_app":
+            return {
+                "ok": True,
+                "status": "ok",
+                "payload": {
+                    "status": "ok",
+                    "requested_action": "rollback_app",
+                    "requested_app": str(
+                        args.get("app_id") or args.get("app") or "default-app"
+                    ),
+                    "reason": str(args.get("reason") or ""),
+                },
+            }
         else:
             raise ValueError(f"unsupported fake tool: {tool_name}")
         return {
@@ -573,6 +691,16 @@ class FakeUnitToolAdapter:
         }
         if tool_name == "system_state_sync":
             payload["state_sync"] = self.build_state_sync_snapshot(args).to_dict()
+        elif tool_name == "system_activation_health_guard":
+            state_sync_result = self.execute("system_state_sync", args)
+            payload["activation_health"] = _classify_activation_health_result(
+                state_sync_result,
+                app_id=str(args.get("app_id") or args.get("app") or ""),
+            ).to_dict()
+            if state_sync_result.status == "ok":
+                payload["state_sync"] = dict(state_sync_result.payload.get("state_sync") or {})
+            else:
+                payload["state_sync_error"] = dict(state_sync_result.payload)
         else:
             payload["result"] = self._fake_query_payload(tool_name, args)
         return ToolExecutionResult(
@@ -1051,6 +1179,142 @@ class NeuroCliToolAdapter:
             },
         )
 
+    def _resolve_rollback_args(self, args: dict[str, Any]) -> dict[str, Any] | None:
+        resolved_args = dict(args)
+        app_id = str(args.get("app_id") or args.get("app") or "")
+        if not app_id:
+            apps_contract = self.describe_tool("system_query_apps")
+            if apps_contract is not None:
+                _command_result, apps_payload, apps_error = self._execute_raw_contract_command(
+                    apps_contract,
+                    {},
+                )
+                if apps_payload is not None and apps_error is None:
+                    observed_apps = self._extract_apps_payload(apps_payload)
+                    if len(observed_apps) == 1:
+                        observed_app = observed_apps[0]
+                        app_id = str(
+                            observed_app.get("app_id")
+                            or observed_app.get("name")
+                            or observed_app.get("app")
+                            or ""
+                        )
+        if not app_id:
+            return None
+
+        lease_id = str(args.get("lease_id") or "")
+        if not lease_id:
+            leases_contract = self.describe_tool("system_query_leases")
+            if leases_contract is not None:
+                _command_result, leases_payload, leases_error = self._execute_raw_contract_command(
+                    leases_contract,
+                    {},
+                )
+                if leases_payload is not None and leases_error is None:
+                    target_resource = f"update/app/{app_id}/rollback"
+                    for lease in self._extract_lease_rows(leases_payload):
+                        resource = str(lease.get("resource") or "")
+                        if resource != target_resource:
+                            continue
+                        lease_id = str(lease.get("lease_id") or "")
+                        if lease_id:
+                            break
+        if not lease_id:
+            return None
+
+        resolved_args.setdefault("app_id", app_id)
+        resolved_args.setdefault("app", app_id)
+        resolved_args.setdefault("lease_id", lease_id)
+        return resolved_args
+
+    def _execute_rollback_app(
+        self,
+        contract: ToolContract,
+        args: dict[str, Any],
+    ) -> ToolExecutionResult:
+        resolved_args = self._resolve_rollback_args(args)
+        if resolved_args is None:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name=contract.tool_name,
+                status="error",
+                payload={
+                    "failure_status": "rollback_args_unresolved",
+                    "failure_class": "dynamic_argument_resolution_failed",
+                    "contract": contract.to_dict(),
+                    "requested_args": dict(args),
+                },
+            )
+
+        command_result, payload, command_error = self._execute_raw_contract_command(
+            contract,
+            resolved_args,
+        )
+        if command_error is not None:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name=contract.tool_name,
+                status="error",
+                payload={
+                    "failure_status": command_error,
+                    "failure_class": "rollback_cli_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "stderr": command_result.stderr,
+                },
+            )
+        assert payload is not None
+        payload_status = str(payload.get("status") or "unknown")
+        nested_failure_status = self._extract_nested_failure_status(payload)
+        if not payload.get("ok", False) or nested_failure_status:
+            return ToolExecutionResult(
+                tool_result_id=new_id("tool"),
+                tool_name=contract.tool_name,
+                status="error",
+                payload={
+                    "failure_status": nested_failure_status or payload_status,
+                    "failure_class": "rollback_failed",
+                    "contract": contract.to_dict(),
+                    "resolved_args": resolved_args,
+                    "result": payload,
+                },
+            )
+        return ToolExecutionResult(
+            tool_result_id=new_id("tool"),
+            tool_name=contract.tool_name,
+            status="ok",
+            payload={
+                "contract": contract.to_dict(),
+                "resolved_args": resolved_args,
+                "result": payload,
+            },
+        )
+
+    def _execute_activation_health_guard(
+        self,
+        contract: ToolContract,
+        args: dict[str, Any],
+    ) -> ToolExecutionResult:
+        state_sync_result = self.execute("system_state_sync", args)
+        observation = _classify_activation_health_result(
+            state_sync_result,
+            app_id=str(args.get("app_id") or args.get("app") or ""),
+        )
+        payload: dict[str, Any] = {
+            "contract": contract.to_dict(),
+            "activation_health": observation.to_dict(),
+        }
+        if state_sync_result.status == "ok":
+            payload["state_sync"] = dict(state_sync_result.payload.get("state_sync") or {})
+        else:
+            payload["state_sync_error"] = dict(state_sync_result.payload)
+        return ToolExecutionResult(
+            tool_result_id=new_id("tool"),
+            tool_name=contract.tool_name,
+            status="ok",
+            payload=payload,
+        )
+
     @staticmethod
     def _extract_nested_failure_status(payload: dict[str, Any]) -> str:
         nested_payload = payload.get("payload")
@@ -1086,6 +1350,10 @@ class NeuroCliToolAdapter:
                 },
             )
 
+        if tool_name == "system_activation_health_guard":
+            return self._execute_activation_health_guard(contract, args)
+        if tool_name == "system_rollback_app":
+            return self._execute_rollback_app(contract, args)
         if tool_name == "system_restart_app":
             return self._execute_restart_app(contract, args)
         if tool_name in APP_CONTROL_TOOL_ACTIONS:
@@ -1155,3 +1423,423 @@ class NeuroCliToolAdapter:
         ]
         command_result = self.runner(argv, self.timeout_seconds)
         return self._parse_jsonl_stdout(command_result)
+
+    @staticmethod
+    def _source_node_from_keyexpr(keyexpr: str) -> str:
+        parts = [segment for segment in str(keyexpr).split("/") if segment]
+        if len(parts) >= 2 and parts[0] == "neuro":
+            return parts[1]
+        return ""
+
+    @staticmethod
+    def _source_app_from_keyexpr(keyexpr: str) -> str:
+        parts = [segment for segment in str(keyexpr).split("/") if segment]
+        if len(parts) >= 5 and parts[0] == "neuro" and parts[2] == "event" and parts[3] == "app":
+            return parts[4]
+        return ""
+
+    @staticmethod
+    def _event_id_token(value: Any) -> str:
+        token = re.sub(r"[^a-zA-Z0-9]+", "-", str(value or "")).strip("-").lower()
+        return token or "unknown"
+
+    @staticmethod
+    def _payload_text(payload: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = payload.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return ""
+
+    @classmethod
+    def _semantic_topic_for_live_payload(
+        cls,
+        *,
+        payload: dict[str, Any],
+        message_kind: str,
+        keyexpr: str,
+        current_semantic_topic: str,
+    ) -> str:
+        if current_semantic_topic:
+            return current_semantic_topic
+
+        if message_kind == "callback_event":
+            return "unit.callback"
+        if message_kind == "lease_event":
+            return "lease_event"
+
+        if message_kind == "update_event":
+            stage = cls._payload_text(payload, "stage").lower()
+            status = cls._payload_text(payload, "status", "update_state", "runtime_state").lower()
+            if stage == "activate" and status not in ("", "ok", "active", "running"):
+                return "unit.lifecycle.activate_failed"
+            if stage:
+                return f"unit.lifecycle.{stage}"
+
+        if message_kind == "state_event":
+            health = cls._payload_text(payload, "health").lower()
+            network_state = cls._payload_text(payload, "network_state").lower()
+            state = cls._payload_text(payload, "state", "runtime_state", "status").lower()
+            expected_endpoint = cls._payload_text(payload, "expected_endpoint", "configured_endpoint")
+            observed_endpoint = cls._payload_text(payload, "observed_endpoint", "actual_endpoint", "current_endpoint")
+            drift_flag = cls._payload_text(payload, "endpoint_drift").lower()
+
+            if (
+                drift_flag in ("1", "true", "yes")
+                or (expected_endpoint and observed_endpoint and expected_endpoint != observed_endpoint)
+            ):
+                return "unit.network.endpoint_drift"
+            if health == "degraded" or state == "degraded":
+                return "unit.health.degraded"
+            if state == "offline" or network_state in ("offline", "disconnected", "no_reply"):
+                return "unit.state.offline"
+            if state == "online" or network_state == "network_ready":
+                return "unit.state.online"
+
+        if keyexpr.endswith("/health"):
+            return "unit.health.unknown"
+        if keyexpr.endswith("/state"):
+            return "unit.state.unknown"
+        return ""
+
+    @classmethod
+    def _normalize_live_event_row(
+        cls,
+        raw_event: dict[str, Any],
+        *,
+        default_source_kind: str,
+        default_app_id: str = "",
+    ) -> dict[str, Any]:
+        normalized = dict(raw_event)
+        if normalized.get("semantic_topic") and normalized.get("event_id"):
+            return normalized
+
+        event_payload = normalized.get("payload")
+        if not isinstance(event_payload, dict):
+            return normalized
+
+        payload = dict(event_payload)
+        keyexpr = str(normalized.get("keyexpr") or "")
+        message_kind = str(payload.get("message_kind") or "")
+        event_name = str(payload.get("event_name") or "")
+        source_node = str(
+            normalized.get("source_node")
+            or payload.get("source_node")
+            or cls._source_node_from_keyexpr(keyexpr)
+        )
+        source_app = str(
+            normalized.get("source_app")
+            or payload.get("source_app")
+            or payload.get("app_id")
+            or default_app_id
+            or cls._source_app_from_keyexpr(keyexpr)
+        )
+        source_kind = str(
+            normalized.get("source_kind")
+            or payload.get("source_kind")
+            or ("unit_app" if source_app else default_source_kind)
+        )
+
+        semantic_topic = cls._semantic_topic_for_live_payload(
+            payload=payload,
+            message_kind=message_kind,
+            keyexpr=keyexpr,
+            current_semantic_topic=str(
+                normalized.get("semantic_topic") or payload.get("semantic_topic") or ""
+            ),
+        )
+
+        event_type = str(normalized.get("event_type") or payload.get("event_type") or "")
+        if not event_type:
+            if message_kind == "callback_event":
+                event_type = "callback"
+            elif event_name:
+                event_type = event_name
+            elif semantic_topic:
+                event_type = semantic_topic
+            elif message_kind:
+                event_type = message_kind
+            else:
+                event_type = "unknown"
+
+        timestamp_wall = str(normalized.get("timestamp_wall") or payload.get("timestamp_wall") or "")
+        if timestamp_wall:
+            normalized["timestamp_wall"] = timestamp_wall
+
+        if not normalized.get("event_id"):
+            identity_seed = (
+                payload.get("event_id")
+                or timestamp_wall
+                or payload.get("timestamp_ms")
+                or payload.get("state_version")
+                or payload.get("sequence")
+                or payload.get("invoke_count")
+                or payload.get("status")
+                or payload.get("health")
+                or payload.get("state")
+                or payload.get("network_state")
+                or "0"
+            )
+            normalized["event_id"] = (
+                f"liveevt-{cls._event_id_token(source_node or 'node')}-"
+                f"{cls._event_id_token(source_app or source_kind)}-"
+                f"{cls._event_id_token(event_type)}-"
+                f"{cls._event_id_token(identity_seed)}"
+            )
+
+        normalized["source_kind"] = source_kind
+        normalized["source_node"] = source_node
+        if source_app:
+            normalized["source_app"] = source_app
+        normalized["event_type"] = event_type
+        normalized["semantic_topic"] = semantic_topic or event_type
+        normalized["priority"] = int(
+            normalized.get("priority")
+            or payload.get("priority")
+            or (80 if event_type == "callback" else 50)
+        )
+        normalized["payload"] = payload
+        normalized.setdefault("dedupe_key", normalized["event_id"])
+        return normalized
+
+    @classmethod
+    def _normalize_app_event_row(
+        cls,
+        raw_event: dict[str, Any],
+        *,
+        default_app_id: str,
+    ) -> dict[str, Any]:
+        raw_payload = raw_event.get("payload")
+        payload_event_id = ""
+        if isinstance(raw_payload, dict):
+            payload_event_id = str(raw_payload.get("event_id") or "")
+        normalized = cls._normalize_live_event_row(
+            raw_event,
+            default_source_kind="unit_app",
+            default_app_id=default_app_id,
+        )
+        payload = normalized.get("payload")
+        if isinstance(payload, dict) and str(normalized.get("event_type") or "") == "callback":
+            invoke_count = payload.get("invoke_count")
+            start_count = payload.get("start_count")
+            if not payload_event_id:
+                normalized["event_id"] = str(
+                    payload.get("event_id")
+                    or f"appevt-{normalized.get('source_app')}-{normalized.get('event_type')}-{invoke_count}-{start_count}"
+                )
+                normalized["dedupe_key"] = normalized["event_id"]
+        return normalized
+
+    def collect_live_events(
+        self,
+        *,
+        duration: int = 5,
+        max_events: int = 1,
+        ready_file: str = "",
+    ) -> dict[str, Any]:
+        if int(duration) <= 0 and int(max_events) <= 0:
+            raise ValueError("live_event_collection_requires_duration_or_max_events")
+
+        argv = [
+            *self._base_command(output="json"),
+            "monitor",
+            "events",
+            "--duration",
+            str(max(0, int(duration))),
+            "--max-events",
+            str(max(0, int(max_events))),
+        ]
+        if ready_file:
+            argv.extend(["--ready-file", ready_file])
+
+        command_timeout = max(
+            self.timeout_seconds,
+            int(duration) + self.timeout_seconds if int(duration) > 0 else self.timeout_seconds,
+        )
+        command_result = self.runner(argv, command_timeout)
+        payload = self._parse_json_stdout(command_result)
+        if not payload.get("ok", False):
+            raise ValueError(str(payload.get("status") or "live_event_monitor_failed"))
+
+        raw_events = payload.get("events")
+        if not isinstance(raw_events, list):
+            raise ValueError("live_event_monitor_missing_events")
+
+        return {
+            **payload,
+            "events": [
+                self._normalize_live_event_row(
+                    dict(item),
+                    default_source_kind="unit",
+                )
+                for item in raw_events
+                if isinstance(item, dict)
+            ],
+        }
+
+    def collect_app_events(
+        self,
+        app_id: str,
+        *,
+        duration: int = 5,
+        max_events: int = 1,
+        ready_file: str = "",
+    ) -> dict[str, Any]:
+        if int(duration) <= 0 and int(max_events) <= 0:
+            raise ValueError("app_event_collection_requires_duration_or_max_events")
+
+        argv = [
+            *self._base_command(output="json"),
+            "monitor",
+            "app-events",
+            "--app-id",
+            app_id,
+            "--duration",
+            str(max(0, int(duration))),
+            "--max-events",
+            str(max(0, int(max_events))),
+        ]
+        if ready_file:
+            argv.extend(["--ready-file", ready_file])
+
+        command_timeout = max(
+            self.timeout_seconds,
+            int(duration) + self.timeout_seconds if int(duration) > 0 else self.timeout_seconds,
+        )
+        command_result = self.runner(argv, command_timeout)
+        payload = self._parse_json_stdout(command_result)
+        if not payload.get("ok", False):
+            raise ValueError(str(payload.get("status") or "app_event_monitor_failed"))
+
+        raw_events = payload.get("events")
+        if not isinstance(raw_events, list):
+            raise ValueError("app_event_monitor_missing_events")
+
+        return {
+            **payload,
+            "events": [
+                self._normalize_app_event_row(dict(item), default_app_id=app_id)
+                for item in raw_events
+                if isinstance(item, dict)
+            ],
+        }
+
+
+def observe_activation_health(
+    tool_adapter: Any,
+    *,
+    app_id: str,
+    event_ids: list[str] | None = None,
+) -> ActivationHealthObservation:
+    state_sync_result = tool_adapter.execute(
+        "system_state_sync",
+        {
+            "app_id": app_id,
+            "app": app_id,
+            "event_ids": list(event_ids or []),
+        },
+    )
+    return _classify_activation_health_result(state_sync_result, app_id=app_id)
+
+
+def _classify_activation_health_result(
+    state_sync_result: ToolExecutionResult,
+    *,
+    app_id: str,
+) -> ActivationHealthObservation:
+    if state_sync_result.status != "ok":
+        failure_status = str(state_sync_result.payload.get("failure_status") or "state_sync_failed")
+        return ActivationHealthObservation(
+            app_id=app_id,
+            classification="no_reply",
+            reason=failure_status,
+            ready_for_rollback_consideration=False,
+            device_status=failure_status,
+            network_state="unknown",
+            app_status="unknown",
+            app_present=False,
+            observed_app_state="unknown",
+            recommended_next_actions=(
+                "rerun state sync and verify Unit/router reachability before recovery",
+            ),
+        )
+
+    snapshot = StateSyncSnapshot.from_dict(
+        cast(dict[str, Any], state_sync_result.payload.get("state_sync") or {})
+    )
+    device_surface = snapshot.state.get(
+        "device",
+        StateSyncSurface(ok=False, status="unknown", payload={"status": "unknown"}),
+    )
+    apps_surface = snapshot.state.get(
+        "apps",
+        StateSyncSurface(ok=False, status="unknown", payload={"status": "unknown", "apps": []}),
+    )
+    device_payload = device_surface.payload
+    apps_payload = apps_surface.payload
+    network_state = str(device_payload.get("network_state") or "unknown")
+    observed_apps = cast(list[Any], apps_payload.get("apps") or [])
+    matched_app = None
+    for app in observed_apps:
+        if not isinstance(app, dict):
+            continue
+        app_payload = cast(dict[str, Any], app)
+        if str(app_payload.get("app_id") or app_payload.get("name") or "") == app_id:
+            matched_app = app_payload
+            break
+    observed_app_state = "unknown"
+    app_status = str(apps_payload.get("status") or apps_surface.status or "unknown")
+    app_present = matched_app is not None
+    if matched_app is not None:
+        observed_app_state = str(
+            matched_app.get("state") or matched_app.get("status") or "unknown"
+        )
+
+    if not device_surface.ok or device_surface.status not in ("ok", "ready"):
+        classification = "no_reply"
+        reason = str(device_surface.status or "device_unreachable")
+        ready_for_rollback_consideration = False
+        recommended_next_actions = (
+            "rerun query device and verify Unit/router reachability before rollback",
+        )
+    elif network_state != "NETWORK_READY":
+        classification = "degraded"
+        reason = "network_not_ready_after_activate"
+        ready_for_rollback_consideration = False
+        recommended_next_actions = (
+            "inspect network readiness and event stream before protected rollback",
+        )
+    elif not app_present:
+        classification = "rollback_required"
+        reason = "target_app_missing_after_activate"
+        ready_for_rollback_consideration = True
+        recommended_next_actions = (
+            "confirm activation evidence and prepare protected rollback review",
+        )
+    elif observed_app_state.lower() in {"running", "active", "started"}:
+        classification = "healthy"
+        reason = "target_app_running_after_activate"
+        ready_for_rollback_consideration = False
+        recommended_next_actions = (
+            "activation health is good; continue observation and preserve evidence",
+        )
+    else:
+        classification = "degraded"
+        reason = "target_app_not_running_after_activate"
+        ready_for_rollback_consideration = True
+        recommended_next_actions = (
+            "inspect app lifecycle state and decide whether protected rollback is required",
+        )
+
+    return ActivationHealthObservation(
+        app_id=app_id,
+        classification=classification,
+        reason=reason,
+        ready_for_rollback_consideration=ready_for_rollback_consideration,
+        device_status=str(device_surface.status or device_payload.get("status") or "unknown"),
+        network_state=network_state,
+        app_status=app_status,
+        app_present=app_present,
+        observed_app_state=observed_app_state,
+        recommended_next_actions=recommended_next_actions,
+    )

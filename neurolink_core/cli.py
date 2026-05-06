@@ -13,11 +13,14 @@ from .maf import (
 )
 from .session import CoreSessionManager
 from .tools import FakeUnitToolAdapter, NeuroCliToolAdapter
+from .tools import observe_activation_health
 from .data import CoreDataStore
 from .workflow import (
     apply_approval_decision,
     build_approval_context,
     build_user_prompt_event,
+    run_event_daemon_replay,
+    run_event_replay,
     run_no_model_dry_run,
 )
 
@@ -82,6 +85,159 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-real-tool-adapter",
         action="store_true",
         help="Require the Neuro CLI adapter in release-gate evidence; fails closed with the fake adapter",
+    )
+
+    event_replay = subparsers.add_parser("event-replay")
+    event_replay.add_argument("--db", default=":memory:", help="SQLite database path")
+    event_replay.add_argument("--events-file", required=True, help="Path to a JSON event replay fixture")
+    event_replay.add_argument("--output", choices=("json",), default="json")
+    event_replay.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    event_replay.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    event_replay.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    event_replay.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for replay lookup and candidate commit behavior",
+    )
+    event_replay.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+    event_replay.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation for delegated tool execution",
+    )
+    event_replay.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter in release-gate evidence; fails closed with the fake adapter",
+    )
+
+    event_daemon = subparsers.add_parser("event-daemon")
+    event_daemon.add_argument("--db", default=":memory:", help="SQLite database path")
+    event_daemon.add_argument("--events-file", required=True, help="Path to a JSON daemon replay fixture")
+    event_daemon.add_argument("--output", choices=("json",), default="json")
+    event_daemon.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    event_daemon.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    event_daemon.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    event_daemon.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for daemon replay lookup and candidate commit behavior",
+    )
+    event_daemon.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+    event_daemon.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation for delegated tool execution",
+    )
+    event_daemon.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter in release-gate evidence; fails closed with the fake adapter",
+    )
+
+    live_event_smoke = subparsers.add_parser("live-event-smoke")
+    live_event_smoke.add_argument("--db", default=":memory:", help="SQLite database path")
+    live_event_smoke.add_argument(
+        "--event-source",
+        choices=("app", "unit"),
+        default="app",
+        help="Subscribe to app callback events or unit-wide operational events",
+    )
+    live_event_smoke.add_argument("--app-id", default="", help="Target app identifier for app-scoped live callback subscriptions")
+    live_event_smoke.add_argument("--duration", type=int, default=5, help="Subscription duration in seconds")
+    live_event_smoke.add_argument("--max-events", type=int, default=1, help="Stop after this many events if non-zero")
+    live_event_smoke.add_argument("--ready-file", default="", help="Optional file path written once the live event subscription is ready")
+    live_event_smoke.add_argument("--output", choices=("json",), default="json")
+    live_event_smoke.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    live_event_smoke.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    live_event_smoke.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    live_event_smoke.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for live-ingest lookup and candidate commit behavior",
+    )
+    live_event_smoke.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+
+    activation_health = subparsers.add_parser("activation-health-guard")
+    activation_health.add_argument("--db", default=":memory:", help="SQLite database path")
+    activation_health.add_argument("--app-id", required=True, help="Activated app identifier to observe")
+    activation_health.add_argument("--output", choices=("json",), default="json")
+    activation_health.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation used for read-only health observation",
     )
 
     agent_run = subparsers.add_parser("agent-run")
@@ -190,6 +346,48 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    def load_event_replay_fixture(events_file: str) -> list[dict[str, Any]]:
+        payload = json.loads(Path(events_file).read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            events = payload
+        elif isinstance(payload, dict) and isinstance(payload.get("events"), list):
+            events = cast(list[dict[str, Any]], payload["events"])
+        else:
+            raise ValueError("event_replay_fixture_must_be_list_or_object_with_events")
+        normalized_events: list[dict[str, Any]] = []
+        for event in events:
+            if not isinstance(event, dict):
+                raise ValueError("event_replay_fixture_contains_non_object_event")
+            normalized_events.append(dict(event))
+        return normalized_events
+
+    def load_event_daemon_fixture(events_file: str) -> list[list[dict[str, Any]]]:
+        payload = json.loads(Path(events_file).read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            if not payload:
+                return []
+            if all(isinstance(item, dict) for item in payload):
+                return [cast(list[dict[str, Any]], [dict(item) for item in payload])]
+            if all(isinstance(item, list) for item in payload):
+                batches = cast(list[list[Any]], payload)
+            else:
+                raise ValueError("event_daemon_fixture_must_be_event_list_or_batch_list")
+        elif isinstance(payload, dict) and isinstance(payload.get("batches"), list):
+            batches = cast(list[list[Any]], payload["batches"])
+        else:
+            raise ValueError("event_daemon_fixture_must_be_event_list_or_object_with_batches")
+        normalized_batches: list[list[dict[str, Any]]] = []
+        for batch in batches:
+            if not isinstance(batch, list):
+                raise ValueError("event_daemon_fixture_contains_non_list_batch")
+            normalized_batch: list[dict[str, Any]] = []
+            for event in batch:
+                if not isinstance(event, dict):
+                    raise ValueError("event_daemon_fixture_contains_non_object_event")
+                normalized_batch.append(dict(event))
+            normalized_batches.append(normalized_batch)
+        return normalized_batches
+
     def provider_error_payload(command: str, exc: Exception) -> dict[str, Any]:
         return {
             "ok": False,
@@ -251,8 +449,208 @@ def main(argv: list[str] | None = None) -> int:
                 memory_backend=args.memory_backend,
                 rational_backend=args.rational_backend,
                 require_real_tool_adapter=args.require_real_tool_adapter,
+                event_source_label=(
+                    "neuro_cli_agent_events"
+                    if args.event_source == "neuro-cli-agent-events"
+                    else None
+                ),
             )
         except (MafProviderNotReadyError, ValueError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "event-replay":
+        if args.require_real_tool_adapter and args.tool_adapter != "neuro-cli":
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "release_gate_request_invalid",
+                        "failure_status": "require_real_tool_adapter_requires_neuro_cli_adapter",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        tool_adapter = (
+            NeuroCliToolAdapter()
+            if args.tool_adapter == "neuro-cli"
+            else FakeUnitToolAdapter()
+        )
+        try:
+            events = load_event_replay_fixture(args.events_file)
+            payload = run_event_replay(
+                events,
+                args.db,
+                tool_adapter=tool_adapter,
+                session_id=args.session_id,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
+                replay_label=str(args.events_file),
+            )
+        except (MafProviderNotReadyError, ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "event-daemon":
+        if args.require_real_tool_adapter and args.tool_adapter != "neuro-cli":
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "release_gate_request_invalid",
+                        "failure_status": "require_real_tool_adapter_requires_neuro_cli_adapter",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        tool_adapter = (
+            NeuroCliToolAdapter()
+            if args.tool_adapter == "neuro-cli"
+            else FakeUnitToolAdapter()
+        )
+        try:
+            event_batches = load_event_daemon_fixture(args.events_file)
+            payload = run_event_daemon_replay(
+                event_batches,
+                args.db,
+                tool_adapter=tool_adapter,
+                session_id=args.session_id,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
+                replay_label=str(args.events_file),
+            )
+        except (MafProviderNotReadyError, ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "live-event-smoke":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        tool_adapter = NeuroCliToolAdapter()
+        try:
+            if args.event_source == "app":
+                if not args.app_id:
+                    raise ValueError("live_event_smoke_requires_app_id")
+                live_event_payload = tool_adapter.collect_app_events(
+                    args.app_id,
+                    duration=args.duration,
+                    max_events=args.max_events,
+                    ready_file=args.ready_file,
+                )
+                event_source_label = "neuro_cli_app_events_live"
+                live_event_ingest = {
+                    "schema_version": "1.2.3-live-event-ingest-v1",
+                    "event_source_kind": "app",
+                    "monitor_command": "app-events",
+                    "app_id": args.app_id,
+                    "duration": args.duration,
+                    "max_events": args.max_events,
+                    "subscription": live_event_payload.get("subscription"),
+                    "listener_mode": live_event_payload.get("listener_mode"),
+                    "handler_audit": live_event_payload.get("handler_audit"),
+                }
+            else:
+                live_event_payload = tool_adapter.collect_live_events(
+                    duration=args.duration,
+                    max_events=args.max_events,
+                    ready_file=args.ready_file,
+                )
+                event_source_label = "neuro_cli_events_live"
+                live_event_ingest = {
+                    "schema_version": "1.2.3-live-event-ingest-v1",
+                    "event_source_kind": "unit",
+                    "monitor_command": "events",
+                    "duration": args.duration,
+                    "max_events": args.max_events,
+                    "subscription": live_event_payload.get("subscription"),
+                    "listener_mode": live_event_payload.get("listener_mode"),
+                    "handler_audit": live_event_payload.get("handler_audit"),
+                }
+            events = [
+                dict(event)
+                for event in cast(list[Any], live_event_payload.get("events") or [])
+                if isinstance(event, dict)
+            ]
+            if not events:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "status": "live_event_ingest_empty",
+                            "command": "live-event-smoke",
+                            "failure_class": "live_event_monitor_empty",
+                            "failure_status": "no_events_collected",
+                            "event_source": event_source_label,
+                            "tool_adapter_runtime": tool_adapter.runtime_metadata(),
+                            "live_event_ingest": {
+                                **live_event_ingest,
+                                "collected_event_count": 0,
+                            },
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return 2
+            payload = run_no_model_dry_run(
+                args.db,
+                tool_adapter=tool_adapter,
+                events=events,
+                session_id=args.session_id,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=True,
+                event_source_label=event_source_label,
+            )
+        except (MafProviderNotReadyError, ValueError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        payload["command"] = "live-event-smoke"
+        payload["live_event_ingest"] = {
+            **live_event_ingest,
+            "collected_event_count": len(events),
+        }
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "activation-health-guard":
+        tool_adapter = (
+            NeuroCliToolAdapter()
+            if args.tool_adapter == "neuro-cli"
+            else FakeUnitToolAdapter()
+        )
+        try:
+            observation = observe_activation_health(
+                tool_adapter,
+                app_id=args.app_id,
+            )
+            payload = {
+                "ok": True,
+                "status": "ok",
+                "command": "activation-health-guard",
+                "health_observation": observation.to_dict(),
+                "tool_adapter_runtime": tool_adapter.runtime_metadata(),
+            }
+        except ValueError as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
             return 2
         print(json.dumps(payload, sort_keys=True))
@@ -300,6 +698,11 @@ def main(argv: list[str] | None = None) -> int:
                 memory_backend=args.memory_backend,
                 rational_backend=args.rational_backend,
                 require_real_tool_adapter=args.require_real_tool_adapter,
+                event_source_label=(
+                    "neuro_cli_agent_events"
+                    if args.event_source == "neuro-cli-agent-events"
+                    else None
+                ),
             )
         except (MafProviderNotReadyError, ValueError) as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))

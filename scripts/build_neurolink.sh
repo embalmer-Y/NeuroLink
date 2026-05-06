@@ -203,6 +203,30 @@ cmake_cache_value() {
   ' "${cache_file}"
 }
 
+artifact_is_nonempty_file() {
+  [[ -f "$1" ]] && [[ -s "$1" ]]
+}
+
+artifact_has_valid_elf_header() {
+  local header
+  local elf_class
+  local elf_version
+
+  [[ -f "$1" ]] || return 1
+  header="$(LC_ALL=C od -An -tx1 -N6 "$1" 2>/dev/null | tr -d ' \n')"
+  [[ ${#header} -eq 12 ]] || return 1
+  [[ "${header:0:8}" == "7f454c46" ]] || return 1
+
+  elf_class="${header:8:2}"
+  elf_version="${header:10:2}"
+  [[ "${elf_class}" == "01" || "${elf_class}" == "02" ]] || return 1
+  [[ "${elf_version}" == "01" ]]
+}
+
+artifact_is_valid_llext_file() {
+  artifact_is_nonempty_file "$1" && artifact_has_valid_elf_header "$1"
+}
+
 build_unit_edk() {
   ensure_unit_build_configured
   west build -d "${BUILD_DIR}" -t llext-edk "${EXTRA_WEST_ARGS[@]}"
@@ -234,6 +258,13 @@ build_unit_app_external() {
 
   app_build_dir="$(get_unit_app_build_dir)"
   assert_build_dir "${app_build_dir}"
+  source_artifact_file="${app_build_dir}/${UNIT_APP_ID}.llext"
+
+  if [[ ${PRISTINE_ALWAYS} -eq 1 ]]; then
+    rm -rf "${app_build_dir}"
+  elif [[ -f "${source_artifact_file}" ]] && ! artifact_is_valid_llext_file "${source_artifact_file}"; then
+    rm -f "${source_artifact_file}"
+  fi
 
   build_unit_edk
   extract_unit_edk
@@ -252,8 +283,8 @@ build_unit_app_external() {
   cmake --build "${app_build_dir}"
 
   source_artifact_file="${app_build_dir}/${UNIT_APP_ID}.llext"
-  [[ -s "${source_artifact_file}" ]] || {
-    echo "unit app build produced missing or empty artifact: ${source_artifact_file}" >&2
+  artifact_is_valid_llext_file "${source_artifact_file}" || {
+    echo "unit app build produced missing, empty, or invalid artifact: ${source_artifact_file}" >&2
     exit 2
   }
 
@@ -282,8 +313,8 @@ build_unit_app_external() {
 
   mkdir -p "${staged_artifact_dir}"
   cp "${source_artifact_file}" "${staged_artifact_file}"
-  [[ -s "${staged_artifact_file}" ]] || {
-    echo "failed to stage non-empty unit app artifact: ${staged_artifact_file}" >&2
+  artifact_is_valid_llext_file "${staged_artifact_file}" || {
+    echo "failed to stage valid unit app artifact: ${staged_artifact_file}" >&2
     exit 2
   }
 }

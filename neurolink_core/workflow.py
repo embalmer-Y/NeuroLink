@@ -65,6 +65,71 @@ def _extract_observed_lease_rows(lease_observation: dict[str, Any]) -> list[dict
     return rows
 
 
+def _extract_matching_lease_ids_for_resource(
+    lease_observation: dict[str, Any],
+    resource_name: str,
+) -> list[str]:
+    if not resource_name:
+        return []
+    matching_lease_ids: list[str] = []
+    for lease in _extract_observed_lease_rows(lease_observation):
+        resource = str(lease.get("resource") or "")
+        if resource != resource_name:
+            continue
+        lease_id = str(lease.get("lease_id") or "")
+        if lease_id:
+            matching_lease_ids.append(lease_id)
+    return matching_lease_ids
+
+
+def _extract_activate_failed_event_payload(
+    events: list[PerceptionEvent],
+) -> dict[str, Any]:
+    for event in events:
+        if event.semantic_topic == "unit.lifecycle.activate_failed":
+            return dict(event.payload)
+    return {}
+
+
+def _build_recovery_candidate_summary(
+    *,
+    activation_health: dict[str, Any],
+    lease_observation: dict[str, Any],
+    activate_failed_payload: dict[str, Any],
+) -> dict[str, Any]:
+    app_id = str(activation_health.get("app_id") or activate_failed_payload.get("target_app_id") or "")
+    lease_resource = f"update/app/{app_id}/rollback" if app_id else ""
+    matching_lease_ids = _extract_matching_lease_ids_for_resource(
+        lease_observation,
+        lease_resource,
+    )
+    observed_health = str(activation_health.get("classification") or "unknown")
+    observed_app_state = str(activation_health.get("observed_app_state") or "unknown")
+    return {
+        "trigger_topic": "unit.lifecycle.activate_failed",
+        "app_id": app_id,
+        "artifact_id": str(activate_failed_payload.get("artifact_id") or ""),
+        "activation_result": str(
+            activate_failed_payload.get("activation_result")
+            or activate_failed_payload.get("status")
+            or "activate_failed"
+        ),
+        "observed_health": observed_health,
+        "rollback_decision": (
+            "operator_review_required"
+            if observed_health == "rollback_required"
+            else "not_required"
+        ),
+        "final_app_state": observed_app_state,
+        "lease_resource": lease_resource,
+        "lease_ownership_status": "held" if matching_lease_ids else "missing",
+        "matching_lease_ids": matching_lease_ids,
+        "ready_for_rollback_consideration": bool(
+            activation_health.get("ready_for_rollback_consideration", False)
+        ),
+    }
+
+
 def _extract_observed_app_rows(apps_observation: dict[str, Any]) -> list[dict[str, Any]]:
     if apps_observation.get("status") != "ok":
         return []
@@ -123,10 +188,15 @@ def _build_operator_requirements(
     observed_apps = _extract_observed_app_rows(apps_observation)
 
     requested_args = cast(dict[str, Any], request_payload.get("requested_args") or {})
+    recovery_candidate_summary = cast(
+        dict[str, Any],
+        request_payload.get("recovery_candidate_summary") or {},
+    )
     target_app_id = str(
         requested_args.get("app_id")
         or requested_args.get("app")
         or request_payload.get("target_app_id")
+        or recovery_candidate_summary.get("app_id")
         or ""
     )
     if not target_app_id and len(observed_apps) == 1:
@@ -145,6 +215,12 @@ def _build_operator_requirements(
         if resource == "app_control_lease":
             if target_app_id:
                 resolved_required_resources.append(f"app/{target_app_id}/control")
+            else:
+                unresolved_required_resources.append(resource)
+            continue
+        if resource == "update_rollback_lease":
+            if target_app_id:
+                resolved_required_resources.append(f"update/app/{target_app_id}/rollback")
             else:
                 unresolved_required_resources.append(resource)
             continue
@@ -177,6 +253,7 @@ def _build_operator_requirements(
         "cleanup_hint": request_payload.get("cleanup_hint"),
         "target_app_id": target_app_id,
         "matching_lease_ids": matching_lease_ids,
+        "recovery_candidate_summary": recovery_candidate_summary or None,
         "lease_observation": lease_observation,
         "apps_observation": apps_observation,
         "state_sync_observation": state_sync_observation,
@@ -219,6 +296,15 @@ def build_approval_context(
                         str(resumed_audit_id),
                     )
 
+    effective_operator_requirements = (
+        operator_requirements
+        if operator_requirements is not None
+        else _build_operator_requirements(
+            approval_request,
+            tool_adapter=tool_adapter,
+        )
+    )
+
     return {
         "source_execution_span": source_execution_span,
         "source_execution_evidence": (
@@ -230,11 +316,9 @@ def build_approval_context(
             else None
         ),
         "resumed_execution_evidence": resumed_execution_evidence,
-        "operator_requirements": operator_requirements
-        if operator_requirements is not None
-        else _build_operator_requirements(
-            approval_request,
-            tool_adapter=tool_adapter,
+        "operator_requirements": effective_operator_requirements,
+        "recovery_candidate_summary": effective_operator_requirements.get(
+            "recovery_candidate_summary"
         ),
     }
 
@@ -342,12 +426,12 @@ def _extract_explicit_app_id(input_text: str) -> str | None:
 
 def _extract_target_app_id_from_events(events: list[PerceptionEvent]) -> str | None:
     for event in events:
-        if event.source_kind != "user":
-            continue
         payload_target_app_id = str(event.payload.get("target_app_id") or "")
         if payload_target_app_id:
             return payload_target_app_id
-        if event.source_app:
+        if event.source_kind == "user" and event.source_app:
+            return str(event.source_app)
+        if event.semantic_topic == "unit.lifecycle.activate_failed" and event.source_app:
             return str(event.source_app)
     return None
 
@@ -396,6 +480,7 @@ class NoModelCoreWorkflow:
         min_priority: int = 0,
         topic: str | None = None,
         session_id: str | None = None,
+        event_source: str = "provided",
     ) -> WorkflowResult:
         steps: list[str] = []
         execution_span_id = new_id("span")
@@ -411,7 +496,7 @@ class NoModelCoreWorkflow:
             execution_span_id,
             "running",
             {
-                "event_source": "provided",
+                "event_source": event_source,
                 "normalized_event_count": len(events),
                 "session_id": resolved_session_id,
             },
@@ -438,6 +523,7 @@ class NoModelCoreWorkflow:
                 frame = PerceptionFrame(**frame_data)
 
         self._persist_frame_facts(execution_span_id, frame, events)
+        activate_failed_payload = _extract_activate_failed_event_payload(events)
 
         steps.append("session_context_load")
         target_app_id = _extract_target_app_id_from_events(events)
@@ -604,11 +690,162 @@ class NoModelCoreWorkflow:
                 result.status,
                 result.payload,
             )
-            tool_results.append(result)
+            if result.tool_name == "system_activation_health_guard" and result.status == "ok":
+                activation_health = cast(
+                    dict[str, Any],
+                    result.payload.get("activation_health") or {},
+                )
+                self.data_store.persist_fact(
+                    execution_span_id,
+                    "activation_health_observation",
+                    str(
+                        activation_health.get("app_id")
+                        or activation_health.get("classification")
+                        or "activation-health"
+                    ),
+                    activation_health,
+                )
+                tool_results.append(result)
+                if activation_health.get("classification") == "rollback_required":
+                    recovery_contract = self.tool_adapter.describe_tool("system_query_leases")
+                    if recovery_contract is not None:
+                        recovery_policy = self.tool_policy.evaluate_contract(recovery_contract)
+                        recovery_policy_payload = recovery_policy.to_dict()
+                        self.data_store.persist_policy_decision(
+                            execution_span_id,
+                            "system_query_leases",
+                            recovery_policy_payload,
+                        )
+                        if recovery_policy.allowed:
+                            lease_result = self.tool_adapter.execute(
+                                "system_query_leases",
+                                {
+                                    "event_ids": list(frame.event_ids),
+                                    "reason": "rollback_candidate_lease_observation",
+                                },
+                            )
+                            lease_result.payload["policy_decision"] = recovery_policy_payload
+                            self.data_store.persist_tool_result(
+                                lease_result.tool_result_id,
+                                execution_span_id,
+                                lease_result.tool_name,
+                                lease_result.status,
+                                lease_result.payload,
+                            )
+                            tool_results.append(lease_result)
+                            recovery_candidate_summary = _build_recovery_candidate_summary(
+                                activation_health=activation_health,
+                                lease_observation=lease_result.to_dict(),
+                                activate_failed_payload=activate_failed_payload,
+                            )
+                            session_context["recovery_candidate_summary"] = recovery_candidate_summary
+                            self.data_store.persist_fact(
+                                execution_span_id,
+                                "recovery_candidate",
+                                str(
+                                    recovery_candidate_summary.get("app_id")
+                                    or recovery_candidate_summary.get("rollback_decision")
+                                    or "recovery-candidate"
+                                ),
+                                recovery_candidate_summary,
+                            )
+                            rollback_contract = self.tool_adapter.describe_tool(
+                                "system_rollback_app"
+                            )
+                            if rollback_contract is not None:
+                                rollback_policy = self.tool_policy.evaluate_contract(
+                                    rollback_contract
+                                )
+                                rollback_policy_payload = rollback_policy.to_dict()
+                                self.data_store.persist_policy_decision(
+                                    execution_span_id,
+                                    "system_rollback_app",
+                                    rollback_policy_payload,
+                                )
+                                if rollback_policy.approval_required:
+                                    approval_request_id = new_id("approval")
+                                    rollback_request_payload: dict[str, Any] = {
+                                        "approval_request_id": approval_request_id,
+                                        "tool_name": "system_rollback_app",
+                                        "reason": "operator_approval_required_for_guarded_rollback",
+                                        "requested_args": {
+                                            "app_id": str(
+                                                recovery_candidate_summary.get("app_id") or ""
+                                            ),
+                                            "app": str(
+                                                recovery_candidate_summary.get("app_id") or ""
+                                            ),
+                                            "reason": "guarded_rollback_after_activation_health_failure",
+                                        },
+                                        "required_resources": list(
+                                            rollback_contract.required_resources
+                                        ),
+                                        "cleanup_hint": rollback_contract.cleanup_hint,
+                                        "side_effect_level": rollback_contract.side_effect_level.value,
+                                        "policy_decision": rollback_policy_payload,
+                                        "contract": rollback_contract.to_dict(),
+                                        "status": "pending",
+                                        "target_app_id": str(
+                                            recovery_candidate_summary.get("app_id") or ""
+                                        ),
+                                        "recovery_candidate_summary": recovery_candidate_summary,
+                                    }
+                                    self.data_store.persist_approval_request(
+                                        resolved_session_id,
+                                        execution_span_id,
+                                        "system_rollback_app",
+                                        "pending",
+                                        rollback_request_payload,
+                                        approval_request_id=approval_request_id,
+                                    )
+                                    rollback_pending_result = ToolExecutionResult(
+                                        tool_result_id=new_id("tool"),
+                                        tool_name="system_rollback_app",
+                                        status="pending_approval",
+                                        payload={
+                                            "failure_status": "approval_required",
+                                            "failure_class": "approval_gate_pending",
+                                            "policy_decision": rollback_policy_payload,
+                                            "approval_request": rollback_request_payload,
+                                        },
+                                    )
+                                    self.data_store.persist_tool_result(
+                                        rollback_pending_result.tool_result_id,
+                                        execution_span_id,
+                                        rollback_pending_result.tool_name,
+                                        rollback_pending_result.status,
+                                        rollback_pending_result.payload,
+                                    )
+                                    tool_results.append(rollback_pending_result)
+                                    session_context["pending_approval_request_ids"] = list(
+                                        {
+                                            *cast(
+                                                list[str],
+                                                session_context.get(
+                                                    "pending_approval_request_ids",
+                                                    [],
+                                                ),
+                                            ),
+                                            approval_request_id,
+                                        }
+                                    )
+            else:
+                tool_results.append(result)
 
         steps.append("audit_record")
-        audit_id = new_id("audit")
         final_response = self._build_final_response(frame, decision, tool_results)
+        notification_summary = self._build_notification_summary(
+            frame,
+            decision,
+            final_response,
+        )
+        self.data_store.persist_fact(
+            execution_span_id,
+            "notification_dispatch",
+            str(notification_summary.get("notification_id") or final_response.get("speaker") or "notification"),
+            notification_summary,
+        )
+        audit_id = new_id("audit")
         self.data_store.persist_audit_record(
             audit_id,
             execution_span_id,
@@ -619,6 +856,7 @@ class NoModelCoreWorkflow:
                 session_context,
                 tool_results,
                 final_response,
+                notification_summary,
                 self.tool_adapter,
                 self.maf_runtime_metadata(),
             ),
@@ -628,6 +866,7 @@ class NoModelCoreWorkflow:
             execution_span_id,
             "ok",
             {
+                "event_source": event_source,
                 "session_id": resolved_session_id,
                 "steps": steps,
                 "events_persisted": len(events),
@@ -738,6 +977,7 @@ class NoModelCoreWorkflow:
         session_context: dict[str, Any],
         tool_results: list[ToolExecutionResult],
         final_response: dict[str, Any],
+        notification_summary: dict[str, Any],
         tool_adapter: Any,
         maf_runtime: dict[str, Any],
     ) -> dict[str, Any]:
@@ -746,8 +986,31 @@ class NoModelCoreWorkflow:
             adapter_runtime = dict(tool_adapter.runtime_metadata())
 
         state_sync_summary: dict[str, Any] | None = None
+        activation_health_summary: dict[str, Any] | None = None
+        recovery_candidate_summary = cast(
+            dict[str, Any] | None,
+            session_context.get("recovery_candidate_summary"),
+        )
         for result in tool_results:
             if result.tool_name != "system_state_sync":
+                if result.tool_name != "system_activation_health_guard":
+                    continue
+                payload = result.payload
+                observation = dict(payload.get("activation_health") or {})
+                activation_health_summary = {
+                    "tool_status": result.status,
+                    "classification": str(observation.get("classification") or "unknown"),
+                    "reason": str(observation.get("reason") or ""),
+                    "ready_for_rollback_consideration": bool(
+                        observation.get("ready_for_rollback_consideration", False)
+                    ),
+                    "app_id": str(observation.get("app_id") or ""),
+                    "network_state": str(observation.get("network_state") or "unknown"),
+                    "observed_app_state": str(observation.get("observed_app_state") or "unknown"),
+                    "recommended_next_actions": list(
+                        observation.get("recommended_next_actions") or []
+                    ),
+                }
                 continue
             payload = result.payload
             if result.status == "ok":
@@ -780,7 +1043,6 @@ class NoModelCoreWorkflow:
                     "failure_class": str(payload.get("failure_class") or ""),
                     "failure_status": str(payload.get("failure_status") or ""),
                 }
-            break
 
         return {
             "frame": frame.to_dict(),
@@ -789,8 +1051,41 @@ class NoModelCoreWorkflow:
             "maf_runtime": dict(maf_runtime),
             "adapter_runtime": adapter_runtime,
             "state_sync_summary": state_sync_summary,
+            "activation_health_summary": activation_health_summary,
+            "recovery_candidate_summary": dict(recovery_candidate_summary)
+            if isinstance(recovery_candidate_summary, dict)
+            else None,
+            "notification_summary": dict(notification_summary),
             "final_response": dict(final_response),
             "tool_results": [result.to_dict() for result in tool_results],
+        }
+
+    @staticmethod
+    def _build_notification_summary(
+        frame: PerceptionFrame,
+        decision: AffectiveDecision,
+        final_response: dict[str, Any],
+    ) -> dict[str, Any]:
+        interactive_topics = [topic for topic in frame.topics if topic.startswith("user.input")]
+        trigger_kind = "interactive_request" if interactive_topics else "event_driven_perception"
+        if not decision.delegated:
+            delivery_kind = "observation_only"
+        elif any(topic.startswith("user.input") for topic in frame.topics):
+            delivery_kind = "interactive_response"
+        else:
+            delivery_kind = "event_driven_notification"
+        urgency = "high" if decision.salience >= 80 else "normal"
+        return {
+            "notification_id": new_id("notif"),
+            "speaker": str(final_response.get("speaker") or "affective"),
+            "trigger_kind": trigger_kind,
+            "delivery_kind": delivery_kind,
+            "audience": "user",
+            "salience": decision.salience,
+            "urgency": urgency,
+            "topics": list(frame.topics),
+            "delegated": decision.delegated,
+            "text": str(final_response.get("text") or ""),
         }
 
     @staticmethod
@@ -858,6 +1153,19 @@ class NoModelCoreWorkflow:
             "delegated": decision.delegated,
             "text": text,
             "salience": decision.salience,
+            "trigger_kind": (
+                "interactive_request"
+                if any(topic.startswith("user.input") for topic in frame.topics)
+                else "event_driven_perception"
+            ),
+            "delivery_kind": (
+                "observation_only"
+                if not decision.delegated
+                else "interactive_response"
+                if any(topic.startswith("user.input") for topic in frame.topics)
+                else "event_driven_notification"
+            ),
+            "topics": list(frame.topics),
         }
 
 
@@ -880,6 +1188,7 @@ def run_no_model_dry_run(
     rational_backend: str = "auto",
     copilot_agent_factory: Any | None = None,
     require_real_tool_adapter: bool = False,
+    event_source_label: str | None = None,
 ) -> dict[str, Any]:
     data_store = CoreDataStore(db_path)
     try:
@@ -916,6 +1225,13 @@ def run_no_model_dry_run(
             min_priority=min_priority,
             topic=topic,
             session_id=session_id,
+            event_source=(
+                event_source_label
+                if event_source_label is not None
+                else "provided"
+                if events is not None
+                else "sample"
+            ),
         )
         payload = result.to_dict()
         payload["maf_runtime"] = workflow.maf_runtime_metadata()
@@ -953,7 +1269,13 @@ def run_no_model_dry_run(
             "recent_topics": data_store.get_recent_topics(limit=min(query_limit, 10)),
         }
         payload["execution_evidence"] = execution_evidence
-        payload["event_source"] = "provided" if events is not None else "sample"
+        payload["event_source"] = (
+            event_source_label
+            if event_source_label is not None
+            else "provided"
+            if events is not None
+            else "sample"
+        )
         payload["session"] = {
             **workflow.session_manager.load_snapshot(
                 result.session_id,
@@ -962,6 +1284,188 @@ def run_no_model_dry_run(
             ).to_dict()
         }
         payload["agent_run_evidence"] = _build_agent_run_evidence(payload)
+        return payload
+    finally:
+        data_store.close()
+
+
+def run_event_replay(
+    events: Iterable[dict[str, Any]],
+    db_path: str = ":memory:",
+    *,
+    session_id: str | None = None,
+    maf_provider_mode: str = "deterministic_fake",
+    allow_model_call: bool = False,
+    memory: Any | None = None,
+    memory_backend: str = "fake",
+    mem0_client: Any | None = None,
+    provider_client: Any | None = None,
+    rational_backend: str = "auto",
+    copilot_agent_factory: Any | None = None,
+    tool_adapter: Any | None = None,
+    require_real_tool_adapter: bool = False,
+    replay_label: str | None = None,
+) -> dict[str, Any]:
+    raw_events = [dict(event) for event in events]
+    payload = run_no_model_dry_run(
+        db_path,
+        tool_adapter=tool_adapter,
+        events=raw_events,
+        session_id=session_id,
+        maf_provider_mode=maf_provider_mode,
+        allow_model_call=allow_model_call,
+        memory=memory,
+        memory_backend=memory_backend,
+        mem0_client=mem0_client,
+        provider_client=provider_client,
+        rational_backend=rational_backend,
+        copilot_agent_factory=copilot_agent_factory,
+        require_real_tool_adapter=require_real_tool_adapter,
+        event_source_label="replay_file",
+    )
+    replay_topics = sorted(
+        {
+            str(event.get("semantic_topic") or event.get("event_type") or "unknown")
+            for event in raw_events
+        }
+    )
+    payload["command"] = "event-replay"
+    payload["event_source"] = "replay_file"
+    payload["event_replay"] = {
+        "replay_label": replay_label or "inline",
+        "provided_event_count": len(raw_events),
+        "normalized_event_count": int(payload.get("events_persisted", 0)),
+        "duplicate_event_count": max(
+            0,
+            len(raw_events) - int(payload.get("events_persisted", 0)),
+        ),
+        "replayed_topics": replay_topics,
+    }
+    return payload
+
+
+def run_event_daemon_replay(
+    event_batches: Iterable[Iterable[dict[str, Any]]],
+    db_path: str = ":memory:",
+    *,
+    session_id: str | None = None,
+    maf_provider_mode: str = "deterministic_fake",
+    allow_model_call: bool = False,
+    memory: Any | None = None,
+    memory_backend: str = "fake",
+    mem0_client: Any | None = None,
+    provider_client: Any | None = None,
+    rational_backend: str = "auto",
+    copilot_agent_factory: Any | None = None,
+    tool_adapter: Any | None = None,
+    require_real_tool_adapter: bool = False,
+    replay_label: str | None = None,
+) -> dict[str, Any]:
+    batches = [[dict(event) for event in batch] for batch in event_batches]
+    data_store = CoreDataStore(db_path)
+    try:
+        maf_runtime_profile = build_maf_runtime_profile(provider_mode=maf_provider_mode)
+        resolved_provider_client = provider_client
+        if maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value:
+            if not allow_model_call:
+                raise ValueError("real_provider_mode_requires_allow_model_call")
+            if resolved_provider_client is None:
+                resolved_provider_client = build_default_maf_provider_client(
+                    maf_runtime_profile
+                )
+        if rational_backend == "copilot" and not allow_model_call:
+            raise ValueError("copilot_rational_backend_requires_allow_model_call")
+        resolved_memory = memory or build_memory_backend(
+            memory_backend,
+            data_store,
+            mem0_client=mem0_client,
+        )
+        shared_router = PerceptionEventRouter()
+        workflow = NoModelCoreWorkflow(
+            data_store=data_store,
+            memory=resolved_memory,
+            tool_adapter=tool_adapter,
+            maf_runtime_profile=maf_runtime_profile,
+            provider_client=resolved_provider_client,
+            rational_backend=rational_backend,
+            allow_model_call=allow_model_call,
+            copilot_agent_factory=copilot_agent_factory,
+            event_router=shared_router,
+        )
+        seeded_dedupe_keys = data_store.get_recent_dedupe_keys(limit=1000)
+        shared_router.seed_dedupe_keys(seeded_dedupe_keys)
+        resolved_session_id = session_id
+        cycle_results: list[dict[str, Any]] = []
+        total_provided_events = 0
+        total_normalized_events = 0
+        observed_topics: set[str] = set()
+        for index, batch in enumerate(batches, start=1):
+            total_provided_events += len(batch)
+            for event in batch:
+                observed_topics.add(
+                    str(event.get("semantic_topic") or event.get("event_type") or "unknown")
+                )
+            result = workflow.run(
+                batch,
+                session_id=resolved_session_id,
+                event_source="daemon_replay_file",
+            )
+            resolved_session_id = result.session_id
+            total_normalized_events += result.events_persisted
+            cycle_results.append(
+                {
+                    "cycle_index": index,
+                    "provided_event_count": len(batch),
+                    "normalized_event_count": result.events_persisted,
+                    "duplicate_event_count": max(0, len(batch) - result.events_persisted),
+                    "execution_span_id": result.execution_span_id,
+                    "audit_id": result.audit_id,
+                    "status": result.status,
+                    "delegated": result.delegated,
+                    "steps": list(result.steps),
+                    "tool_result_count": len(result.tool_results),
+                    "final_response": dict(result.final_response),
+                }
+            )
+        payload: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "command": "event-daemon",
+            "event_source": "daemon_replay_file",
+            "runtime_mode": (
+                "real_llm"
+                if maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value
+                else "deterministic"
+            ),
+            "session_id": resolved_session_id,
+            "maf_runtime": workflow.maf_runtime_metadata(),
+            "memory_runtime": workflow.memory_runtime_metadata(),
+            "db_counts": {
+                "perception_events": data_store.count("perception_events"),
+                "execution_spans": data_store.count("execution_spans"),
+                "facts": data_store.count("facts"),
+                "policy_decisions": data_store.count("policy_decisions"),
+                "memory_candidates": data_store.count("memory_candidates"),
+                "long_term_memories": data_store.count("long_term_memories"),
+                "tool_results": data_store.count("tool_results"),
+                "approval_requests": data_store.count("approval_requests"),
+                "approval_decisions": data_store.count("approval_decisions"),
+                "audit_records": data_store.count("audit_records"),
+            },
+            "event_daemon_evidence": {
+                "schema_version": "1.2.3-event-daemon-evidence-v1",
+                "replay_label": replay_label or "inline",
+                "cycle_count": len(cycle_results),
+                "provided_event_count": total_provided_events,
+                "normalized_event_count": total_normalized_events,
+                "duplicate_event_count": max(0, total_provided_events - total_normalized_events),
+                "seeded_dedupe_key_count": len(seeded_dedupe_keys),
+                "dedupe_key_count": len(shared_router.seen_dedupe_keys),
+                "observed_topics": sorted(observed_topics),
+                "cycles": cycle_results,
+            },
+            "release_gate_require_real_tool_adapter": require_real_tool_adapter,
+        }
         return payload
     finally:
         data_store.close()
@@ -1022,6 +1526,7 @@ def _build_agent_run_evidence(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": AGENT_RUN_EVIDENCE_SCHEMA_VERSION,
         "workflow": "agent-run",
+        "event_source": payload.get("event_source"),
         "runtime_mode": payload.get("runtime_mode"),
         "provider_runtime": {
             "provider_mode": maf_runtime.get("provider_mode"),

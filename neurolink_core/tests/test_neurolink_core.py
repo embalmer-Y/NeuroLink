@@ -14,6 +14,8 @@ from neurolink_core.tools import (
     FakeUnitToolAdapter,
     NeuroCliToolAdapter,
     SideEffectLevel,
+    StateSyncSnapshot,
+    StateSyncSurface,
     ToolContract,
     ToolExecutionResult,
 )
@@ -21,7 +23,10 @@ from neurolink_core.data import CoreDataStore
 from neurolink_core.session import CoreSessionManager
 from neurolink_core.workflow import (
     NoModelCoreWorkflow,
+    apply_approval_decision,
     build_user_prompt_event,
+    run_event_daemon_replay,
+    run_event_replay,
     run_no_model_dry_run,
     sample_events,
 )
@@ -89,7 +94,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(result.events_persisted, 2)
         self.assertEqual(data_store.count("perception_events"), 2)
         self.assertEqual(data_store.count("execution_spans"), 1)
-        self.assertEqual(data_store.count("facts"), 3)
+        self.assertEqual(data_store.count("facts"), 4)
         self.assertEqual(data_store.count("policy_decisions"), 1)
         self.assertEqual(data_store.count("memory_candidates"), 2)
         self.assertEqual(data_store.count("long_term_memories"), 0)
@@ -113,6 +118,12 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         assert audit_record is not None
         self.assertEqual(audit_record["session_id"], result.session_id)
         self.assertEqual(audit_record["payload"]["adapter_runtime"]["adapter_kind"], "fake")
+        self.assertEqual(result.final_response["trigger_kind"], "event_driven_perception")
+        self.assertEqual(result.final_response["delivery_kind"], "event_driven_notification")
+        self.assertEqual(
+            audit_record["payload"]["notification_summary"]["delivery_kind"],
+            "event_driven_notification",
+        )
         self.assertEqual(
             audit_record["payload"]["state_sync_summary"]["snapshot_status"], "ok"
         )
@@ -186,12 +197,271 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertIn("no delegated action", result.final_response["text"])
         self.assertEqual(data_store.count("perception_events"), 1)
         self.assertEqual(data_store.count("execution_spans"), 1)
-        self.assertEqual(data_store.count("facts"), 2)
+        self.assertEqual(data_store.count("facts"), 3)
         self.assertEqual(data_store.count("memory_candidates"), 1)
         self.assertEqual(data_store.count("policy_decisions"), 0)
         self.assertEqual(data_store.count("tool_results"), 0)
         self.assertEqual(data_store.count("audit_records"), 1)
+        self.assertEqual(result.final_response["delivery_kind"], "observation_only")
         data_store.close()
+
+    def test_low_priority_endpoint_drift_still_triggers_event_driven_notification(self) -> None:
+        data_store = CoreDataStore()
+        workflow = NoModelCoreWorkflow(data_store=data_store)
+
+        result = workflow.run(
+            [
+                {
+                    "event_id": "evt-endpoint-drift-001",
+                    "source_kind": "unit",
+                    "source_node": "unit-01",
+                    "event_type": "state",
+                    "semantic_topic": "unit.network.endpoint_drift",
+                    "timestamp_wall": "2026-05-04T00:00:00Z",
+                    "priority": 20,
+                    "payload": {"expected_endpoint": "tcp/192.168.2.90:7447"},
+                }
+            ]
+        )
+
+        self.assertTrue(result.delegated)
+        self.assertEqual(len(result.tool_results), 1)
+        self.assertEqual(result.tool_results[0]["tool_name"], "system_state_sync")
+        self.assertEqual(result.final_response["trigger_kind"], "event_driven_perception")
+        self.assertEqual(result.final_response["delivery_kind"], "event_driven_notification")
+        self.assertGreaterEqual(result.final_response["salience"], 85)
+        audit_record = data_store.get_audit_record(result.audit_id)
+        self.assertIsNotNone(audit_record)
+        assert audit_record is not None
+        self.assertEqual(
+            audit_record["payload"]["decision"]["reason"],
+            "network_endpoint_drift_requires_rational_window",
+        )
+        self.assertEqual(
+            audit_record["payload"]["notification_summary"]["urgency"],
+            "high",
+        )
+        data_store.close()
+
+    def test_activate_failed_routes_to_health_guard_and_records_recovery_evidence(self) -> None:
+        class MissingAppHealthGuardAdapter(FakeUnitToolAdapter):
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                if tool_name == "system_query_leases":
+                    contract = self.describe_tool(tool_name)
+                    assert contract is not None
+                    return ToolExecutionResult(
+                        tool_result_id="tool-lease-observe-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "contract": contract.to_dict(),
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {"request_id": "req-lease-001"},
+                                "replies": [
+                                    {
+                                        "ok": True,
+                                        "payload": {
+                                            "status": "ok",
+                                            "leases": [
+                                                {
+                                                    "resource": "update/app/neuro_demo_gpio/rollback",
+                                                    "lease_id": "lease-gpio-rollback-001",
+                                                }
+                                            ],
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    )
+                if tool_name == "system_rollback_app":
+                    contract = self.describe_tool(tool_name)
+                    assert contract is not None
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "contract": contract.to_dict(),
+                            "resolved_args": {
+                                "app_id": str(args.get("app_id") or ""),
+                                "app": str(args.get("app") or args.get("app_id") or ""),
+                                "lease_id": str(args.get("lease_id") or ""),
+                                "reason": str(args.get("reason") or ""),
+                            },
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {
+                                        "ok": True,
+                                        "payload": {
+                                            "status": "ok",
+                                            "app_id": str(args.get("app_id") or ""),
+                                            "action": "rollback",
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    )
+                return super().execute(tool_name, args)
+
+            def build_state_sync_snapshot(self, args: dict[str, Any]) -> StateSyncSnapshot:
+                event_ids = list(args.get("event_ids") or [])
+                return StateSyncSnapshot(
+                    status="ok",
+                    state={
+                        "device": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={
+                                "status": "ok",
+                                "network_state": "NETWORK_READY",
+                                "ipv4": "192.168.2.67",
+                            },
+                        ),
+                        "apps": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={
+                                "status": "ok",
+                                "app_count": 0,
+                                "apps": [],
+                                "observed_event_ids": event_ids,
+                            },
+                        ),
+                        "leases": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={"status": "ok", "leases": []},
+                        ),
+                    },
+                    recommended_next_actions=(
+                        "confirm activation evidence and prepare protected rollback review",
+                    ),
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            data_store = CoreDataStore(db_path)
+            adapter = MissingAppHealthGuardAdapter()
+            workflow = NoModelCoreWorkflow(
+                data_store=data_store,
+                tool_adapter=adapter,
+            )
+
+            result = workflow.run(
+                [
+                    {
+                        "event_id": "evt-activate-failed-001",
+                        "source_kind": "unit",
+                        "source_node": "unit-01",
+                        "source_app": "neuro_demo_gpio",
+                        "event_type": "lifecycle",
+                        "semantic_topic": "unit.lifecycle.activate_failed",
+                        "timestamp_wall": "2026-05-04T00:00:00Z",
+                        "priority": 20,
+                        "payload": {"target_app_id": "neuro_demo_gpio"},
+                    }
+                ]
+            )
+            audit_record = data_store.get_audit_record(result.audit_id)
+            approval_requests = data_store.get_approval_requests(
+                source_execution_span_id=result.execution_span_id,
+            )
+
+            self.assertTrue(result.delegated)
+            self.assertEqual(result.tool_results[0]["tool_name"], "system_activation_health_guard")
+            self.assertEqual(result.tool_results[1]["tool_name"], "system_query_leases")
+            self.assertEqual(result.tool_results[2]["tool_name"], "system_rollback_app")
+            self.assertEqual(result.tool_results[2]["status"], "pending_approval")
+            self.assertEqual(
+                result.tool_results[0]["payload"]["activation_health"]["classification"],
+                "rollback_required",
+            )
+            self.assertEqual(len(approval_requests), 1)
+            self.assertEqual(approval_requests[0]["tool_name"], "system_rollback_app")
+            self.assertIsNotNone(audit_record)
+            assert audit_record is not None
+            self.assertEqual(
+                audit_record["payload"]["decision"]["reason"],
+                "activate_failure_requires_rational_window",
+            )
+            self.assertEqual(
+                audit_record["payload"]["activation_health_summary"]["classification"],
+                "rollback_required",
+            )
+            self.assertTrue(
+                audit_record["payload"]["activation_health_summary"]["ready_for_rollback_consideration"]
+            )
+            self.assertEqual(
+                audit_record["payload"]["activation_health_summary"]["app_id"],
+                "neuro_demo_gpio",
+            )
+            self.assertEqual(
+                audit_record["payload"]["recovery_candidate_summary"]["rollback_decision"],
+                "operator_review_required",
+            )
+            self.assertEqual(
+                audit_record["payload"]["recovery_candidate_summary"]["lease_ownership_status"],
+                "held",
+            )
+            self.assertEqual(
+                audit_record["payload"]["recovery_candidate_summary"]["matching_lease_ids"],
+                ["lease-gpio-rollback-001"],
+            )
+            activation_health_facts = data_store.get_facts(
+                result.execution_span_id,
+                fact_type="activation_health_observation",
+            )
+            self.assertEqual(len(activation_health_facts), 1)
+            self.assertEqual(
+                activation_health_facts[0]["subject"],
+                "neuro_demo_gpio",
+            )
+            self.assertEqual(
+                activation_health_facts[0]["payload"]["classification"],
+                "rollback_required",
+            )
+            recovery_candidate_facts = data_store.get_facts(
+                result.execution_span_id,
+                fact_type="recovery_candidate",
+            )
+            self.assertEqual(len(recovery_candidate_facts), 1)
+            self.assertEqual(
+                recovery_candidate_facts[0]["payload"]["lease_ownership_status"],
+                "held",
+            )
+            data_store.close()
+
+            approve_payload = apply_approval_decision(
+                db_path,
+                approval_request_id=approval_requests[0]["approval_request_id"],
+                decision="approve",
+                tool_adapter=adapter,
+            )
+
+        self.assertTrue(approve_payload["ok"])
+        self.assertEqual(approve_payload["status"], "approved")
+        self.assertEqual(
+            approve_payload["resumed_execution"]["tool_result"]["tool_name"],
+            "system_rollback_app",
+        )
+        self.assertEqual(
+            approve_payload["approval_context"]["operator_requirements"]["resolved_required_resources"],
+            ["update/app/neuro_demo_gpio/rollback"],
+        )
+        self.assertEqual(
+            approve_payload["approval_context"]["operator_requirements"]["matching_lease_ids"],
+            ["lease-gpio-rollback-001"],
+        )
+        self.assertEqual(
+            approve_payload["resumed_execution"]["tool_result"]["payload"]["resolved_args"]["lease_id"],
+            "lease-gpio-rollback-001",
+        )
 
     def test_file_backed_dry_run_reports_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -202,11 +472,80 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["final_response"]["speaker"], "affective")
         self.assertEqual(payload["db_counts"]["perception_events"], 2)
         self.assertEqual(payload["db_counts"]["execution_spans"], 1)
-        self.assertEqual(payload["db_counts"]["facts"], 3)
+        self.assertEqual(payload["db_counts"]["facts"], 4)
         self.assertEqual(payload["db_counts"]["policy_decisions"], 1)
         self.assertEqual(payload["db_counts"]["memory_candidates"], 2)
         self.assertEqual(payload["db_counts"]["tool_results"], 1)
         self.assertEqual(payload["db_counts"]["audit_records"], 1)
+
+    def test_event_replay_reports_duplicate_summary(self) -> None:
+        replay_events = [sample_events()[0], sample_events()[0], sample_events()[1]]
+
+        payload = run_event_replay(replay_events)
+
+        self.assertEqual(payload["command"], "event-replay")
+        self.assertEqual(payload["event_source"], "replay_file")
+        self.assertEqual(payload["events_persisted"], 2)
+        self.assertEqual(payload["db_counts"]["perception_events"], 2)
+        self.assertEqual(payload["event_replay"]["provided_event_count"], 3)
+        self.assertEqual(payload["event_replay"]["normalized_event_count"], 2)
+        self.assertEqual(payload["event_replay"]["duplicate_event_count"], 1)
+        self.assertEqual(
+            payload["event_replay"]["replayed_topics"],
+            ["time.tick", "unit.callback"],
+        )
+
+    def test_event_daemon_replay_dedupes_across_batches(self) -> None:
+        callback = sample_events()[0]
+        tick = sample_events()[1]
+        daemon_payload = run_event_daemon_replay(
+            [
+                [callback],
+                [callback, tick],
+            ],
+            session_id="session-daemon-001",
+        )
+
+        evidence = daemon_payload["event_daemon_evidence"]
+        self.assertEqual(daemon_payload["command"], "event-daemon")
+        self.assertEqual(daemon_payload["event_source"], "daemon_replay_file")
+        self.assertEqual(daemon_payload["session_id"], "session-daemon-001")
+        self.assertEqual(evidence["cycle_count"], 2)
+        self.assertEqual(evidence["provided_event_count"], 3)
+        self.assertEqual(evidence["normalized_event_count"], 2)
+        self.assertEqual(evidence["duplicate_event_count"], 1)
+        self.assertEqual(evidence["seeded_dedupe_key_count"], 0)
+        self.assertEqual(evidence["dedupe_key_count"], 2)
+        self.assertEqual(evidence["observed_topics"], ["time.tick", "unit.callback"])
+        self.assertEqual(evidence["cycles"][0]["normalized_event_count"], 1)
+        self.assertEqual(evidence["cycles"][1]["normalized_event_count"], 1)
+        self.assertEqual(evidence["cycles"][1]["duplicate_event_count"], 1)
+        self.assertEqual(daemon_payload["db_counts"]["perception_events"], 2)
+        self.assertEqual(daemon_payload["db_counts"]["execution_spans"], 2)
+
+    def test_event_daemon_replay_seeds_dedupe_keys_from_existing_database(self) -> None:
+        callback = sample_events()[0]
+        tick = sample_events()[1]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "daemon.db")
+            first = run_event_daemon_replay(
+                [[callback, tick]],
+                db_path,
+                session_id="session-daemon-seeded-001",
+            )
+            second = run_event_daemon_replay(
+                [[callback, tick]],
+                db_path,
+                session_id="session-daemon-seeded-001",
+            )
+
+        self.assertEqual(first["event_daemon_evidence"]["normalized_event_count"], 2)
+        self.assertEqual(second["event_daemon_evidence"]["seeded_dedupe_key_count"], 2)
+        self.assertEqual(second["event_daemon_evidence"]["normalized_event_count"], 0)
+        self.assertEqual(second["event_daemon_evidence"]["duplicate_event_count"], 2)
+        self.assertEqual(second["db_counts"]["perception_events"], 2)
+        self.assertEqual(second["db_counts"]["execution_spans"], 2)
 
     def test_dry_run_reports_execution_evidence_snapshot(self) -> None:
         payload = run_no_model_dry_run()
@@ -221,11 +560,15 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(evidence["audit_record"]["audit_id"], payload["audit_id"])
         self.assertEqual(
             {fact["fact_type"] for fact in evidence["facts"]},
-            {"perception_event_topic", "perception_frame"},
+            {"notification_dispatch", "perception_event_topic", "perception_frame"},
         )
         self.assertEqual(len(evidence["policy_decisions"]), 1)
         self.assertTrue(evidence["policy_decisions"][0]["allowed"])
         self.assertEqual(evidence["long_term_memories"], [])
+        self.assertEqual(
+            evidence["audit_record"]["payload"]["notification_summary"]["trigger_kind"],
+            "event_driven_perception",
+        )
         self.assertEqual(
             {candidate["semantic_topic"] for candidate in evidence["memory_candidates"]},
             {"time.tick", "unit.callback"},
@@ -1899,6 +2242,211 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(inspect_payload["approval_request"]["status"], "expired")
         self.assertIsNone(inspect_payload["approval_context"]["resumed_execution_evidence"])
 
+    def test_cli_rollback_approval_surfaces_recovery_candidate_summary(self) -> None:
+        class MissingAppHealthGuardAdapter(FakeUnitToolAdapter):
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                if tool_name == "system_query_leases":
+                    contract = self.describe_tool(tool_name)
+                    assert contract is not None
+                    return ToolExecutionResult(
+                        tool_result_id="tool-lease-observe-cli-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "contract": contract.to_dict(),
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "payload": {"request_id": "req-lease-cli-001"},
+                                "replies": [
+                                    {
+                                        "ok": True,
+                                        "payload": {
+                                            "status": "ok",
+                                            "leases": [
+                                                {
+                                                    "resource": "update/app/neuro_demo_gpio/rollback",
+                                                    "lease_id": "lease-gpio-rollback-cli-001",
+                                                }
+                                            ],
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    )
+                if tool_name == "system_rollback_app":
+                    contract = self.describe_tool(tool_name)
+                    assert contract is not None
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-cli-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "contract": contract.to_dict(),
+                            "resolved_args": {
+                                "app_id": str(args.get("app_id") or ""),
+                                "app": str(args.get("app") or args.get("app_id") or ""),
+                                "lease_id": str(args.get("lease_id") or ""),
+                                "reason": str(args.get("reason") or ""),
+                            },
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {
+                                        "ok": True,
+                                        "payload": {
+                                            "status": "ok",
+                                            "app_id": str(args.get("app_id") or ""),
+                                            "action": "rollback",
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    )
+                return super().execute(tool_name, args)
+
+            def build_state_sync_snapshot(self, args: dict[str, Any]) -> StateSyncSnapshot:
+                event_ids = list(args.get("event_ids") or [])
+                return StateSyncSnapshot(
+                    status="ok",
+                    state={
+                        "device": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={
+                                "status": "ok",
+                                "network_state": "NETWORK_READY",
+                                "ipv4": "192.168.2.67",
+                            },
+                        ),
+                        "apps": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={
+                                "status": "ok",
+                                "app_count": 0,
+                                "apps": [],
+                                "observed_event_ids": event_ids,
+                            },
+                        ),
+                        "leases": StateSyncSurface(
+                            ok=True,
+                            status="ok",
+                            payload={"status": "ok", "leases": []},
+                        ),
+                    },
+                    recommended_next_actions=(
+                        "confirm activation evidence and prepare protected rollback review",
+                    ),
+                )
+
+        events = [
+            {
+                "event_id": "evt-activate-failed-cli-001",
+                "source_kind": "unit",
+                "source_node": "unit-01",
+                "source_app": "neuro_demo_gpio",
+                "event_type": "lifecycle",
+                "semantic_topic": "unit.lifecycle.activate_failed",
+                "timestamp_wall": "2026-05-04T00:00:00Z",
+                "priority": 20,
+                "payload": {"target_app_id": "neuro_demo_gpio"},
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            events_path = Path(tmpdir) / "activate_failed_events.json"
+            events_path.write_text(json.dumps(events), encoding="utf-8")
+            adapter = MissingAppHealthGuardAdapter()
+
+            replay_out = io.StringIO()
+            with mock.patch("neurolink_core.cli.FakeUnitToolAdapter", return_value=adapter):
+                with redirect_stdout(replay_out):
+                    replay_code = core_cli_main(
+                        [
+                            "event-replay",
+                            "--db",
+                            db_path,
+                            "--events-file",
+                            str(events_path),
+                        ]
+                    )
+
+            replay_payload = json.loads(replay_out.getvalue())
+            approval_request_id = replay_payload["tool_results"][2]["payload"]["approval_request"][
+                "approval_request_id"
+            ]
+
+            inspect_out = io.StringIO()
+            with mock.patch("neurolink_core.cli.FakeUnitToolAdapter", return_value=adapter):
+                with redirect_stdout(inspect_out):
+                    inspect_code = core_cli_main(
+                        [
+                            "approval-inspect",
+                            "--db",
+                            db_path,
+                            "--approval-request-id",
+                            approval_request_id,
+                        ]
+                    )
+
+            approve_out = io.StringIO()
+            with mock.patch("neurolink_core.cli.FakeUnitToolAdapter", return_value=adapter):
+                with redirect_stdout(approve_out):
+                    approve_code = core_cli_main(
+                        [
+                            "approval-decision",
+                            "--db",
+                            db_path,
+                            "--approval-request-id",
+                            approval_request_id,
+                            "--decision",
+                            "approve",
+                        ]
+                    )
+
+        self.assertEqual(replay_code, 0)
+        self.assertEqual(inspect_code, 0)
+        self.assertEqual(approve_code, 0)
+
+        inspect_payload = json.loads(inspect_out.getvalue())
+        self.assertEqual(
+            inspect_payload["approval_context"]["recovery_candidate_summary"]["rollback_decision"],
+            "operator_review_required",
+        )
+        self.assertEqual(
+            inspect_payload["approval_context"]["recovery_candidate_summary"]["matching_lease_ids"],
+            ["lease-gpio-rollback-cli-001"],
+        )
+        self.assertEqual(
+            inspect_payload["approval_context"]["operator_requirements"]["recovery_candidate_summary"],
+            inspect_payload["approval_context"]["recovery_candidate_summary"],
+        )
+        self.assertEqual(
+            inspect_payload["approval_context"]["source_execution_evidence"]["audit_record"]["payload"][
+                "activation_health_summary"
+            ]["classification"],
+            "rollback_required",
+        )
+
+        approve_payload = json.loads(approve_out.getvalue())
+        self.assertEqual(
+            approve_payload["approval_context"]["recovery_candidate_summary"]["app_id"],
+            "neuro_demo_gpio",
+        )
+        self.assertEqual(
+            approve_payload["approval_context"]["recovery_candidate_summary"]["matching_lease_ids"],
+            ["lease-gpio-rollback-cli-001"],
+        )
+        self.assertEqual(
+            approve_payload["resumed_execution"]["tool_result"]["payload"]["resolved_args"]["lease_id"],
+            "lease-gpio-rollback-cli-001",
+        )
+
     def test_cli_approval_decision_rejects_replay_after_terminal_status(self) -> None:
         class LeaseSatisfiedAdapter(FakeUnitToolAdapter):
             def execute(self, tool_name: str, args: dict[str, object]) -> ToolExecutionResult:
@@ -2217,10 +2765,175 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["event_source"], "provided")
+        self.assertEqual(payload["event_source"], "neuro_cli_agent_events")
         self.assertEqual(payload["events_persisted"], 2)
         self.assertEqual(payload["db_counts"]["perception_events"], 2)
         self.assertEqual(payload["tool_results"][0]["tool_name"], "system_state_sync")
+        self.assertEqual(
+            payload["execution_evidence"]["execution_span"]["payload"]["event_source"],
+            "neuro_cli_agent_events",
+        )
+
+    def test_cli_event_replay_loads_json_fixture(self) -> None:
+        replay_events = [sample_events()[0], sample_events()[0], sample_events()[1]]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture_path = Path(tmpdir) / "replay.json"
+            fixture_path.write_text(json.dumps({"events": replay_events}), encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "event-replay",
+                        "--events-file",
+                        str(fixture_path),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "event-replay")
+        self.assertEqual(payload["event_source"], "replay_file")
+        self.assertEqual(
+            payload["execution_evidence"]["execution_span"]["payload"]["event_source"],
+            "replay_file",
+        )
+        self.assertEqual(payload["event_replay"]["provided_event_count"], 3)
+        self.assertEqual(payload["event_replay"]["duplicate_event_count"], 1)
+        self.assertEqual(payload["events_persisted"], 2)
+
+    def test_cli_agent_run_can_ingest_agent_events_with_explicit_provenance(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            if "agent-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "event_id": "evt-agent-health-001",
+                            "source_kind": "unit",
+                            "source_node": "unit-01",
+                            "event_type": "health",
+                            "semantic_topic": "unit.health.degraded",
+                            "timestamp_wall": "2026-05-04T00:00:00Z",
+                            "priority": 30,
+                            "payload": {"health": "degraded"},
+                        }
+                    )
+                    + "\n"
+                    + json.dumps(
+                        {
+                            "event_id": "evt-agent-online-001",
+                            "source_kind": "unit",
+                            "source_node": "unit-01",
+                            "event_type": "state",
+                            "semantic_topic": "unit.state.online",
+                            "timestamp_wall": "2026-05-04T00:00:01Z",
+                            "priority": 10,
+                            "payload": {"status": "online"},
+                        }
+                    )
+                    + "\n",
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-tool-manifest-v1",
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": ["python", "wrapper.py", "system", "state-sync"],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "schema_version": "1.2.0-state-sync-v1",
+                        "state": {
+                            "device": {"ok": True, "status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                            "apps": {"ok": True, "status": "ok", "payload": {"app_count": 0}},
+                            "leases": {"ok": True, "status": "ok", "payload": {"leases": []}},
+                        },
+                        "recommended_next_actions": [
+                            "state sync is clean; read-only delegated reasoning may continue"
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "agent-run",
+                        "--tool-adapter",
+                        "neuro-cli",
+                        "--event-source",
+                        "neuro-cli-agent-events",
+                        "--max-events",
+                        "2",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "agent-run")
+        self.assertEqual(payload["event_source"], "neuro_cli_agent_events")
+        self.assertEqual(payload["events_persisted"], 2)
+        self.assertEqual(
+            payload["execution_evidence"]["execution_span"]["payload"]["event_source"],
+            "neuro_cli_agent_events",
+        )
+        self.assertEqual(
+            payload["agent_run_evidence"]["event_source"],
+            "neuro_cli_agent_events",
+        )
+        self.assertEqual(payload["tool_results"][0]["tool_name"], "system_state_sync")
+
+    def test_cli_event_daemon_loads_batch_fixture(self) -> None:
+        callback = sample_events()[0]
+        tick = sample_events()[1]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture_path = Path(tmpdir) / "daemon.json"
+            fixture_path.write_text(
+                json.dumps({"batches": [[callback], [callback, tick]]}),
+                encoding="utf-8",
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "event-daemon",
+                        "--events-file",
+                        str(fixture_path),
+                        "--session-id",
+                        "session-daemon-cli-001",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "event-daemon")
+        self.assertEqual(payload["session_id"], "session-daemon-cli-001")
+        self.assertEqual(payload["event_daemon_evidence"]["cycle_count"], 2)
+        self.assertEqual(payload["event_daemon_evidence"]["duplicate_event_count"], 1)
+        self.assertEqual(payload["db_counts"]["perception_events"], 2)
 
     def test_cli_agent_run_rejects_real_tool_adapter_gate_with_fake_adapter(self) -> None:
         out = io.StringIO()
@@ -2327,6 +3040,365 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             agent_run_evidence["closure_gates"]["real_tool_execution_succeeded"]
         )
         self.assertTrue(agent_run_evidence["ok"])
+
+    def test_cli_live_event_smoke_ingests_app_events_with_real_adapter_evidence(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                self.assertIn("--ready-file", argv)
+                self.assertIn("/tmp/live-ready", argv)
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "event_id": "evt-live-callback-001",
+                                    "source_kind": "unit_app",
+                                    "source_node": "unit-01",
+                                    "source_app": "neuro_demo_app",
+                                    "event_type": "callback",
+                                    "semantic_topic": "unit.callback",
+                                    "timestamp_wall": "2026-05-04T00:00:00Z",
+                                    "priority": 80,
+                                    "payload": {"callback_enabled": True},
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-tool-manifest-v1",
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "system",
+                                        "state-sync",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                    "lease_requirements": [],
+                                    "timeout_seconds": 10,
+                                    "retryable": True,
+                                    "approval_required": False,
+                                    "cleanup_hints": [],
+                                    "output_contract": {"format": "json", "top_level_ok": True},
+                                }
+                            ],
+                        }
+                    ),
+                )
+            return CommandExecutionResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "schema_version": "1.2.0-state-sync-v1",
+                        "state": {
+                            "device": {"ok": True, "status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                            "apps": {"ok": True, "status": "ok", "payload": {"app_count": 1, "apps": [{"app_id": "neuro_demo_app", "state": "running"}]}},
+                            "leases": {"ok": True, "status": "ok", "payload": {"leases": []}},
+                        },
+                        "recommended_next_actions": [
+                            "state sync is clean; read-only delegated reasoning may continue"
+                        ],
+                    }
+                ),
+            )
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "live-event-smoke",
+                        "--app-id",
+                        "neuro_demo_app",
+                        "--duration",
+                        "1",
+                        "--max-events",
+                        "1",
+                        "--ready-file",
+                        "/tmp/live-ready",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "live-event-smoke")
+        self.assertEqual(payload["event_source"], "neuro_cli_app_events_live")
+        self.assertEqual(payload["live_event_ingest"]["app_id"], "neuro_demo_app")
+        self.assertEqual(payload["live_event_ingest"]["collected_event_count"], 1)
+        self.assertEqual(
+            payload["live_event_ingest"]["subscription"],
+            "neuro/unit-01/event/app/neuro_demo_app/**",
+        )
+        self.assertEqual(
+            payload["execution_evidence"]["execution_span"]["payload"]["event_source"],
+            "neuro_cli_app_events_live",
+        )
+        self.assertEqual(
+            payload["agent_run_evidence"]["event_source"],
+            "neuro_cli_app_events_live",
+        )
+        self.assertTrue(payload["agent_run_evidence"]["release_gate_require_real_tool_adapter"])
+        self.assertTrue(payload["agent_run_evidence"]["real_tool_adapter_present"])
+        self.assertTrue(payload["agent_run_evidence"]["real_tool_execution_succeeded"])
+        self.assertEqual(payload["tool_results"][0]["tool_name"], "system_state_sync")
+
+    def test_cli_live_event_smoke_fails_closed_when_no_events_are_collected(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [],
+                        }
+                    ),
+                )
+            raise AssertionError("workflow execution should not start when no live events are collected")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "live-event-smoke",
+                        "--app-id",
+                        "neuro_demo_app",
+                        "--duration",
+                        "1",
+                        "--max-events",
+                        "1",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "live_event_ingest_empty")
+        self.assertEqual(payload["failure_status"], "no_events_collected")
+        self.assertEqual(payload["event_source"], "neuro_cli_app_events_live")
+        self.assertEqual(payload["live_event_ingest"]["collected_event_count"], 0)
+
+    def test_cli_live_event_smoke_can_ingest_unit_events_with_explicit_provenance(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "events" in argv and "monitor" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "keyexpr": "neuro/unit-01/event/health",
+                                    "payload": {
+                                        "semantic_topic": "unit.health.degraded",
+                                        "event_id": "evt-unit-health-001",
+                                        "source_kind": "unit",
+                                        "source_node": "unit-01",
+                                        "event_type": "health",
+                                        "timestamp_wall": "2026-05-07T00:00:00Z",
+                                        "priority": 30,
+                                        "health": "degraded",
+                                    },
+                                    "payload_encoding": "json",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-tool-manifest-v1",
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": ["python", "wrapper.py", "system", "state-sync"],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "state": {
+                                "device": {"status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {"status": "ok", "payload": {"apps": []}},
+                                "leases": {"status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "live-event-smoke",
+                        "--event-source",
+                        "unit",
+                        "--duration",
+                        "1",
+                        "--max-events",
+                        "1",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "live-event-smoke")
+        self.assertEqual(payload["event_source"], "neuro_cli_events_live")
+        self.assertEqual(payload["live_event_ingest"]["event_source_kind"], "unit")
+        self.assertEqual(payload["live_event_ingest"]["monitor_command"], "events")
+        self.assertEqual(payload["live_event_ingest"]["subscription"], "neuro/unit-01/event/**")
+        self.assertEqual(payload["live_event_ingest"]["collected_event_count"], 1)
+        self.assertEqual(
+            payload["execution_evidence"]["execution_span"]["payload"]["event_source"],
+            "neuro_cli_events_live",
+        )
+        self.assertEqual(payload["agent_run_evidence"]["event_source"], "neuro_cli_events_live")
+
+    def test_cli_live_event_smoke_maps_raw_state_event_to_operational_wake_topic(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "events" in argv and "monitor" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "keyexpr": "neuro/unit-01/event/state",
+                                    "payload": {
+                                        "message_kind": "state_event",
+                                        "health": "degraded",
+                                        "timestamp_wall": "2026-05-07T00:00:00Z",
+                                        "priority": 30,
+                                    },
+                                    "payload_encoding": "cbor-v2",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-tool-manifest-v1",
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": ["python", "wrapper.py", "system", "state-sync"],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "state": {
+                                "device": {"status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {"status": "ok", "payload": {"apps": []}},
+                                "leases": {"status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "live-event-smoke",
+                        "--event-source",
+                        "unit",
+                        "--duration",
+                        "1",
+                        "--max-events",
+                        "1",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["event_source"], "neuro_cli_events_live")
+        self.assertEqual(payload["final_response"]["topics"], ["unit.health.degraded"])
+        self.assertEqual(payload["final_response"]["salience"], 85)
+        self.assertEqual(payload["db_counts"]["facts"], 3)
 
     def test_data_store_query_and_topic_index_follow_priority_and_topic_filters(self) -> None:
         data_store = CoreDataStore()

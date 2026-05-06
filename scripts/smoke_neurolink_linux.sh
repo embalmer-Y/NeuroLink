@@ -85,16 +85,24 @@ artifact_is_nonempty_file() {
   [[ -f "$1" ]] && [[ -s "$1" ]]
 }
 
-artifact_has_elf_magic() {
-  local magic
+artifact_has_valid_elf_header() {
+  local header
+  local elf_class
+  local elf_version
 
   [[ -f "$1" ]] || return 1
-  magic="$(LC_ALL=C od -An -tx1 -N4 "$1" 2>/dev/null | tr -d ' \n')"
-  [[ "${magic}" == "7f454c46" ]]
+  header="$(LC_ALL=C od -An -tx1 -N6 "$1" 2>/dev/null | tr -d ' \n')"
+  [[ ${#header} -eq 12 ]] || return 1
+  [[ "${header:0:8}" == "7f454c46" ]] || return 1
+
+  elf_class="${header:8:2}"
+  elf_version="${header:10:2}"
+  [[ "${elf_class}" == "01" || "${elf_class}" == "02" ]] || return 1
+  [[ "${elf_version}" == "01" ]]
 }
 
 artifact_is_valid_llext_file() {
-  artifact_is_nonempty_file "$1" && artifact_has_elf_magic "$1"
+  artifact_is_nonempty_file "$1" && artifact_has_valid_elf_header "$1"
 }
 
 output_has_error_reply() {

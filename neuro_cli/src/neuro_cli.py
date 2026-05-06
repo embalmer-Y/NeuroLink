@@ -2381,9 +2381,20 @@ def handle_serial_zenoh(session: zenoh.Session | None, args: argparse.Namespace)
         raise ValueError(f"unsupported serial zenoh action: {action}")
 
     result = run_serial_shell_command(args, command)
-    if result.get("ok"):
-        endpoint = parse_zenoh_endpoint_from_shell(str(result.get("output", "")))
+    output = str(result.get("output", ""))
+    endpoint = parse_zenoh_endpoint_from_shell(output)
+    if endpoint:
         result["endpoint"] = endpoint
+
+    if not result.get("ok") and result.get("status") == "shell_error" and endpoint:
+        result.update(
+            {
+                "ok": True,
+                "status": "ok",
+            }
+        )
+
+    if result.get("ok"):
         if action == "set" and endpoint != args.endpoint:
             result.update(
                 {

@@ -18,6 +18,11 @@ class PerceptionEventRouter:
     def subscribe(self, subscriber: EventSubscriber) -> None:
         self.subscribers.append(subscriber)
 
+    def seed_dedupe_keys(self, dedupe_keys: Iterable[str]) -> None:
+        for dedupe_key in dedupe_keys:
+            if dedupe_key:
+                self.seen_dedupe_keys.add(str(dedupe_key))
+
     def normalize(self, raw_events: Iterable[dict[str, Any]]) -> list[PerceptionEvent]:
         events: list[PerceptionEvent] = []
         for raw_event in raw_events:

@@ -1,3 +1,650 @@
+2026-05-07: Closed release-1.2.3 after accepting the current real update-plane proof as sufficient release evidence and converting the plan from “remaining closure decision” into an explicit exit state. The release now has deterministic replay/daemon coverage, approval-bounded recovery evidence, explicit live-ingest provenance, real hardware callback/lease/state/update-plane proofs through the generic Unit listener, and the final adjacent Neuro CLI/Core regression surface still green after the last parser hardening (`221 passed`). Updated the release plan to record that optional extra hardware captures such as `unit.lifecycle.activate_failed`, degraded, offline, or endpoint-drift remain follow-up evidence rather than blocking requirements for 1.2.3 closure. - Copilot
+
+#### EXEC-273 Release 1.2.3 Final Closure Decision
+
+- Status: completed for formal release-1.2.3 closure and exit-state recording
+- Owner: GitHub Copilot continuing the post-1.2.2 HLD delivery track
+- Scope:
+  - accept the current real `unit.lifecycle.recovery` update-plane proof as sufficient closure evidence for release-1.2.3
+  - convert the release plan from pending-closure decisions to an explicit closed release state
+  - preserve the distinction between release blockers and useful next-release hardware follow-up evidence
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.3_AUTONOMOUS_PERCEPTION_PLAN.md`
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py` -> `221 passed in 3.73s`
+  - real hardware closure evidence already recorded in `EXEC-267`, `EXEC-269`, and `EXEC-272` for generic Unit callback/lease, state-online, and update-plane recovery topics
+- Result:
+  - release-1.2.3 is now closed for its planned HLD slice
+  - remaining optional hardware captures move to follow-up scope instead of blocking this release
+  - the repository is ready for final commit and push of the release-1.2.3 closure set
+- Updated progress estimate:
+  - implementation progress: 100% of release-1.2.3 scope
+  - release-closure progress: 100% of release-1.2.3 scope
+
+2026-05-07: Continued release-1.2.3 by closing the next real hardware live-ingest blocker and then capturing a real update-plane event frame through the new coordinated generic Unit probe flow. The apparent board outage was not a Core regression: UART evidence from `prepare_dnesp32s3b_wsl.sh --capture-duration-sec 45` showed the board reaching `NETWORK_READY` and repeatedly probing `tcp/192.168.2.94:7447`, while the current host IP had drifted to `192.168.2.90`. Recovered the session using the existing serial Zenoh control path by confirming the stale override with `serial zenoh show` and then rewriting it to `tcp/192.168.2.90:7447`; `preflight_neurolink_linux.sh` immediately returned `status=ready` afterward. With board reachability restored, the new `run_unit_live_event_probe.sh --mode update-activate` helper successfully coordinated `live-event-smoke --event-source unit` with a real `prepare -> verify -> activate -> release` flow, and Core persisted four real update-plane events from `neuro_cli_events_live` that normalized into topic `unit.lifecycle.recovery`. The same pass also exposed a local Neuro CLI parser bug: `serial zenoh set` could return a false `shell_error` when the shell printed a success line followed by a stale probe warning. Fixed `handle_serial_zenoh()` to trust a confirmed endpoint in shell output, added focused regression coverage, reran the real serial command successfully on hardware, and then reran the adjacent Neuro CLI/Core suite cleanly (`221 passed`). - Copilot
+
+#### EXEC-272 Release 1.2.3 Real Update Plane Closure And Serial Endpoint Recovery
+
+- Status: completed for current-session endpoint-drift recovery, real update-plane live-ingest proof, and serial Zenoh parser hardening
+- Owner: GitHub Copilot continuing the release-1.2.3 operational live-ingest closure track
+- Scope:
+  - recover the board from `no_reply_board_unreachable` using repository-standard UART and serial-Zenoh workflows instead of ad hoc host networking changes
+  - capture real update-plane traffic through the generic Unit `event/**` Core ingest path
+  - fix the local Neuro CLI false-negative parser branch uncovered during endpoint recovery
+  - rerun adjacent Neuro CLI/Core regression coverage after the parser fix and hardware proof
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.3_AUTONOMOUS_PERCEPTION_PLAN.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+- Validation evidence:
+  - `bash applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh --capture-duration-sec 45` -> UART log `serial-capture-20260506T170019Z.log` showed `NETWORK_READY`, board IPv4 `192.168.2.67`, and repeated failed probes to stale endpoint `tcp/192.168.2.94:7447`
+  - `ip -4 addr show` -> host reachable address `192.168.2.90/24` on `eth1`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json serial zenoh show --port /dev/ttyACM0` -> endpoint `tcp/192.168.2.94:7447`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json serial zenoh set tcp/192.168.2.90:7447 --port /dev/ttyACM0` plus a follow-up `serial zenoh show` -> endpoint override now `tcp/192.168.2.90:7447`
+  - `bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --output json` -> `status=ready`, `query.status=ok`
+  - `bash applocation/NeuroLink/scripts/run_unit_live_event_probe.sh --mode update-activate --duration 60 --max-events 4` -> Core `status=ok`, `event_source=neuro_cli_events_live`, `events_persisted=4`, topics `unit.lifecycle.recovery`; trigger flow `deploy prepare`, `deploy verify`, `deploy activate`, and lease release all returned `status=ok`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 query apps && ... query leases` -> `neuro_unit_app` `RUNNING` / `ACTIVE`, `leases=[]`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k 'serial_zenoh_set_verifies_shell_endpoint or serial_zenoh_set_fails_when_endpoint_does_not_match or serial_zenoh_set_tolerates_success_output_with_following_warning'` -> `3 passed`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py` -> `221 passed in 3.73s`
+- Result:
+  - the current board session is no longer blocked on router endpoint drift and is back in a ready state
+  - release-1.2.3 now has real update-plane evidence through the generic Unit live-event path, not only callback and state-event proofs
+  - `serial zenoh set` no longer falsely reports `shell_error` when the endpoint change succeeded and later shell text contains stale warning lines
+  - remaining release-1.2.3 closure work is now mostly about deciding how much optional additional real operational-topic evidence to collect before final closure
+- Updated progress estimate:
+  - implementation progress: 74% of release-1.2.3 scope
+  - release-closure progress: 76% of release-1.2.3 scope
+
+2026-05-07: Continued release-1.2.3 by closing the operator-repeatability gap around the new generic Unit live-ingest path. Up to this point, every real `event/**` closure attempt required manual coordination between a bounded Core listener, a ready-file, and a separate trigger sequence for callback, state, or update-plane traffic. Added `scripts/run_unit_live_event_probe.sh` so the release closure flow can now start `live-event-smoke --event-source unit`, wait for subscription readiness, run one of the canonical trigger modes (`callback`, `state-online`, or `update-activate`), and preserve deterministic listener/trigger output ordering with lease cleanup on failure. Updated the release-1.2.3 plan and both English/Chinese AI Core runbooks so the documented operator path matches the current code surface, including the generic Unit listener mode and the new coordinated probe helper. This does not by itself resolve the current hardware `no_reply_board_unreachable` session, but it removes the ad hoc terminal choreography from the remaining closure loop and makes the next hardware retry reproducible. - Copilot
+
+#### EXEC-271 Release 1.2.3 Unit Live Probe Coordination Helper
+
+- Status: completed for repeatable generic Unit live-event probe orchestration and operator documentation alignment
+- Owner: GitHub Copilot continuing the release-1.2.3 live-ingest closure track
+- Scope:
+  - add one helper script that coordinates bounded Core listener readiness with canonical trigger modes for callback, state, and update-plane evidence
+  - ensure lease cleanup and listener shutdown remain deterministic when a trigger step fails
+  - update the release plan and AI Core runbooks so operator guidance matches the landed generic Unit event surface
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/scripts/run_unit_live_event_probe.sh`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.3_AUTONOMOUS_PERCEPTION_PLAN.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+- Validation evidence:
+  - `bash -n applocation/NeuroLink/scripts/run_unit_live_event_probe.sh` -> passed
+- Result:
+  - generic Unit `live-event-smoke` retries no longer depend on manual two-terminal coordination
+  - callback, state-online, and update-activate triggers now share one documented probe entrypoint with bounded cleanup behavior
+  - release-1.2.3 plan/runbook text now reflects the landed `--event-source unit` path and the current remaining hardware blocker
+- Updated progress estimate:
+  - implementation progress: 69% of release-1.2.3 scope
+  - release-closure progress: 69% of release-1.2.3 scope
+
+2026-05-07: Continued release-1.2.3 by closing the first real hardware proof that a raw Unit framework `state_event` can cross the new generic `event/**` subscriber path and land in Core as an operational topic. Coordinated `live-event-smoke --event-source unit` with a controlled `app stop` / `app start` cycle under a temporary `app/neuro_unit_app/control` lease so the board emitted a real framework state transition instead of a synthetic fixture. The bounded Core run persisted two real perception events from `neuro_cli_events_live`, observed topics `lease_event` and `unit.state.online`, and produced the final response `Observed lease_event, unit.state.online and completed a read-only state sync before responding.` This closes the real `state_event -> unit.state.online` slice of the release-1.2.3 generic live-ingest plan and narrows the remaining hardware work to obtaining additional real framework events such as `update_event`, degraded, offline, and endpoint-drift scenarios. - Copilot
+
+#### EXEC-269 Release 1.2.3 Real State Event Online Closure
+
+- Status: completed for real hardware `state_event -> unit.state.online` ingestion through the generic Unit event subscription path
+- Owner: GitHub Copilot continuing the release-1.2.3 operational live-ingest closure track
+- Scope:
+  - trigger a real Unit framework `state_event` without weakening the bounded Core live-ingest contract
+  - prove the shared Unit-event normalizer promotes the real payload into `unit.state.online`
+  - verify the board returns to a clean running state after the controlled trigger
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke --event-source unit --db /tmp/neurolink-unit-state-event.db --duration 45 --max-events 2 --ready-file /tmp/neurolink-unit-ready.flag` plus `/home/emb/project/zephyrproject/.venv/bin/python /home/emb/project/zephyrproject/applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 lease acquire --resource app/neuro_unit_app/control --lease-id l-state-evt-001`, `app stop --app-id neuro_unit_app --lease-id l-state-evt-001`, `app start --app-id neuro_unit_app --lease-id l-state-evt-001`, and `lease release --lease-id l-state-evt-001` -> Core `status=ok`, `events_persisted=2`, topics `lease_event` + `unit.state.online`, final response `Observed lease_event, unit.state.online and completed a read-only state sync before responding.`
+- Result:
+  - real firmware `state_event` traffic is now proven through `monitor events` and Core `live-event-smoke --event-source unit`
+  - the raw framework payload was promoted into `unit.state.online` instead of remaining an unclassified low-level event
+  - the controlled stop/start trigger returned the sample app to service after the bounded capture window
+- Updated progress estimate:
+  - implementation progress: 68% of release-1.2.3 scope
+  - release-closure progress: 69% of release-1.2.3 scope
+
+2026-05-07: Attempted the next release-1.2.3 hardware closure hop by triggering a real update-plane `prepare -> verify -> activate` sequence while a bounded generic Unit listener waited on `neuro/unit-01/event/**`. This attempt did not produce usable update-plane evidence because `deploy prepare --app-id neuro_unit_app --file /home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext` failed with `status=no_reply`, the concurrent Core listener finished with `live_event_ingest_empty`, and the repository preflight script then classified the board state as `no_reply_board_unreachable` while still seeing `router.listening=true` and `/dev/ttyACM0` present. The scripted board recovery path (`prepare_dnesp32s3b_wsl.sh`) also failed to recover the node in this attempt because UART capture remained fully silent (`bytes_written=0`). This means the remaining release-1.2.3 gap is no longer missing Core support for update-plane semantics, but restoring the current board session to `NETWORK_READY` so real `update_event` evidence can be captured safely. - Copilot
+
+#### EXEC-270 Release 1.2.3 Update Plane Hardware Probe Blocked
+
+- Status: blocked on current board session recovery before real `update_event` capture can continue
+- Owner: GitHub Copilot continuing the release-1.2.3 operational live-ingest closure track
+- Scope:
+  - attempt a real update-plane trigger through `deploy prepare`, `deploy verify`, and `deploy activate`
+  - distinguish Core ingestion gaps from hardware/runtime reachability loss when no update-plane evidence appears
+  - use repository-standard diagnostics and recovery scripts before treating the failure as a software regression
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke --event-source unit --db /tmp/neurolink-unit-update-event.db --duration 60 --max-events 4 --ready-file /tmp/neurolink-unit-ready.flag` plus `/home/emb/project/zephyrproject/.venv/bin/python /home/emb/project/zephyrproject/applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy prepare --app-id neuro_unit_app --file /home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext` -> `deploy prepare` returned `status=no_reply`; concurrent Core run ended `status=live_event_ingest_empty`, `failure_status=no_events_collected`
+  - `bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --output json` -> `status=no_reply_board_unreachable`, `router.listening=true`, `serial.present=true`, `devices=["/dev/ttyACM0"]`
+  - `bash applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh` -> UART capture log created but remained empty with `bytes_written=0`, so the scripted recovery did not restore the node in this attempt
+- Result:
+  - the remaining update-plane closure blocker is the current board/runtime state, not missing Core support for generic Unit live ingestion or update-event semantic mapping
+  - repository-standard diagnostics now place the failure in the same `board unreachable despite serial and router presence` bucket seen in earlier hardware-preparation incidents
+  - release-1.2.3 can continue on software-side closure items while hardware recovery is re-attempted from the standard prep path
+- Updated progress estimate:
+  - implementation progress: 68% of release-1.2.3 scope
+  - release-closure progress: 69% of release-1.2.3 scope
+
+2026-05-07: Continued release-1.2.3 by closing the next semantic gap after real generic Unit subscriber proof. The live Core path could now ingest raw `lease_event` and callback traffic from `monitor events`, but low-level Unit `state_event` / `update_event` payloads still had no mapping into the release plan's operational wake topics (`unit.health.degraded`, `unit.state.online`, `unit.state.offline`, `unit.network.endpoint_drift`, `unit.lifecycle.activate_failed`). Added a focused semantic mapper inside the shared live-event normalizer so raw framework events are promoted into those operational topics when the payload provides enough evidence, while preserving already-explicit `semantic_topic` fields unchanged. Added focused adapter tests for degraded health, online state, endpoint drift, and activate-failed mapping, then added a Core CLI regression proving a raw `state_event` with `health=degraded` reaches `live-event-smoke` as `unit.health.degraded` and raises the Affective salience to `85` per the operational wake policy. Adjacent Core regressions passed cleanly (`94 passed`), so the remaining 1.2.3 live-ingest closure is now primarily about finding or emitting real hardware `state_event` / `update_event` traffic rather than lacking Core-side semantics for it. - Copilot
+
+#### EXEC-268 Release 1.2.3 Operational Topic Mapping For Raw Unit Events
+
+- Status: completed for Core-side semantic promotion of raw `state_event` / `update_event` payloads into release-1.2.3 operational wake topics
+- Owner: GitHub Copilot continuing the release-1.2.3 operational live-ingest closure track
+- Scope:
+  - map low-level Unit framework events into `unit.health.degraded`, `unit.state.online`, `unit.state.offline`, `unit.network.endpoint_drift`, and `unit.lifecycle.activate_failed`
+  - preserve already-explicit `semantic_topic` payloads and the existing callback/lease behavior
+  - prove the mapped topics affect Core live-event salience rather than remaining adapter-only metadata
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py -k 'collect_live_events_reads_unit_event_payload or collect_live_events_maps_update_activate_failure_to_operational_topic or collect_live_events_maps_state_event_to_online_and_endpoint_drift_topics'` -> `3 passed, 34 deselected`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'live_event_smoke_maps_raw_state_event_to_operational_wake_topic'` -> `1 passed, 56 deselected`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py` -> `94 passed in 2.24s`
+- Result:
+  - raw Unit `state_event` / `update_event` payloads can now enter Core with the operational topics expected by the release-1.2.3 salience policy
+  - a raw degraded-health `state_event` now triggers `unit.health.degraded` and the expected salience floor `85` in `live-event-smoke`
+  - generic live-ingest semantics now cover explicit callback topics, raw lease events, and promoted operational Unit framework events through one shared normalizer
+- Updated progress estimate:
+  - implementation progress: 67% of release-1.2.3 scope
+  - release-closure progress: 68% of release-1.2.3 scope
+
+2026-05-07: Continued release-1.2.3 by closing the first real hardware proof for the new generic Unit event subscription path. The first quiet-state probe of `live-event-smoke --event-source unit` correctly failed closed on zero events, so the next step was to coordinate the new `monitor events` listener with the already-stable `app-callback-smoke` trigger on `neuro_unit_app`. The first coordinated retry proved a real `lease_event` reaches Core through `neuro/unit-01/event/**`; the next retry widened `--max-events` to `4` and captured the full mixed live frame on hardware: one real `lease_event` plus three real callback envelopes from `neuro_unit_app`, all normalized through the generic `event/**` route into Core topics `lease_event` and `unit.callback`. Core persisted `4` perception events, reported `highest_priority=80`, and produced the final response `Observed lease_event, unit.callback and completed a read-only state sync before responding.` This closes the generic Unit subscriber promotion path on real hardware and narrows the remaining 1.2.3 live-ingest gap to obtaining similarly reliable real operational topics such as degraded/offline/endpoint-drift rather than only lease/callback traffic. - Copilot
+
+#### EXEC-267 Release 1.2.3 Real Generic Unit Event Closure
+
+- Status: completed for real hardware `monitor events` ingestion through the Core `live-event-smoke --event-source unit` path
+- Owner: GitHub Copilot continuing the release-1.2.3 health-subscriber and live-ingest closure track
+- Scope:
+  - coordinate the new generic Unit event listener with a known-good real hardware trigger
+  - verify `event/**` ingestion carries mixed live event types into Core, not just app-scoped callback subscriptions
+  - confirm callback envelopes still normalize to `unit.callback` even when captured from the generic Unit subscription path
+- Validation evidence:
+  - quiet-state probe: `/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke --event-source unit --db /tmp/neurolink-unit-live-event-smoke.db --duration 15 --max-events 1` -> `status=live_event_ingest_empty`, `failure_status=no_events_collected`
+  - coordinated real trigger: `/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke --event-source unit --db /tmp/neurolink-unit-live-event-smoke.db --duration 45 --max-events 4 --ready-file /tmp/neurolink-unit-ready.flag` plus `/home/emb/project/zephyrproject/.venv/bin/python /home/emb/project/zephyrproject/applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 app-callback-smoke --app-id neuro_unit_app --expected-app-echo neuro_unit_app-1.2.2-cbor-v2 --trigger-every 1 --invoke-count 2` -> Core `status=ok`, `events_persisted=4`, topics `lease_event` + `unit.callback`, final response `Observed lease_event, unit.callback and completed a read-only state sync before responding.`
+- Result:
+  - real hardware `monitor events` evidence now proves the Core generic live-ingest path works through `neuro_cli_events_live`
+  - generic `event/**` ingestion captured both lease-plane traffic and callback traffic in one bounded Core run
+  - callback envelopes captured from the generic Unit subscription path normalized correctly to `unit.callback` with `source_kind=unit_app` and `source_app=neuro_unit_app`
+- Updated progress estimate:
+  - implementation progress: 65% of release-1.2.3 scope
+  - release-closure progress: 66% of release-1.2.3 scope
+
+2026-05-07: Continued release-1.2.3 by promoting the bounded live-ingest surface beyond app-only callback subscriptions. `neurolink_core.cli live-event-smoke` now supports `--event-source unit`, which routes the existing Neuro CLI `monitor events` subscriber through the same Core workflow/evidence path used by the earlier app-callback live smoke. Added a shared live-event normalizer in the Neuro CLI tool adapter so raw subscriber rows from `monitor events` can be flattened into standard Core perception events without regressing the existing app callback `appevt-*` event-id contract. Focused tests first caught an event-id drift bug on app callback normalization; fixed that immediately, then reran the same narrow checks plus the broader Core regressions (`91 passed`). A real hardware probe against `unit-01` with `live-event-smoke --event-source unit --duration 15 --max-events 1` now fails closed with `live_event_ingest_empty` / `no_events_collected` instead of giving a false green result, which means the remaining closure gap is no longer Core ingestion support but finding a reliable real trigger for Unit-wide operational events on the current board/runtime. - Copilot
+
+#### EXEC-266 Release 1.2.3 Unit Live Event Ingest Promotion
+
+- Status: completed for Core-side unit live-event ingestion support; real closure remains blocked on obtaining a fresh Unit-wide operational event from the current hardware/runtime
+- Owner: GitHub Copilot continuing the release-1.2.3 health-subscriber promotion track
+- Scope:
+  - extend `live-event-smoke` with a bounded `unit` mode backed by Neuro CLI `monitor events`
+  - normalize raw `monitor events` subscriber rows into Core perception-event fields while preserving the existing app callback `event_id` contract
+  - prove the new unit-mode path in focused and adjacent Core regressions
+  - probe the current hardware for real Unit-wide event availability without weakening fail-closed behavior
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+- Result:
+  - `live-event-smoke` can now ingest bounded `monitor events` rows with `event_source=neuro_cli_events_live`
+  - generic live-event normalization now produces Core-compatible `source_kind`, `source_node`, `event_type`, `semantic_topic`, `priority`, and `dedupe_key` fields for Unit-wide event rows
+  - the existing app callback path still preserves the historical `appevt-*` event-id shape after the shared-normalizer refactor
+  - real hardware quiet-state probing now fails closed, proving the next remaining gap is event triggering rather than missing Core ingestion support
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py -k 'collect_live_events_reads_unit_event_payload or collect_app_events_reads_json_payload'` -> `2 passed, 33 deselected`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'live_event_smoke_can_ingest_unit_events_with_explicit_provenance or live_event_smoke_ingests_app_events_with_real_adapter_evidence or live_event_smoke_fails_closed_when_no_events_are_collected'` -> `3 passed, 53 deselected`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py` -> `91 passed in 2.41s`
+  - real hardware probe: `/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke --event-source unit --db /tmp/neurolink-unit-live-event-smoke.db --duration 15 --max-events 1` -> `status=live_event_ingest_empty`, `failure_status=no_events_collected`, subscription `neuro/unit-01/event/**`
+- Updated progress estimate:
+  - implementation progress: 64% of release-1.2.3 scope
+  - release-closure progress: 63% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 with a broader adjacent closure-validation pass after landing the real callback semantic normalization and sample-app identity regression. Re-ran the combined Neuro CLI/Core regression surface that covers `monitor app-events`, Core tool normalization, and the bounded `live-event-smoke` workflow path instead of relying only on the narrow unit tests used during the edit loop. The combined suite passed cleanly (`215 passed`), which confirms the recent fixes do not break adjacent CLI subscription handling, handler-audit evidence, workflow replay/live-ingest behavior, or the new release-string hygiene guard around `neuro_unit_app`. This moves the remaining 1.2.3 closure work away from immediate regression risk and narrows the next gap to the plan's remaining health-subscriber-promotion / final closure evidence track. - Copilot
+
+#### EXEC-265 Release 1.2.3 Adjacent Closure Validation
+
+- Status: completed for adjacent CLI/Core regression coverage after the latest live-ingest closure fixes
+- Owner: GitHub Copilot continuing the release-1.2.3 closure-validation track
+- Scope:
+  - rerun the combined Neuro CLI and Core regression suites touching `monitor app-events`, callback handling, live-ingest normalization, and `live-event-smoke`
+  - confirm the new sample-app release-identity regression does not conflict with adjacent workflow-plan or monitor-path expectations
+  - reduce regression risk before moving to the next remaining 1.2.3 plan item
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py` -> `215 passed in 3.87s`
+- Updated progress estimate:
+  - implementation progress: 62% of release-1.2.3 scope
+  - release-closure progress: 62% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by fixing the last semantics gap in the real live-ingest path after hardware callback closure had already turned green. The real `monitor app-events` path from Neuro CLI was returning callback envelopes as `{keyexpr, payload, ...}` rows, but Core `collect_app_events()` had been forwarding those rows unchanged, so the perception router fell back to `semantic_topic=unknown` even though the underlying payload was a real app callback. Normalized the live app-event rows inside `NeuroCliToolAdapter.collect_app_events()` so callback envelopes now arrive as standard Core perception events with `event_id`, `source_kind=unit_app`, `source_node=unit-01`, `source_app`, `event_type=callback`, and `semantic_topic=unit.callback`. Re-ran the coordinated hardware live listener and callback trigger on `unit-01`; this time Core recorded `topics=["unit.callback"]`, `highest_priority=80`, and notification text `Observed unit.callback...` instead of the earlier `unknown` topic. Added a focused release-string hygiene regression so the sample app source identity must match the canonical `RELEASE_TARGET`, preventing future silent drift like the stale `1.1.10` echo that was just corrected. - Copilot
+
+#### EXEC-264 Release 1.2.3 Live Callback Semantic Normalization
+
+- Status: completed for real callback semantic-topic normalization and source-level identity regression coverage
+- Owner: GitHub Copilot continuing the release-1.2.3 live-ingest closure track
+- Scope:
+  - normalize real `monitor app-events` callback envelopes into Core perception-event fields
+  - ensure hardware live-ingest records `unit.callback` rather than falling back to `unknown`
+  - add a focused regression that keeps `neuro_unit_app` source identity aligned with `RELEASE_TARGET`
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+- Result:
+  - Core live-ingest now normalizes real callback events into `source_kind=unit_app`, `source_node=unit-01`, `source_app=neuro_unit_app`, `event_type=callback`, and `semantic_topic=unit.callback`
+  - real hardware `live-event-smoke` now persists callback topics as `unit.callback` instead of `unknown`
+  - sample app source identity now has a focused regression tied to the canonical host `RELEASE_TARGET`
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py neurolink_core/tests/test_neurolink_core.py -k 'collect_app_events_reads_json_payload or live_event_smoke_ingests_app_events_with_real_adapter_evidence'` -> `2 passed, 87 deselected`
+  - coordinated hardware run: Core `live-event-smoke --ready-file /tmp/neurolink-live-ready.flag` plus `app-callback-smoke --app-id neuro_unit_app --expected-app-echo neuro_unit_app-1.2.2-cbor-v2 --trigger-every 1 --invoke-count 2` -> Core result `status=ok`, `live_event_ingest.collected_event_count=3`, `topics=["unit.callback"]`, notification text `Observed unit.callback and completed a read-only state sync before responding.`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -k 'workflow_commands_do_not_embed_release_target_literals or sample_app_source_identity_matches_release_target'` -> `2 passed, 124 deselected`
+- Updated progress estimate:
+  - implementation progress: 62% of release-1.2.3 scope
+  - release-closure progress: 60% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by closing the stale sample-app release identity skew that remained after the first real live-ingest closure. The `neuro_unit_app` LLEXT source was still hardcoded to `1.1.10` with manifest patch `1.1.7`, so real hardware callback smoke could succeed while still returning an obsolete build echo. Updated the sample app identity to `1.2.2` / `neuro_unit_app-1.2.2-cbor-v2`, rebuilt the artifact, and redeployed it on `unit-01`. Real callback smoke then passed with the new expected echo, and final cleanup confirmed `query leases` returned `[]` while `query apps` still reported `neuro_unit_app` as `RUNNING` / `ACTIVE`. This closes the remaining release-identity mismatch in the real hardware sample-app path and leaves the live-ingest closure on a current artifact instead of a stale release marker. - Copilot
+
+#### EXEC-263 Release 1.2.3 Sample App Identity Realignment
+
+- Status: completed for sample app release-identity alignment on real hardware
+- Owner: GitHub Copilot continuing the release-1.2.3 hardware closure track
+- Scope:
+  - align `neuro_unit_app` source-level version/build-id strings with the current canonical host release marker
+  - align the sample app manifest semantic version with the same release identity
+  - rebuild, redeploy, and validate real callback echo on `unit-01`
+  - release temporary activation lease and confirm final board state is clean
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+- Result:
+  - `neuro_unit_app` no longer reports stale `1.1.10` / `1.1.7` identity on the real hardware callback path
+  - rebuilt LLEXT now contains `neuro_unit_app-1.2.2-cbor-v2`
+  - real `app-callback-smoke` passed with expected echo `neuro_unit_app-1.2.2-cbor-v2`
+  - final board state is clean: no active leases, sample app still `RUNNING` / `ACTIVE`
+- Validation evidence:
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check && strings build/neurolink_unit_app/neuro_unit_app.llext | grep 'neuro_unit_app-1.2.2-cbor-v2'` -> rebuilt artifact contains the new build id
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy prepare --app-id neuro_unit_app --file build/neurolink_unit_app/neuro_unit_app.llext` -> reply `status=ok`, staged `size=21520`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy verify --app-id neuro_unit_app` -> reply `status=ok`, `size=21520`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy activate --app-id neuro_unit_app --lease-id l-live-act-124` -> reply `status=ok`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 app-callback-smoke --app-id neuro_unit_app --expected-app-echo neuro_unit_app-1.2.2-cbor-v2 --trigger-every 1 --invoke-count 2` -> `ok=true`, three callback events, echo matched on callback config and invoke replies
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 lease release --lease-id l-live-act-124 && ... query leases && ... query apps` -> activation lease released, `leases=[]`, `neuro_unit_app` `RUNNING` / `ACTIVE`
+- Updated progress estimate:
+  - implementation progress: 60% of release-1.2.3 scope
+  - release-closure progress: 58% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by fixing the stale external-app artifact path that blocked real live-ingest closure, then reran the bounded hardware callback flow end to end. Tightened Linux preflight/smoke artifact validation so ELF-like placeholders such as `.ELFfake llext` no longer pass, updated the preflight shell test to stop poisoning the real workspace build output, and made `build_neurolink.sh --pristine-always` clean the external app build directory so stale `.llext` files cannot survive a rebuild. On real hardware, rebuilt `neuro_unit_app` from a fake 15-byte placeholder into a valid 21500-byte Xtensa relocatable ELF, prepared/verified/activated it successfully on `unit-01`, added `--ready-file` passthrough to Core `live-event-smoke`, and then proved the real callback path by coordinating Core subscription readiness with `app-callback-smoke`. The final `live-event-smoke` run completed with `status=ok`, `collected_event_count=3`, real `neuro_cli_app_events_live` provenance, and clean read-only state-sync evidence, closing the first real hardware live-ingest gate for release-1.2.3. - Copilot
+
+#### EXEC-262 Release 1.2.3 Real Live Ingest Closure And Artifact Hardening
+
+- Status: completed for stale-artifact recovery and first real hardware live-ingest closure
+- Owner: GitHub Copilot continuing the autonomous-perception closure track on real hardware
+- Scope:
+  - reject ELF-like placeholder LLEXT artifacts in Linux preflight/smoke validation
+  - stop the preflight shell test from overwriting the real workspace `neuro_unit_app.llext`
+  - make `build_neurolink.sh --pristine-always` clean the external app build directory before rebuilding
+  - expose Core `live-event-smoke --ready-file` so external callback triggers can wait for subscription readiness
+  - rebuild, deploy, activate, and validate real callback ingestion on `unit-01`
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/scripts/build_neurolink.sh`
+  - `applocation/NeuroLink/scripts/preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/scripts/smoke_neurolink_linux.sh`
+  - `applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - fake `.ELFfake llext` placeholders are now rejected by Linux artifact validation instead of passing on 4-byte magic alone
+  - `test_preflight_neurolink_linux.sh` no longer contaminates `build/neurolink_unit_app/neuro_unit_app.llext`
+  - `build_neurolink.sh` now rebuilds a clean external app artifact even when the prior workspace artifact is stale or fake
+  - real hardware deploy/verify/activate for `neuro_unit_app` passed with artifact size `21500`
+  - coordinated Core `live-event-smoke` on hardware captured `3` real callback events from `neuro_unit_app`
+- Validation evidence:
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check` -> rebuilt `build/neurolink_unit_app/neuro_unit_app.llext` from a fake 15-byte placeholder to a valid `21500`-byte ELF
+  - `ls -l build/neurolink_unit_app/neuro_unit_app.llext && file build/neurolink_unit_app/neuro_unit_app.llext` -> `21500` bytes, `ELF 32-bit LSB relocatable, Tensilica Xtensa, version 1 (SYSV)`
+  - `xxd -l 32 build/neurolink_unit_app/neuro_unit_app.llext` -> valid ELF header beginning `7f 45 4c 46 01 01 01`
+  - `bash applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh` -> `PASS`
+  - `bash -n applocation/NeuroLink/scripts/build_neurolink.sh applocation/NeuroLink/scripts/preflight_neurolink_linux.sh applocation/NeuroLink/scripts/smoke_neurolink_linux.sh applocation/NeuroLink/tests/scripts/test_preflight_neurolink_linux.sh` -> passed
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k live_event_smoke` -> `2 passed, 53 deselected`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy prepare --app-id neuro_unit_app --file build/neurolink_unit_app/neuro_unit_app.llext` -> reply `status=ok`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy verify --app-id neuro_unit_app` -> reply `status=ok`, `size=21500`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json --node unit-01 deploy activate --app-id neuro_unit_app --lease-id l-live-act-123` -> reply `status=ok`
+  - coordinated hardware run: Core `live-event-smoke --ready-file /tmp/neurolink-live-ready.flag` plus `app-callback-smoke --app-id neuro_unit_app --trigger-every 1 --invoke-count 2` -> Core result `status=ok`, `live_event_ingest.collected_event_count=3`; callback smoke captured invoke counts `2`, `3`, `4`
+- Updated progress estimate:
+  - implementation progress: 58% of release-1.2.3 scope
+  - release-closure progress: 55% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by tightening the new live-event smoke so it fails closed when the live subscription yields no events. This avoids a misleading green result from an empty real callback subscription and turns the first bounded live-ingest command into a real closure gate candidate: the operator now gets an explicit `live_event_ingest_empty` failure with subscription metadata instead of a synthetic successful workflow run on zero events. - Copilot
+
+#### EXEC-260 Release 1.2.3 Empty Live Ingest Guard
+
+- Status: completed for fail-closed live ingest gating
+- Owner: GitHub Copilot continuing the autonomous-perception track toward trustworthy live closure gates
+- Scope:
+  - fail `live-event-smoke` closed when the real app-event subscription returns zero events
+  - add focused Core CLI coverage proving workflow execution does not continue on empty live ingress
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - empty bounded live subscriptions now return `live_event_ingest_empty` instead of a misleading success payload
+  - zero-event live ingress no longer contaminates workflow evidence with synthetic success
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'live_event_smoke_ingests_app_events_with_real_adapter_evidence or live_event_smoke_fails_closed_when_no_events_are_collected'` -> `2 passed, 53 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `55 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 52% of release-1.2.3 scope
+  - release-closure progress: 40% of release-1.2.3 scope
+
+2026-05-06: Attempted the first real hardware validation hop for the new live-ingest path using only read-only commands before any callback-triggering workflow. Direct `query device` and `query apps` over the real Neuro CLI path both returned `no_reply`, and `serial list` then confirmed the nearer blocker as `serial_device_missing` with no visible serial devices on the host. This means the bounded live-ingest code path is ready for hardware validation, but release-1.2.3 hardware closure is currently blocked by host-side serial visibility rather than Core workflow logic. - Copilot
+
+#### EXEC-261 Release 1.2.3 Live Hardware Probe Blocked
+
+- Status: blocked on host serial visibility before deeper live-ingest validation
+- Owner: GitHub Copilot continuing the autonomous-perception closure track
+- Scope:
+  - attempt non-destructive real hardware validation for the new live-ingest path
+  - distinguish transport/query failure from local serial visibility failure
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+- Result:
+  - `query device` and `query apps` both returned `no_reply`
+  - `serial list` returned `serial_device_missing` with no discovered ports
+  - current blocker is host serial enumeration / pass-through, not the new Core live-ingest command path
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --output json query device` -> `status=no_reply`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --output json query apps` -> `status=no_reply`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py --output json serial list` -> `status=serial_device_missing`
+- Updated progress estimate:
+  - implementation progress: 52% of release-1.2.3 scope
+  - release-closure progress: 40% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by adding the first Core-side live event-ingest smoke on top of the existing Neuro CLI subscription surface. `neurolink_core` now exposes `live-event-smoke`, which subscribes to real `monitor app-events`, ingests the returned event envelope through the standard workflow path, records explicit `neuro_cli_app_events_live` provenance, and carries real-adapter evidence through `agent_run_evidence`. This is intentionally a bounded live smoke rather than a long-running daemon promotion: it closes the next closure gap with minimal scope while reusing the real hardware path already present in Neuro CLI. - Copilot
+
+#### EXEC-259 Release 1.2.3 Core Live Event Smoke
+
+- Status: completed for bounded real event-ingest smoke
+- Owner: GitHub Copilot continuing the autonomous-perception track toward live subscription closure
+- Scope:
+  - add a Core `live-event-smoke` command backed by Neuro CLI `monitor app-events`
+  - add `NeuroCliToolAdapter.collect_app_events()` for bounded real app-event collection
+  - persist `neuro_cli_app_events_live` provenance through execution evidence and `agent_run_evidence`
+  - cover adapter parsing and Core CLI live-ingest evidence with focused tests
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+- Result:
+  - Core can now ingest a bounded real `monitor app-events` subscription through `live-event-smoke`
+  - live callback ingest is persisted as `neuro_cli_app_events_live` instead of synthetic replay provenance
+  - live-ingest smoke reuses the real Neuro CLI adapter for both ingress and delegated read-only tool execution evidence
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_tools.py -q -k collect_app_events_reads_json_payload` -> `1 passed, 33 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k live_event_smoke_ingests_app_events_with_real_adapter_evidence` -> `1 passed, 53 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_tools.py -q` -> `34 passed, 3 subtests passed`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `54 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 51% of release-1.2.3 scope
+  - release-closure progress: 38% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by tightening live event-ingestion provenance instead of adding another parallel ingest path. Core workflow persistence now preserves explicit event source labels, so one-shot Neuro CLI agent-event ingestion is recorded as `neuro_cli_agent_events` rather than the generic `provided`, and replay-backed execution spans now retain `replay_file` or `daemon_replay_file` provenance inside execution evidence as well. Added focused Core CLI coverage for both `no-model-dry-run` and `agent-run` when ingesting Neuro CLI agent events, and surfaced the same source label through `agent_run_evidence` so release-gate evidence can distinguish live ingest from synthetic replay. - Copilot
+
+#### EXEC-258 Release 1.2.3 Live Ingest Provenance Slice
+
+- Status: completed for explicit live event-source evidence
+- Owner: GitHub Copilot continuing the autonomous-perception track toward live ingest closure
+- Scope:
+  - propagate event-source labels from CLI entrypoints into workflow execution-span persistence
+  - distinguish one-shot Neuro CLI agent-event ingest from generic provided events
+  - surface event provenance through `agent_run_evidence` and replay execution evidence
+  - cover `agent-run` and `no-model-dry-run` ingestion of Neuro CLI agent events with focused tests
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+- Result:
+  - live agent-event ingestion is now recorded as `neuro_cli_agent_events` instead of the ambiguous `provided`
+  - replay-backed execution spans keep `replay_file` and `daemon_replay_file` provenance in persisted execution evidence
+  - `agent_run_evidence` now exposes the event source used for the run
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'no_model_dry_run_can_ingest_agent_events or agent_run_can_ingest_agent_events_with_explicit_provenance or event_replay_loads_json_fixture'` -> `3 passed, 50 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `53 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 48% of release-1.2.3 scope
+  - release-closure progress: 33% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by adding direct Neuro CLI main-entry coverage for the guarded rollback operator path. The grouped `deploy rollback` command is now covered end-to-end through `neuro_cli.main()`, asserting that parser wiring, protected payload construction, keyexpr selection, lease propagation, and operator `reason` forwarding all stay aligned with the Core-side `system_rollback_app` contract. This keeps the 1.2.3 guarded recovery slice anchored on the existing Neuro CLI update surface instead of a parallel rollback path. - Copilot
+
+#### EXEC-257 Release 1.2.3 Neuro CLI Rollback Contract Coverage
+
+- Status: completed for direct grouped rollback command coverage
+- Owner: GitHub Copilot continuing the autonomous-perception and recovery track
+- Scope:
+  - add `neuro_cli.main()` coverage for grouped `deploy rollback`
+  - assert correct rollback keyexpr, lease propagation, and operator reason forwarding
+  - keep Core rollback resume aligned with the existing protected Neuro CLI update surface
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+- Result:
+  - grouped rollback command coverage now proves `deploy rollback` uses `neuro/<node>/update/app/<app>/rollback`
+  - rollback operator reason is preserved in the outgoing protected payload
+- Validation evidence:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q -k grouped_deploy_rollback_payload_path` -> `1 passed, 124 deselected`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py -q` -> `125 passed`
+- Updated progress estimate:
+  - implementation progress: 46% of release-1.2.3 scope
+  - release-closure progress: 30% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by closing the first operator-facing slice on top of the guarded rollback gate. Approval context now surfaces `recovery_candidate_summary` directly instead of leaving operators to dig only through nested requirement payloads, the Core CLI test suite now exercises a full `event-replay -> approval-inspect -> approval-decision approve` rollback flow with explicit recovery evidence assertions, and the English/Chinese AI Core runbooks now document `event-daemon`, `activation-health-guard`, evidence inspection, and guarded rollback approval steps. The release-1.2.3 plan was also updated so the activation-health and recovery-evidence workstream is reflected in the canonical scope/status document. - Copilot
+
+#### EXEC-256 Release 1.2.3 Approval Context And Runbook Closure Slice
+
+- Status: completed for operator-facing rollback evidence exposure
+- Owner: GitHub Copilot continuing the autonomous-perception and recovery track
+- Scope:
+  - surface `recovery_candidate_summary` directly in approval context payloads
+  - cover CLI rollback approval inspection and resume with explicit recovery-evidence assertions
+  - document `event-replay`, `event-daemon`, `activation-health-guard`, and guarded rollback approval review in both runbooks
+  - sync the release-1.2.3 plan with the now-landed activation health and recovery workstream
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.3_AUTONOMOUS_PERCEPTION_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+- Result:
+  - `approval-inspect` and `approval-decision` payloads now expose `approval_context.recovery_candidate_summary`
+  - operator guidance now covers deterministic event replay, activation health guard usage, and rollback approval evidence review
+  - the 1.2.3 plan now reflects activation health, recovery evidence, and approval-bounded rollback gates as implemented scope
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k rollback_approval_surfaces_recovery_candidate_summary` -> `1 passed, 51 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `52 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 45% of release-1.2.3 scope
+  - release-closure progress: 29% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by closing the first approval-bounded rollback gate on top of the new recovery candidate evidence. Added `system_rollback_app` as an explicit approval-required tool contract backed by the existing protected Neuro CLI deploy rollback surface, changed rollback candidate lease ownership to the correct `update/app/<app>/rollback` resource, and taught the workflow to create a pending rollback approval request whenever post-activation health is classified as `rollback_required`. The deterministic test path now proves the sequence `activation_health_guard -> query_leases -> pending rollback approval -> approved rollback resume` without automatically executing rollback before operator approval. - Copilot
+
+#### EXEC-255 Release 1.2.3 Guarded Rollback Approval Gate
+
+- Status: completed for deterministic pending-approval rollback gating
+- Owner: GitHub Copilot continuing the autonomous-perception and recovery track
+- Scope:
+  - add `system_rollback_app` as an approval-required tool contract
+  - align rollback lease evidence to `update/app/<app>/rollback`
+  - create pending rollback approval requests from rollback-required recovery candidates
+  - prove approved resume executes the rollback tool with resolved app and lease ids
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_agent_contracts.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - rollback-required activation failures now create a pending `system_rollback_app` approval request
+  - approval resume can execute the rollback tool with resolved rollback lease ids
+  - operator requirements now resolve `update_rollback_lease` into the correct protected update resource
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_tools.py -q` -> `33 passed, 3 subtests passed`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `51 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 43% of release-1.2.3 scope
+  - release-closure progress: 22% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by adding the first deterministic rollback-candidate evidence hop after the activation health guard. When health is classified as `rollback_required`, the workflow now performs a bounded read-only `system_query_leases` observation, derives lease-ownership evidence for the target app control resource, and persists a `recovery_candidate` fact plus `recovery_candidate_summary` audit payload. This keeps rollback itself behind explicit operator approval while filling the Phase D gap for lease ownership, rollback decision, and final app-state evidence. - Copilot
+
+#### EXEC-254 Release 1.2.3 Recovery Candidate Evidence
+
+- Status: completed for deterministic rollback-candidate evidence collection
+- Owner: GitHub Copilot continuing the autonomous-perception and recovery track
+- Scope:
+  - observe lease ownership after a rollback-required activation health result
+  - persist a `recovery_candidate` fact for guarded rollback review
+  - add `recovery_candidate_summary` to workflow audit evidence
+  - cover the new read-only lease observation path in the workflow test
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - rollback-required health guard results now trigger a bounded read-only lease observation
+  - workflow audit evidence now includes lease ownership and rollback candidate metadata
+  - `recovery_candidate` facts are queryable without scanning audit blobs
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `51 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 38% of release-1.2.3 scope
+  - release-closure progress: 19% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by promoting activation health output from audit-only metadata into a first-class persisted fact. When `system_activation_health_guard` completes, the workflow now writes an `activation_health_observation` fact keyed by target app so later recovery, daemon replay, and operator review paths can query the classification directly instead of reparsing audit blobs. Added a focused workflow assertion that the rollback-required activation guard result is now present in the fact store. - Copilot
+
+#### EXEC-253 Release 1.2.3 Activation Health Fact Persistence
+
+- Status: completed for persisted recovery evidence
+- Owner: GitHub Copilot continuing the autonomous-perception and recovery track
+- Scope:
+  - persist successful activation health guard output as a dedicated workflow fact
+  - make rollback-required health evidence queryable without reading audit records
+  - extend the workflow integration test to assert fact persistence
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - `activation_health_observation` is now stored in the facts table for successful guard executions
+  - activation health evidence is queryable by execution span and app id
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `51 passed, 3 subtests passed`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_tools.py -q` -> `31 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 34% of release-1.2.3 scope
+  - release-closure progress: 17% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 by wiring the deterministic activation health guard into the main no-model workflow instead of leaving it as a standalone CLI-only observer. `unit.lifecycle.activate_failed` now routes to a dedicated read-only `system_activation_health_guard` tool contract, the fake and Neuro CLI adapters both expose that contract in their manifests, and workflow audit evidence now persists `activation_health_summary` alongside the existing state-sync summary. Added focused tool and workflow tests covering manifest exposure, adapter execution, and the rollback-required classification when an activate-failed event is followed by a missing target app. - Copilot
+
+#### EXEC-252 Release 1.2.3 Activation Guard Workflow Integration
+
+- Status: completed for deterministic workflow routing and recovery-evidence persistence
+- Owner: GitHub Copilot continuing the autonomous-perception and recovery track
+- Scope:
+  - route `unit.lifecycle.activate_failed` into the dedicated activation health guard instead of generic state sync
+  - expose `system_activation_health_guard` through fake and Neuro CLI tool manifests
+  - classify activation health inside adapter execution so workflow tool results stay structured
+  - persist `activation_health_summary` in workflow audit evidence
+  - cover the integration with focused tool and workflow tests
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_agent_contracts.py`
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - `system_activation_health_guard` is now a first-class read-only tool contract
+  - activate-failed event routing now emits health-guard evidence instead of generic state-sync-only evidence
+  - workflow audit records now include `activation_health_summary`
+  - rollback consideration remains evidence-only and operator mediated
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_tools.py -q` -> `31 passed, 3 subtests passed`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `51 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 31% of release-1.2.3 scope
+  - release-closure progress: 15% of release-1.2.3 scope
+
+2026-05-06: Continued release-1.2.3 with the first post-activation health guard slice. Added a core-side `activation-health-guard` path that reuses the existing `system_state_sync` surface instead of inventing a new side-effecting control path. The new observer classifies activation results into `healthy`, `degraded`, `no_reply`, or `rollback_required`, reports whether rollback should be considered, and keeps rollback as an operator decision rather than an automatic action. The fake adapter now simulates a running target app when `app_id` is provided for health observation, and both fake and Neuro CLI-backed paths are covered by focused tool tests. This slice keeps release-1.2.3 aligned with the plan's health-guard/recovery-evidence track without widening into live rollback execution yet. - Copilot
+
+#### EXEC-251 Release 1.2.3 Activation Health Guard Slice
+
+- Status: completed for deterministic post-activation observation and classification
+- Owner: GitHub Copilot continuing the autonomous-perception and recovery track
+- Scope:
+  - add a core-side activation health observer based on existing state-sync/query surfaces
+  - classify activation results into healthy/degraded/no_reply/rollback_required
+  - expose the observer through a dedicated `activation-health-guard` Core CLI command
+  - keep rollback explicit and operator-mediated rather than automatic
+  - add focused fake and Neuro CLI-backed tests for the new observer
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+- Result:
+  - `observe_activation_health()` now produces a structured `1.2.3-activation-health-v1` observation
+  - fake adapter path can report a healthy running target app for deterministic tests
+  - missing target app after activate is classified as `rollback_required`
+  - state-sync failure is classified as `no_reply`
+  - Core CLI now exposes `activation-health-guard --app-id <app>`
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_tools.py -q` -> `29 passed, 3 subtests passed`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` -> `50 passed, 3 subtests passed`
+- Updated progress estimate:
+  - implementation progress: 26% of release-1.2.3 scope
+  - release-closure progress: 12% of release-1.2.3 scope
+
+2026-05-06: Started release-1.2.3 implementation on the autonomous-perception track. Added a deterministic `event-replay` workflow/CLI path that reuses the existing persistence, memory, policy, tool, and audit boundaries while reporting replay summaries for provided events, normalized events, duplicates, and observed topics. Added a deterministic `event-daemon` replay path for ordered event batches, keeping a shared router across cycles and seeding dedupe state from persisted event rows so a file-backed restart does not retrigger already seen events. Promoted `notification_dispatch` into structured evidence by persisting a dedicated fact and audit `notification_summary`, and tightened the fake Affective salience policy so operational topics such as `unit.network.endpoint_drift`, `unit.health.degraded`, `unit.lifecycle.activate_failed`, and `unit.state.offline` still open a Rational window even when their raw priority is low. Focused validation passed for `neurolink_core/tests/test_neurolink_core.py` after each slice, ending at `50 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-250 Release 1.2.3 Autonomous Perception Kickoff
+
+- Status: in progress for the first deterministic perception/daemon infrastructure slice
+- Owner: GitHub Copilot continuing the post-1.2.2 HLD track
+- Scope:
+  - add deterministic `event-replay` and `event-daemon` execution paths
+  - keep event facts on the same persistence/audit path as existing workflow execution
+  - add restart-safe dedupe continuity for daemon replay
+  - add structured notification evidence for event-triggered Affective wake
+  - add explicit operational salience wake policy for key Unit health/network topics
+- Touched files:
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.3_AUTONOMOUS_PERCEPTION_PLAN.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/agents.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/events.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result so far:
+  - `event-replay` can execute a replay fixture through the standard workflow and emit replay summaries
+  - `event-daemon` can execute ordered batches with shared-router dedupe and file-backed restart continuity
+  - workflow executions now persist `notification_dispatch` facts and `notification_summary` audit metadata
+  - low-priority operational topics can trigger event-driven notification and Rational state-sync reasoning
+- Validation evidence so far:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q` passed with `50 passed, 3 subtests passed`
+- Current progress estimate:
+  - implementation progress: 18% of release-1.2.3 scope
+  - release-closure progress: 8% of release-1.2.3 scope
+
 2026-05-05: Closed release-1.2.2 after adding the Chinese AI Core runbook, rerunning the final real-runtime closure gates, and promoting the canonical Neuro CLI release marker. Added `docs/project/AI_CORE_RUNBOOK_ZH.md` as the Chinese operator startup and validation guide, linked it from `README.md` and the release plan, and promoted `RELEASE_TARGET` from `1.2.1` to `1.2.2` in both the Neuro CLI entrypoint and workflow catalog. Final validation passed for Affective live model smoke with `qwen-plus`, Mem0 sidecar smoke with `fallback_active=false`, serial-required hardware preflight on `/dev/ttyACM0`, read-only real Neuro CLI adapter gate, full combined real runtime gate with real Affective + GitHub Copilot Rational + Mem0 + Neuro CLI, Core tests (`95 passed, 6 subtests passed`), Neuro CLI tests (`124 passed`), and CRLF-aware diff check. Deferred long-running daemon/event-stream validation, provider matrix expansion, broader hardware matrix coverage, and multi-Core federation remain next-release follow-ups. - Copilot
 
 #### EXEC-249 Release 1.2.2 Final Closure And Promotion

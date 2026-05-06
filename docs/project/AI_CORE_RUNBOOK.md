@@ -230,7 +230,95 @@ Expected evidence:
 8. `real_tool_adapter_present=true`
 9. `real_tool_execution_succeeded=true`
 
-## 5. Session And Approval Commands
+## 5. Release-1.2.3 Event And Approval Commands
+
+### 5.1 Deterministic Event Replay
+
+Replay one ordered event fixture through the standard workflow path:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-replay \
+  --db /tmp/neurolink-core.db \
+  --events-file /tmp/activate_failed_events.json
+```
+
+Use this to validate `unit.lifecycle.activate_failed` handling, persisted event
+facts, and approval-bounded recovery evidence without promoting a live
+subscriber yet.
+
+Replay a multi-cycle daemon fixture with shared dedupe and DB-backed restart
+continuity:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-daemon \
+  --db /tmp/neurolink-core.db \
+  --events-file /tmp/event_daemon_fixture.json
+```
+
+Run the bounded real event-ingest smoke against an app callback subscription:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke \
+  --db /tmp/neurolink-core.db \
+  --app-id <app-id> \
+  --duration 5 \
+  --max-events 1
+```
+
+Use this to prove the Core can ingest real Neuro CLI `monitor app-events`
+output through the normal workflow path before promoting a long-running live
+subscriber.
+
+Run the bounded real event-ingest smoke against the generic Unit event stream:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli live-event-smoke \
+  --event-source unit \
+  --db /tmp/neurolink-core.db \
+  --duration 45 \
+  --max-events 4 \
+  --ready-file /tmp/neurolink-unit-ready.flag
+```
+
+Use this when you need Core to ingest raw `event/**` traffic such as
+`lease_event`, `state_event`, or `update_event` rather than only app callback
+subscriptions.
+
+For repeatable release-1.2.3 closure probes, use the coordination helper
+instead of manually juggling two terminals:
+
+```bash
+bash applocation/NeuroLink/scripts/run_unit_live_event_probe.sh \
+  --mode state-online
+```
+
+Swap `--mode state-online` for `callback` or `update-activate` as needed.
+
+### 5.2 Activation Health Guard
+
+Inspect post-activation health for a target app through the read-only state-sync
+surface:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli activation-health-guard \
+  --app-id <app-id> \
+  --tool-adapter neuro-cli
+```
+
+Look for `health_observation.classification` and
+`health_observation.ready_for_rollback_consideration`. A
+`rollback_required` result is evidence for operator review, not an automatic
+rollback.
+
+For `live-event-smoke`, inspect `live_event_ingest.subscription`,
+`live_event_ingest.collected_event_count`, `event_source`, and
+`agent_run_evidence.real_tool_adapter_present` in the JSON output.
+
+For generic Unit-mode runs, also inspect the persisted topics in the final
+response to confirm raw framework payloads were promoted into operational
+topics such as `unit.state.online` or `unit.lifecycle.activate_failed`.
+
+### 5.3 Session And Approval Inspection
 
 Inspect a Core session:
 
@@ -244,6 +332,13 @@ Inspect a pending approval request:
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli approval-inspect --approval-request-id <approval-request-id>
 ```
 
+For rollback review, inspect these fields in the JSON output:
+
+1. `approval_context.recovery_candidate_summary`
+2. `approval_context.operator_requirements.matching_lease_ids`
+3. `approval_context.source_execution_evidence.facts` for `activation_health_observation` and `recovery_candidate`
+4. `approval_context.source_execution_evidence.audit_record.payload.activation_health_summary`
+
 Apply an approval decision:
 
 ```bash
@@ -252,6 +347,9 @@ Apply an approval decision:
   --decision approve \
   --tool-adapter neuro-cli
 ```
+
+For a guarded rollback, approve only after the recovery summary, target app,
+and rollback lease ownership all line up.
 
 Side-effecting app control remains approval-gated. Do not use the real adapter
 for app lifecycle commands unless the operator intends to exercise those gates.

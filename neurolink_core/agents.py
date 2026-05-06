@@ -35,8 +35,39 @@ class RationalPlan:
 
 
 class FakeAffectiveAgent:
+    OPERATIONAL_WAKE_TOPICS: dict[str, tuple[str, int]] = {
+        "unit.network.endpoint_drift": (
+            "network_endpoint_drift_requires_rational_window",
+            85,
+        ),
+        "unit.health.degraded": (
+            "degraded_health_requires_rational_window",
+            85,
+        ),
+        "unit.lifecycle.activate_failed": (
+            "activate_failure_requires_rational_window",
+            90,
+        ),
+        "unit.state.offline": (
+            "offline_state_requires_rational_window",
+            90,
+        ),
+        "unit.state.online": (
+            "online_state_requires_rational_window",
+            70,
+        ),
+    }
+
     def decide(self, frame: PerceptionFrame, memory_items: list[dict[str, Any]]) -> AffectiveDecision:
         del memory_items
+        for topic in frame.topics:
+            if topic in self.OPERATIONAL_WAKE_TOPICS:
+                reason, minimum_salience = self.OPERATIONAL_WAKE_TOPICS[topic]
+                return AffectiveDecision(
+                    delegated=True,
+                    reason=reason,
+                    salience=max(frame.highest_priority, minimum_salience),
+                )
         delegated = frame.highest_priority >= 50 or "unit.callback" in frame.topics
         if delegated:
             return AffectiveDecision(
@@ -65,7 +96,10 @@ class FakeRationalAgent:
             return None
         tool_name = "system_state_sync"
         reason = "state_sync_before_any_unit_side_effect"
-        if "user.input.control.app.restart" in frame.topics:
+        if "unit.lifecycle.activate_failed" in frame.topics:
+            tool_name = "system_activation_health_guard"
+            reason = "post_activate_health_guard_required"
+        elif "user.input.control.app.restart" in frame.topics:
             tool_name = "system_restart_app"
             reason = "app_restart_requested_by_user_input"
         elif "user.input.control.app.start" in frame.topics:
@@ -94,6 +128,7 @@ class FakeRationalAgent:
             "reason": decision.reason,
         }
         if session_context is not None and tool_name in {
+            "system_activation_health_guard",
             "system_restart_app",
             "system_start_app",
             "system_stop_app",

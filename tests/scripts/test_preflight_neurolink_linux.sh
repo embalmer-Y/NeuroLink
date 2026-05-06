@@ -8,8 +8,9 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mock_bin="${TMP_DIR}/bin"
 router_helper="${TMP_DIR}/router-helper.sh"
-mkdir -p "${mock_bin}" "${ROOT_DIR}/build/neurolink_unit_app"
-printf '\177ELFfake llext\n' >"${ROOT_DIR}/build/neurolink_unit_app/neuro_unit_app.llext"
+valid_artifact="${TMP_DIR}/valid-default.llext"
+mkdir -p "${mock_bin}"
+printf '\177ELF\001\001fake llext\n' >"${valid_artifact}"
 
 cat >"${mock_bin}/ss" <<'EOF'
 #!/usr/bin/env bash
@@ -46,7 +47,7 @@ EOF
 chmod +x "${router_helper}"
 
 set +e
-output="$(NEUROLINK_ROUTER_SCRIPT="${router_helper}" PATH="${mock_bin}:${PATH}" bash "${SCRIPT}" --auto-start-router --output json 2>&1)"
+output="$(NEUROLINK_ROUTER_SCRIPT="${router_helper}" PATH="${mock_bin}:${PATH}" bash "${SCRIPT}" --artifact-file "${valid_artifact}" --auto-start-router --output json 2>&1)"
 rc=$?
 set -e
 
@@ -83,7 +84,7 @@ if [[ "${output}" != *'"status": "artifact_invalid"'* ]]; then
 fi
 
 placeholder_artifact="${TMP_DIR}/placeholder.llext"
-printf 'fake llext\n' >"${placeholder_artifact}"
+printf '\177ELFfake llext\n' >"${placeholder_artifact}"
 
 set +e
 output="$(PATH="${mock_bin}:${PATH}" bash "${SCRIPT}" --artifact-file "${placeholder_artifact}" --output json 2>&1)"
@@ -91,13 +92,13 @@ rc=$?
 set -e
 
 if [[ ${rc} -eq 0 ]]; then
-  echo "expected preflight to fail for a non-ELF custom artifact" >&2
+  echo "expected preflight to fail for an ELF-like placeholder artifact" >&2
   printf '%s\n' "${output}" >&2
   exit 1
 fi
 
 if [[ "${output}" != *'"status": "artifact_invalid"'* ]]; then
-  echo "missing artifact_invalid status for non-ELF artifact" >&2
+  echo "missing artifact_invalid status for ELF-like placeholder artifact" >&2
   printf '%s\n' "${output}" >&2
   exit 1
 fi
