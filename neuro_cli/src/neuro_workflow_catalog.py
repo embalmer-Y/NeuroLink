@@ -3,7 +3,7 @@ from __future__ import annotations
 import neuro_protocol as protocol
 
 
-RELEASE_TARGET = "1.2.5"
+RELEASE_TARGET = "1.2.6"
 
 
 def release_label(suffix: str) -> str:
@@ -400,6 +400,66 @@ WORKFLOW_PLANS = {
             ],
         },
     },
+    "control-app-start": {
+        "category": "control",
+        "description": "protected app start with app-control lease cleanup",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource app/neuro_unit_app/control --lease-id "
+            f"{release_label('app-start')}-lease --ttl-ms 60000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py app start --app-id neuro_unit_app --lease-id "
+            f"{release_label('app-start')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('app-start')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "lease_acquire": {"status": "ok", "resource": "app/neuro_unit_app/control"},
+                "app_start": {"status": "ok", "app_id": "neuro_unit_app"},
+                "lease_cleanup": {"leases": []},
+            },
+            "failure_statuses": [
+                "app_not_running",
+                "lease_conflict",
+                "payload.status:error",
+            ],
+        },
+    },
+    "control-app-restart": {
+        "category": "control",
+        "description": "protected app restart with app-control lease cleanup",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource app/neuro_unit_app/control --lease-id "
+            f"{release_label('app-restart')}-lease --ttl-ms 60000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py control app-restart --app neuro_unit_app --lease-id "
+            f"{release_label('app-restart')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('app-restart')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+        ],
+        "artifacts": [],
+        "json_contract": {
+            "success": {
+                "lease_acquire": {"status": "ok", "resource": "app/neuro_unit_app/control"},
+                "app_restart": {"status": "ok", "app_id": "neuro_unit_app"},
+                "lease_cleanup": {"leases": []},
+            },
+            "failure_statuses": [
+                "app_not_running",
+                "lease_conflict",
+                "payload.status:error",
+            ],
+        },
+    },
     "control-callback": {
         "category": "control",
         "description": "protected callback configuration and same-session callback smoke",
@@ -482,6 +542,35 @@ WORKFLOW_PLANS = {
                 "lease_not_found",
                 "session_open_failed",
                 "no_reply",
+                "payload.status:error",
+            ],
+        },
+    },
+    "control-rollback": {
+        "category": "control",
+        "description": "protected app rollback with explicit update rollback lease cleanup",
+        "commands": [
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-device",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py workflow plan discover-leases",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease acquire --resource update/app/neuro_unit_app/rollback --lease-id "
+            f"{release_label('rollback')}-lease --ttl-ms 60000",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py deploy rollback --app-id neuro_unit_app --lease-id "
+            f"{release_label('rollback')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query apps",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py lease release --lease-id "
+            f"{release_label('rollback')}-lease",
+            "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py query leases",
+        ],
+        "artifacts": ["applocation/NeuroLink/smoke-evidence"],
+        "json_contract": {
+            "success": {
+                "lease_acquire": {"status": "ok", "resource": "update/app/neuro_unit_app/rollback"},
+                "deploy_rollback": {"status": "ok", "app_id": "neuro_unit_app"},
+                "lease_cleanup": {"leases": []},
+            },
+            "failure_statuses": [
+                "lease_conflict",
+                "rollback_failed",
                 "payload.status:error",
             ],
         },
@@ -1214,6 +1303,70 @@ WORKFLOW_PLAN_METADATA = {
             "query leases until app/neuro_unit_app/control lease is absent",
         ],
     },
+    "control-app-start": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "discover-apps confirms neuro_unit_app is present and startable",
+            "discover-leases shows no conflicting app control lease",
+        ],
+        "expected_success": [
+            "lease acquire returns status=ok for app/neuro_unit_app/control",
+            "app start returns status=ok and app_id=neuro_unit_app",
+            "cleanup releases the app control lease and query leases is empty",
+        ],
+        "failure_statuses": [
+            {
+                "status": "lease_conflict",
+                "next_action": "release owned stale app control lease or wait for TTL expiry",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit error as start failure",
+            },
+        ],
+        "cleanup": [
+            f"release lease {release_label('app-start')}-lease",
+            "query leases until app/neuro_unit_app/control lease is absent",
+        ],
+    },
+    "control-app-restart": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "discover-apps confirms neuro_unit_app is running or restartable",
+            "discover-leases shows no conflicting app control lease",
+        ],
+        "expected_success": [
+            "lease acquire returns status=ok for app/neuro_unit_app/control",
+            "control app-restart returns status=ok and app_id=neuro_unit_app",
+            "cleanup releases the app control lease and query leases is empty",
+        ],
+        "failure_statuses": [
+            {
+                "status": "lease_conflict",
+                "next_action": "release owned stale app control lease or wait for TTL expiry",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "treat nested Unit error as restart failure",
+            },
+        ],
+        "cleanup": [
+            f"release lease {release_label('app-restart')}-lease",
+            "query leases until app/neuro_unit_app/control lease is absent",
+        ],
+    },
     "control-callback": {
         "host_support": ["linux", "wsl"],
         "requires_hardware": True,
@@ -1306,6 +1459,38 @@ WORKFLOW_PLAN_METADATA = {
             },
         ],
         "cleanup": ["repeat query leases after each release attempt"],
+    },
+    "control-rollback": {
+        "host_support": ["linux", "wsl"],
+        "requires_hardware": True,
+        "requires_serial": False,
+        "requires_router": True,
+        "requires_network": False,
+        "destructive": True,
+        "preconditions": [
+            "discover-device succeeds for the target Unit",
+            "discover-leases shows no conflicting update rollback lease",
+            "operator explicitly confirms the rollback target app and staged version",
+        ],
+        "expected_success": [
+            "lease acquire returns status=ok for update/app/neuro_unit_app/rollback",
+            "deploy rollback returns status=ok and app_id=neuro_unit_app",
+            "cleanup releases the rollback lease and query leases is empty",
+        ],
+        "failure_statuses": [
+            {
+                "status": "lease_conflict",
+                "next_action": "release owned stale rollback lease or wait for TTL expiry",
+            },
+            {
+                "status": "payload.status:error",
+                "next_action": "stop rollback flow and preserve failing reply payload",
+            },
+        ],
+        "cleanup": [
+            f"release lease {release_label('rollback')}-lease",
+            "query leases until update/app/neuro_unit_app/rollback lease is absent",
+        ],
     },
     "app-build": {
         "preconditions": [

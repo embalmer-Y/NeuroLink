@@ -592,6 +592,59 @@ Rules:
 
 UT anchor: `UT-CORE-AUDIT-*`
 
+### 6.9 Release 1.2.6 Federation Route Lifecycle
+
+States:
+
+1. `LOCAL_ONLY`
+2. `TOPOLOGY_REFRESHING`
+3. `PEER_CANDIDATE_SELECTED`
+4. `TRUST_CHECKING`
+5. `DELEGATION_PROPOSED`
+6. `DELEGATION_ACCEPTED`
+7. `DELEGATION_REJECTED`
+8. `NO_ROUTE`
+9. `STALE_ROUTE`
+10. `ROUTE_FAILED`
+
+Rules:
+
+1. A remote Unit operation must not be delegated until peer freshness, trust
+  scope, route reachability, and policy scope are all recorded.
+2. The Core must preserve local, delegated, relayed, stale, and no-route
+  outcomes as explicit evidence rather than collapsing them into generic Unit
+  transport failures.
+3. Delegated execution proposals may be produced by Agents, but the Core route
+  planner and policy layer must own final delegation decisions.
+4. A delegated result is not terminal until the source Core records normalized
+  result evidence and queues an audit record.
+
+UT anchor: `UT-CORE-FED-*`
+
+### 6.10 Release 1.2.6 Hardware Capability Route Lifecycle
+
+States:
+
+1. `CAPABILITY_UNKNOWN`
+2. `CAPABILITY_RECORDED`
+3. `ARTIFACT_COMPATIBLE`
+4. `ARTIFACT_INCOMPATIBLE`
+5. `ROUTE_COMPATIBLE`
+6. `ROUTE_INCOMPATIBLE`
+
+Rules:
+
+1. Core planning must use declared Unit capability descriptors instead of board
+  names, current lab addresses, Wi-Fi-only state, SD-card paths, or
+  PSRAM-specific implementation details.
+2. Artifact compatibility must be decided before Unit load or activation by
+  comparing architecture, ABI, board family, LLEXT support, storage class,
+  signing support, and resource budget.
+3. A capability mismatch must produce a deterministic planning failure that is
+  visible to Agent plan validation and closure evidence.
+
+UT anchors: `UT-CORE-UNITEXEC-*`, `UT-CORE-FED-*`
+
 ## 7. Data Structures
 
 ### 7.1 Request Envelope
@@ -761,6 +814,75 @@ UT anchor: `UT-CORE-AUDIT-*`
 }
 ```
 
+### 7.12 Core Peer Descriptor
+
+```json
+{
+  "core_id": "core-b",
+  "trust_scope": "lab-federation",
+  "reachable": true,
+  "freshness_state": "fresh",
+  "advertised_at": "2026-05-09T10:00:00Z",
+  "expires_at": "2026-05-09T10:05:00Z",
+  "capabilities": ["delegated_execution", "relay_route_summary"],
+  "remote_units": ["unit-remote-01"]
+}
+```
+
+### 7.13 Delegated Execution Proposal
+
+```json
+{
+  "delegation_id": "fed-del-01",
+  "source_core": "core-a",
+  "target_core": "core-b",
+  "target_node": "unit-remote-01",
+  "resource": "neuro/unit-remote-01/query/device",
+  "policy_scope": "read_only",
+  "route_kind": "delegated_core",
+  "timeout_ms": 5000,
+  "cleanup_required": false,
+  "audit_correlation_id": "audit-corr-01"
+}
+```
+
+### 7.14 Route Decision Record
+
+```json
+{
+  "route_decision_id": "route-01",
+  "source_core": "core-a",
+  "target_node": "unit-01",
+  "route_kind": "direct",
+  "relay_path": [],
+  "trust_scope": "local",
+  "status": "route_ready",
+  "failure_reason": "",
+  "evidence_refs": ["peer-core-a", "unit-01-capability"]
+}
+```
+
+### 7.15 Unit Capability Descriptor
+
+```json
+{
+  "node_id": "unit-01",
+  "architecture": "xtensa",
+  "abi": "zephyr-llext-v1",
+  "board_family": "esp32s3-class",
+  "llext_supported": true,
+  "storage_class": "removable_or_flash",
+  "network_transports": ["wifi", "serial_bridge"],
+  "relay_capable": false,
+  "signing_enforced": false,
+  "resource_budget": {
+    "heap_free_bytes": 0,
+    "app_slot_bytes": 0,
+    "stack_margin_bytes": 0
+  }
+}
+```
+
 ## 8. Error Model
 
 The Core error model is layered:
@@ -831,6 +953,8 @@ Critical counters:
   - seal-before-success, immutability, redaction boundaries.
 9. `UT-CORE-FED-*`
   - delegated execution contract, topology merge, trust metadata checks.
+10. `UT-CORE-HWCAP-*`
+  - capability descriptor parsing, artifact compatibility rejection, relay route mismatch.
 
 ### 10.2 Mandatory Traceability Rules
 
@@ -848,6 +972,8 @@ Critical counters:
 6. Implement Affective direct path and Rational delegation path.
 7. Implement memory candidate extraction.
 8. Implement inference profile routing and health checks.
+9. Implement release-1.2.6 federation topology and delegated execution contracts.
+10. Implement capability-driven route planning and artifact compatibility checks.
 
 ## 12. Traceability Prefixes
 

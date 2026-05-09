@@ -470,7 +470,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.2.5")
+        self.assertEqual(payload["release_target"], "1.2.6")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -1992,7 +1992,7 @@ class TestNeuroCliResultClassification(unittest.TestCase):
         )
         self.assertIn(".major = 1,", source_text)
         self.assertIn(".minor = 2,", source_text)
-        self.assertIn(".patch = 4,", source_text)
+        self.assertIn(".patch = 6,", source_text)
 
     def test_canonical_skill_package_contains_required_resources(self) -> None:
         project_root = NEURO_CLI_DIR.parent
@@ -3279,7 +3279,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertIn("event_stream", names)
         self.assertIn("app_event_stream", names)
 
-    def test_capabilities_reports_release_1_2_5(self) -> None:
+    def test_capabilities_reports_release_1_2_6(self) -> None:
         args = Namespace(output="json")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -3287,7 +3287,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.2.5")
+        self.assertEqual(payload["release_target"], "1.2.6")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

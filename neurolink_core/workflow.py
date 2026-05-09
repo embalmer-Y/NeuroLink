@@ -33,6 +33,7 @@ from .tools import (
     ToolExecutionResult,
     load_mcp_bridge_descriptor_payload,
     load_neuro_cli_skill_descriptor_payload,
+    validate_tool_workflow_catalog_consistency,
 )
 
 
@@ -44,7 +45,7 @@ APP_DEPLOY_PREPARE_VERIFY_SCHEMA_VERSION = "1.2.4-app-deploy-prepare-verify-v1"
 APP_DEPLOY_ACTIVATE_SCHEMA_VERSION = "1.2.4-app-deploy-activate-v1"
 APP_DEPLOY_ROLLBACK_SCHEMA_VERSION = "1.2.4-app-deploy-rollback-v1"
 EVENT_SERVICE_SCHEMA_VERSION = "1.2.4-event-service-v1"
-RATIONAL_PLAN_QUALITY_SCHEMA_VERSION = "1.2.5-rational-plan-quality-v1"
+RATIONAL_PLAN_QUALITY_SCHEMA_VERSION = "1.2.6-rational-plan-quality-v2"
 RATIONAL_PLAN_EVIDENCE_SCHEMA_VERSION = "1.2.5-rational-plan-evidence-v1"
 AFFECTIVE_RUNTIME_CONTEXT_SCHEMA_VERSION = "1.2.5-affective-runtime-context-v1"
 
@@ -2278,6 +2279,7 @@ class NoModelCoreWorkflow:
         copilot_agent_factory: Any | None = None,
         event_router: PerceptionEventRouter | None = None,
         session_manager: CoreSessionManager | None = None,
+        federation_route_provider: Callable[[PerceptionFrame, dict[str, Any]], dict[str, Any] | None] | None = None,
     ) -> None:
         self.maf_runtime_profile = maf_runtime_profile or build_maf_runtime_profile()
         self.data_store = data_store or CoreDataStore()
@@ -2297,6 +2299,7 @@ class NoModelCoreWorkflow:
         self.memory = memory or FakeLongTermMemory()
         self.tool_adapter = tool_adapter or FakeUnitToolAdapter()
         self.tool_policy = tool_policy or ReadOnlyToolPolicy()
+        self.federation_route_provider = federation_route_provider
 
     def run(
         self,
@@ -2362,6 +2365,28 @@ class NoModelCoreWorkflow:
         }
         session_context["skill_descriptors"] = [self._skill_descriptor_summary()]
         session_context["mcp_descriptors"] = [self._mcp_descriptor_summary()]
+        federation_route_evidence: dict[str, Any] | None = None
+        if callable(self.federation_route_provider):
+            federation_route_evidence = self.federation_route_provider(
+                frame,
+                dict(session_context),
+            )
+            if isinstance(federation_route_evidence, dict) and federation_route_evidence:
+                session_context["federation_route_evidence"] = federation_route_evidence
+                route_decision = cast(
+                    dict[str, Any],
+                    federation_route_evidence.get("route_decision") or {},
+                )
+                self.data_store.persist_fact(
+                    execution_span_id,
+                    "federation_route",
+                    str(
+                        route_decision.get("target_node")
+                        or federation_route_evidence.get("command")
+                        or frame.frame_id
+                    ),
+                    federation_route_evidence,
+                )
 
         steps.append("long_term_memory_lookup_stub")
         memory_items = self.memory.lookup(frame)
@@ -2855,6 +2880,16 @@ class NoModelCoreWorkflow:
                 "delegated": plan is not None,
                 "tool_result_count": len(tool_results),
                 "audit_id": audit_id,
+                "federation_route_status": str(
+                    (federation_route_evidence or {}).get("status") or ""
+                ),
+                "federation_route_kind": str(
+                    cast(
+                        dict[str, Any],
+                        (federation_route_evidence or {}).get("route_decision") or {},
+                    ).get("route_kind")
+                    or ""
+                ),
             },
             session_id=resolved_session_id,
         )
@@ -3046,8 +3081,14 @@ class NoModelCoreWorkflow:
             "first_check_commands": list(payload.get("first_check_commands") or [])[:3],
         }
 
-    def _mcp_descriptor_summary(self) -> dict[str, Any]:
-        payload = load_mcp_bridge_descriptor_payload(self.tool_adapter)
+    def _mcp_descriptor_summary(self, contract: ToolContract | None = None) -> dict[str, Any]:
+        bridge_mode = "read_only_descriptor_only"
+        if contract is not None:
+            if contract.approval_required or contract.required_resources:
+                bridge_mode = "core_governed_approval_required_proposal"
+            elif contract.side_effect_level.value in {"read_only", "observe_only"}:
+                bridge_mode = "core_governed_read_only_execution"
+        payload = load_mcp_bridge_descriptor_payload(self.tool_adapter, bridge_mode=bridge_mode)
         safety_boundaries = cast(dict[str, Any], payload.get("safety_boundaries") or {})
         return {
             "schema_version": str(payload.get("schema_version") or ""),
@@ -3056,9 +3097,13 @@ class NoModelCoreWorkflow:
             "transport": str(payload.get("transport") or ""),
             "allowed_operations": list(payload.get("allowed_operations") or []),
             "read_only_tool_count": len(payload.get("read_only_tools") or []),
+            "approval_required_tool_count": len(payload.get("approval_required_tools") or []),
             "blocked_tool_count": len(payload.get("blocked_tools") or []),
             "tool_execution_via_mcp_forbidden": bool(
                 safety_boundaries.get("tool_execution_via_mcp_forbidden", False)
+            ),
+            "approval_required_tool_proposals_allowed": bool(
+                safety_boundaries.get("approval_required_tool_proposals_allowed", False)
             ),
             "external_mcp_connection_enabled": bool(
                 safety_boundaries.get("external_mcp_connection_enabled", False)
@@ -3074,6 +3119,52 @@ class NoModelCoreWorkflow:
         if argument_name == "--lease-id":
             aliases.append("lease")
         return tuple(aliases)
+
+    @staticmethod
+    def _build_skill_ground_rule_validation(
+        contract: ToolContract,
+        skill_descriptor: dict[str, Any],
+    ) -> dict[str, Any]:
+        argv_template = list(contract.argv_template)
+        output_contract = dict(contract.output_contract or {})
+        uses_wrapper_command = any(
+            "invoke_neuro_cli.py" in str(item) for item in argv_template
+        )
+        json_output_flag_present = any(
+            argv_template[index] == "--output" and index + 1 < len(argv_template)
+            and argv_template[index + 1] == "json"
+            for index in range(len(argv_template))
+        )
+        json_output_contract_satisfied = (
+            str(output_contract.get("format") or "") == "json"
+            and bool(output_contract.get("top_level_ok", False))
+            and json_output_flag_present
+        )
+        callback_audit_rule_satisfied = (
+            not bool(skill_descriptor.get("callback_audit_required", False))
+            or "callback" not in contract.tool_name
+            or bool(contract.approval_required)
+            or bool(contract.cleanup_hint)
+        )
+        closure_gates = {
+            "wrapper_command_required": uses_wrapper_command,
+            "json_output_required": (
+                not bool(skill_descriptor.get("json_output_required", False))
+                or json_output_contract_satisfied
+            ),
+            "callback_audit_rule_satisfied": callback_audit_rule_satisfied,
+        }
+        return {
+            "wrapper_command_required": uses_wrapper_command,
+            "json_output_flag_present": json_output_flag_present,
+            "json_output_contract_satisfied": json_output_contract_satisfied,
+            "callback_audit_rule_satisfied": callback_audit_rule_satisfied,
+            "closure_gates": closure_gates,
+            "valid": all(closure_gates.values()),
+            "failure_status": (
+                "skill_ground_rule_violation" if not all(closure_gates.values()) else ""
+            ),
+        }
 
     def _build_rational_plan_quality(
         self,
@@ -3116,18 +3207,37 @@ class NoModelCoreWorkflow:
             "callback_audit_required": bool(skill_descriptor.get("callback_audit_required", False)),
             "suggested_first_check_commands": list(skill_descriptor.get("first_check_commands") or []),
         }
-        mcp_descriptor = self._mcp_descriptor_summary()
+        skill_ground_rules = self._build_skill_ground_rule_validation(
+            contract,
+            skill_descriptor,
+        )
+        workflow_catalog_consistency = validate_tool_workflow_catalog_consistency(contract)
+        skill_requirements["workflow_plan_evidence_present"] = bool(
+            workflow_catalog_consistency.get("valid", False)
+        )
+        mcp_descriptor = self._mcp_descriptor_summary(contract)
         mcp_requirements: dict[str, Any] = {
             "bridge_name": mcp_descriptor.get("bridge_name"),
             "bridge_mode": mcp_descriptor.get("bridge_mode"),
             "allowed_operations": list(mcp_descriptor.get("allowed_operations") or []),
             "read_only_tool_count": int(mcp_descriptor.get("read_only_tool_count") or 0),
+            "approval_required_tool_count": int(
+                mcp_descriptor.get("approval_required_tool_count") or 0
+            ),
             "blocked_tool_count": int(mcp_descriptor.get("blocked_tool_count") or 0),
             "tool_execution_via_mcp_forbidden": bool(
                 mcp_descriptor.get("tool_execution_via_mcp_forbidden", False)
             ),
+            "approval_required_tool_proposals_allowed": bool(
+                mcp_descriptor.get("approval_required_tool_proposals_allowed", False)
+            ),
             "external_mcp_connection_enabled": bool(
                 mcp_descriptor.get("external_mcp_connection_enabled", False)
+            ),
+            "bridge_mode_satisfies_tool_governance": (
+                bool(mcp_descriptor.get("approval_required_tool_proposals_allowed", False))
+                if contract.approval_required or contract.required_resources
+                else not bool(mcp_descriptor.get("tool_execution_via_mcp_forbidden", True))
             ),
         }
         matched_available_tool = available_tool_index.get(plan.tool_name) or {}
@@ -3184,6 +3294,25 @@ class NoModelCoreWorkflow:
             "tool_name": plan.tool_name,
             "available_tool_match": plan.tool_name in available_tool_names,
             "available_tool_contract_match": available_tool_contract_match,
+            "failure_status": (
+                str(skill_ground_rules.get("failure_status") or "")
+                or str(workflow_catalog_consistency.get("failure_status") or "")
+                or (
+                    "missing_required_arguments"
+                    if blocking_missing_arguments
+                    else ""
+                )
+                or (
+                    "rational_plan_tool_not_in_available_tools"
+                    if plan.tool_name not in available_tool_names
+                    else ""
+                )
+                or (
+                    "rational_plan_tool_contract_mismatch"
+                    if not available_tool_contract_match
+                    else ""
+                )
+            ),
             "required_argument_coverage": required_argument_coverage,
             "missing_required_arguments": missing_required_arguments,
             "operator_resolvable_missing_arguments": operator_resolvable_missing_arguments,
@@ -3195,6 +3324,8 @@ class NoModelCoreWorkflow:
             "retryable": contract.retryable,
             "cleanup_awareness": cleanup_awareness,
             "cleanup_hint_present": bool(contract.cleanup_hint),
+            "skill_ground_rules": skill_ground_rules,
+            "workflow_catalog_consistency": workflow_catalog_consistency,
             "valid": (
                 not blocking_missing_arguments
                 and plan.tool_name in available_tool_names
@@ -3202,6 +3333,9 @@ class NoModelCoreWorkflow:
                 and bool(resource_fit.get("valid", False))
                 and bool(cleanup_awareness.get("valid", False))
                 and bool(retryability.get("valid", False))
+                and bool(skill_ground_rules.get("valid", False))
+                and bool(workflow_catalog_consistency.get("valid", False))
+                and bool(mcp_requirements.get("bridge_mode_satisfies_tool_governance", False))
             ),
             "skill_requirements": skill_requirements,
             "mcp_requirements": mcp_requirements,
@@ -3524,6 +3658,7 @@ def run_no_model_dry_run(
     copilot_agent_factory: Any | None = None,
     require_real_tool_adapter: bool = False,
     event_source_label: str | None = None,
+    federation_route_provider: Callable[[PerceptionFrame, dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     data_store = CoreDataStore(db_path)
     try:
@@ -3552,6 +3687,7 @@ def run_no_model_dry_run(
             rational_backend=rational_backend,
             allow_model_call=allow_model_call,
             copilot_agent_factory=copilot_agent_factory,
+            federation_route_provider=federation_route_provider,
         )
         result = workflow.run(
             events if events is not None else sample_events(),
@@ -3671,6 +3807,7 @@ def run_event_replay(
     tool_adapter: Any | None = None,
     require_real_tool_adapter: bool = False,
     replay_label: str | None = None,
+    federation_route_provider: Callable[[PerceptionFrame, dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     raw_events = [dict(event) for event in events]
     payload = run_no_model_dry_run(
@@ -3688,6 +3825,7 @@ def run_event_replay(
         copilot_agent_factory=copilot_agent_factory,
         require_real_tool_adapter=require_real_tool_adapter,
         event_source_label="replay_file",
+        federation_route_provider=federation_route_provider,
     )
     replay_topics = sorted(
         {
@@ -3726,6 +3864,7 @@ def run_event_daemon_replay(
     tool_adapter: Any | None = None,
     require_real_tool_adapter: bool = False,
     replay_label: str | None = None,
+    federation_route_provider: Callable[[PerceptionFrame, dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     batches = [[dict(event) for event in batch] for batch in event_batches]
     data_store = CoreDataStore(db_path)
@@ -3757,6 +3896,7 @@ def run_event_daemon_replay(
             allow_model_call=allow_model_call,
             copilot_agent_factory=copilot_agent_factory,
             event_router=shared_router,
+            federation_route_provider=federation_route_provider,
         )
         seeded_dedupe_keys = data_store.get_recent_dedupe_keys(limit=1000)
         shared_router.seed_dedupe_keys(seeded_dedupe_keys)
@@ -3896,6 +4036,7 @@ def run_live_event_service(
     rational_backend: str = "auto",
     copilot_agent_factory: Any | None = None,
     tool_adapter: Any | None = None,
+    federation_route_provider: Callable[[PerceptionFrame, dict[str, Any]], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     if event_source not in ("app", "unit"):
         raise ValueError("event_service_requires_valid_event_source")
@@ -3936,6 +4077,7 @@ def run_live_event_service(
             allow_model_call=allow_model_call,
             copilot_agent_factory=copilot_agent_factory,
             event_router=shared_router,
+            federation_route_provider=federation_route_provider,
         )
         resolved_session_id = workflow.session_manager.resolve_session_id(session_id)
         service_execution_span_id = new_id("span")

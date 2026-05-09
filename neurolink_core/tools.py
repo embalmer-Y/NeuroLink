@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
+import importlib.util
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -14,13 +17,28 @@ from .policy import SideEffectLevel
 
 TOOL_MANIFEST_SCHEMA_VERSION = "1.2.0-tool-manifest-v1"
 SKILL_DESCRIPTOR_SCHEMA_VERSION = "1.2.5-skill-descriptor-v1"
-MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION = "1.2.5-mcp-bridge-descriptor-v1"
+MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION = "1.2.6-mcp-bridge-descriptor-v2"
 STATE_SYNC_SCHEMA_VERSION = "1.2.0-state-sync-v1"
 ACTIVATION_HEALTH_SCHEMA_VERSION = "1.2.3-activation-health-v1"
 APP_CONTROL_TOOL_ACTIONS = {
     "system_start_app": "start",
     "system_stop_app": "stop",
     "system_unload_app": "unload",
+}
+INTERNAL_CORE_ONLY_TOOLS: set[str] = {
+    "system_state_sync",
+    "system_activation_health_guard",
+}
+TOOL_WORKFLOW_COVERAGE: dict[str, tuple[str, ...]] = {
+    "system_query_device": ("discover-device", "control-health"),
+    "system_query_apps": ("discover-apps",),
+    "system_query_leases": ("discover-leases", "control-cleanup"),
+    "system_capabilities": ("discover-host",),
+    "system_start_app": ("control-app-start",),
+    "system_restart_app": ("control-app-restart",),
+    "system_stop_app": ("llext-lifecycle",),
+    "system_unload_app": ("llext-lifecycle",),
+    "system_rollback_app": ("control-rollback",),
 }
 
 
@@ -32,6 +50,7 @@ class McpBridgeDescriptor:
     server_label: str
     transport: str
     read_only_tools: tuple[dict[str, Any], ...]
+    approval_required_tools: tuple[dict[str, Any], ...]
     blocked_tools: tuple[dict[str, Any], ...]
     allowed_operations: tuple[str, ...]
     safety_boundaries: dict[str, Any]
@@ -48,6 +67,7 @@ class McpBridgeDescriptor:
             "server_label": self.server_label,
             "transport": self.transport,
             "read_only_tools": [dict(item) for item in self.read_only_tools],
+            "approval_required_tools": [dict(item) for item in self.approval_required_tools],
             "blocked_tools": [dict(item) for item in self.blocked_tools],
             "allowed_operations": list(self.allowed_operations),
             "safety_boundaries": dict(self.safety_boundaries),
@@ -90,6 +110,153 @@ class SkillDescriptor:
 
 def _default_skill_contract_path() -> Path:
     return Path(__file__).resolve().parent.parent / "neuro_cli" / "skill" / "SKILL.md"
+
+
+def _default_workflow_catalog_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "neuro_cli" / "src" / "neuro_workflow_catalog.py"
+
+
+@lru_cache(maxsize=4)
+def load_workflow_catalog_definition(
+    workflow_catalog_path: str | Path | None = None,
+) -> dict[str, Any]:
+    resolved_path = Path(workflow_catalog_path) if workflow_catalog_path else _default_workflow_catalog_path()
+    src_dir = str(resolved_path.parent)
+    inserted_path = False
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+        inserted_path = True
+    spec = importlib.util.spec_from_file_location(
+        f"neurolink_workflow_catalog_{abs(hash(str(resolved_path)))}",
+        resolved_path,
+    )
+    if spec is None or spec.loader is None:
+        raise ValueError("workflow_catalog_load_failed")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if inserted_path and sys.path and sys.path[0] == src_dir:
+            sys.path.pop(0)
+    return {
+        "catalog_path": str(resolved_path),
+        "plans": dict(getattr(module, "WORKFLOW_PLANS", {})),
+        "metadata_defaults": dict(getattr(module, "WORKFLOW_METADATA_DEFAULTS", {})),
+        "metadata": dict(getattr(module, "WORKFLOW_PLAN_METADATA", {})),
+    }
+
+
+def _canonical_contract_command_suffix(contract: "ToolContract") -> str:
+    argv = [str(item) for item in contract.argv_template]
+    if not argv:
+        return ""
+    wrapper_index = next(
+        (index for index, item in enumerate(argv) if "invoke_neuro_cli.py" in item),
+        -1,
+    )
+    suffix = argv[wrapper_index + 1 :] if wrapper_index >= 0 else list(argv)
+    normalized: list[str] = []
+    skip_next = False
+    for item in suffix:
+        if skip_next:
+            skip_next = False
+            continue
+        if item == "--output":
+            skip_next = True
+            continue
+        normalized.append(item)
+    return " ".join(normalized).strip()
+
+
+def _workflow_command_mentions_lease(metadata: dict[str, Any]) -> bool:
+    for key in ("preconditions", "cleanup"):
+        for item in cast(list[Any], metadata.get(key) or []):
+            if "lease" in str(item).lower():
+                return True
+    return False
+
+
+def validate_tool_workflow_catalog_consistency(
+    contract: "ToolContract",
+    workflow_catalog_path: str | Path | None = None,
+) -> dict[str, Any]:
+    coverage_workflows: tuple[str, ...] = TOOL_WORKFLOW_COVERAGE.get(contract.tool_name, ())
+    if contract.tool_name in INTERNAL_CORE_ONLY_TOOLS:
+        return {
+            "catalog_path": str(
+                Path(workflow_catalog_path) if workflow_catalog_path else _default_workflow_catalog_path()
+            ),
+            "internal_core_only": True,
+            "coverage_workflows": [],
+            "workflow_entries_present": True,
+            "command_coverage_present": True,
+            "destructive_alignment": True,
+            "lease_governance_alignment": True,
+            "valid": True,
+            "failure_status": "",
+        }
+
+    catalog = load_workflow_catalog_definition(workflow_catalog_path)
+    plans = cast(dict[str, dict[str, Any]], catalog.get("plans") or {})
+    metadata_defaults = cast(dict[str, Any], catalog.get("metadata_defaults") or {})
+    metadata = cast(dict[str, dict[str, Any]], catalog.get("metadata") or {})
+    canonical_command = _canonical_contract_command_suffix(contract)
+    workflow_entries_present = bool(coverage_workflows) and all(
+        name in plans and name in metadata for name in coverage_workflows
+    )
+
+    command_coverage: list[str] = []
+    destructive_alignment = True
+    lease_governance_alignment = True
+    governed_tool = bool(contract.approval_required or contract.required_resources) or (
+        contract.side_effect_level
+        not in {SideEffectLevel.READ_ONLY, SideEffectLevel.OBSERVE_ONLY}
+    )
+
+    if workflow_entries_present:
+        for workflow_name in coverage_workflows:
+            workflow_entry = dict(plans.get(workflow_name) or {})
+            workflow_metadata = {**metadata_defaults, **dict(metadata.get(workflow_name) or {})}
+            commands = cast(list[Any], workflow_entry.get("commands") or [])
+            if canonical_command and any(
+                canonical_command in " ".join(shlex.split(str(command)))
+                for command in commands
+            ):
+                command_coverage.append(workflow_name)
+            destructive_alignment = destructive_alignment and (
+                bool(workflow_metadata.get("destructive", False)) if governed_tool else not bool(workflow_metadata.get("destructive", False))
+            )
+            if contract.required_resources:
+                lease_governance_alignment = lease_governance_alignment and _workflow_command_mentions_lease(
+                    workflow_metadata
+                )
+
+    valid = (
+        workflow_entries_present
+        and (bool(command_coverage) or not canonical_command)
+        and destructive_alignment
+        and lease_governance_alignment
+    )
+    failure_status = ""
+    if not workflow_entries_present:
+        failure_status = "workflow_catalog_missing"
+    elif canonical_command and not command_coverage:
+        failure_status = "workflow_catalog_command_gap"
+    elif not destructive_alignment or not lease_governance_alignment:
+        failure_status = "workflow_catalog_contract_mismatch"
+    return {
+        "catalog_path": str(catalog.get("catalog_path") or ""),
+        "internal_core_only": False,
+        "coverage_workflows": list(coverage_workflows),
+        "workflow_entries_present": workflow_entries_present,
+        "command_coverage_present": bool(command_coverage) or not canonical_command,
+        "command_coverage_workflows": command_coverage,
+        "canonical_command": canonical_command,
+        "destructive_alignment": destructive_alignment,
+        "lease_governance_alignment": lease_governance_alignment,
+        "valid": valid,
+        "failure_status": failure_status,
+    }
 
 
 def _split_markdown_frontmatter(content: str) -> tuple[dict[str, str], str]:
@@ -211,6 +378,7 @@ def _summarize_mcp_tool(contract: "ToolContract") -> dict[str, Any]:
 
 def load_mcp_bridge_descriptor(
     tool_adapter: Any | None = None,
+    bridge_mode: str = "read_only_descriptor_only",
 ) -> McpBridgeDescriptor:
     adapter = tool_adapter or FakeUnitToolAdapter()
     tool_manifest = getattr(adapter, "tool_manifest", None)
@@ -218,36 +386,105 @@ def load_mcp_bridge_descriptor(
     read_only_tools = tuple(
         _summarize_mcp_tool(contract)
         for contract in manifest
-        if contract.side_effect_level == SideEffectLevel.READ_ONLY
+        if contract.side_effect_level in {SideEffectLevel.READ_ONLY, SideEffectLevel.OBSERVE_ONLY}
     )
-    blocked_tools = tuple(
+    approval_required_tools = tuple(
         _summarize_mcp_tool(contract)
         for contract in manifest
-        if contract.side_effect_level != SideEffectLevel.READ_ONLY or contract.approval_required
+        if contract.approval_required
     )
-    return McpBridgeDescriptor(
-        bridge_name="neurolink-core-mcp-readonly-bridge",
-        bridge_mode="read_only_descriptor_only",
-        server_id="neurolink.core.readonly",
-        server_label="NeuroLink Core Read-Only MCP Bridge",
-        transport="in_process_descriptor_only",
-        read_only_tools=read_only_tools,
-        blocked_tools=blocked_tools,
-        allowed_operations=("describe_server", "list_read_only_tools"),
-        safety_boundaries={
+    blocked_tools: tuple[dict[str, Any], ...]
+    allowed_operations: tuple[str, ...]
+    safety_boundaries: dict[str, Any]
+    bridge_name = "neurolink-core-mcp-readonly-bridge"
+    server_id = "neurolink.core.readonly"
+    server_label = "NeuroLink Core Read-Only MCP Bridge"
+    transport = "in_process_descriptor_only"
+
+    if bridge_mode == "read_only_descriptor_only":
+        blocked_tools = tuple(
+            _summarize_mcp_tool(contract)
+            for contract in manifest
+            if contract.approval_required or contract.side_effect_level not in {SideEffectLevel.READ_ONLY, SideEffectLevel.OBSERVE_ONLY}
+        )
+        allowed_operations = ("describe_server", "list_read_only_tools")
+        safety_boundaries = {
             "descriptor_only": True,
             "tool_execution_via_mcp_forbidden": True,
             "side_effecting_tools_excluded": True,
             "approval_and_core_policy_required": True,
+            "approval_required_tool_proposals_allowed": False,
             "external_mcp_connection_enabled": False,
-        },
+        }
+    elif bridge_mode == "core_governed_read_only_execution":
+        blocked_tools = tuple(
+            _summarize_mcp_tool(contract)
+            for contract in manifest
+            if contract.approval_required or contract.side_effect_level not in {SideEffectLevel.READ_ONLY, SideEffectLevel.OBSERVE_ONLY}
+        )
+        allowed_operations = (
+            "describe_server",
+            "list_read_only_tools",
+            "execute_read_only_tool_via_core",
+        )
+        safety_boundaries = {
+            "descriptor_only": False,
+            "tool_execution_via_mcp_forbidden": False,
+            "read_only_tool_execution_via_core_required": True,
+            "side_effecting_tools_excluded": True,
+            "approval_and_core_policy_required": True,
+            "approval_required_tool_proposals_allowed": False,
+            "external_mcp_connection_enabled": False,
+        }
+        bridge_name = "neurolink-core-mcp-governed-readonly-bridge"
+        server_id = "neurolink.core.readonly.execute"
+        server_label = "NeuroLink Core Governed Read-Only MCP Bridge"
+        transport = "in_process_core_governed"
+    elif bridge_mode == "core_governed_approval_required_proposal":
+        blocked_tools = tuple()
+        allowed_operations = (
+            "describe_server",
+            "list_read_only_tools",
+            "execute_read_only_tool_via_core",
+            "list_approval_required_tools",
+            "submit_approval_required_tool_proposal",
+        )
+        safety_boundaries = {
+            "descriptor_only": False,
+            "tool_execution_via_mcp_forbidden": False,
+            "read_only_tool_execution_via_core_required": True,
+            "approval_required_tool_proposals_allowed": True,
+            "approval_required_tools_execute_only_after_core_approval": True,
+            "side_effecting_tools_execute_directly_forbidden": True,
+            "approval_and_core_policy_required": True,
+            "external_mcp_connection_enabled": False,
+        }
+        bridge_name = "neurolink-core-mcp-governed-proposal-bridge"
+        server_id = "neurolink.core.approval.proposal"
+        server_label = "NeuroLink Core Governed Approval Proposal MCP Bridge"
+        transport = "in_process_core_governed"
+    else:
+        raise ValueError("unsupported_mcp_bridge_mode")
+
+    return McpBridgeDescriptor(
+        bridge_name=bridge_name,
+        bridge_mode=bridge_mode,
+        server_id=server_id,
+        server_label=server_label,
+        transport=transport,
+        read_only_tools=read_only_tools,
+        approval_required_tools=approval_required_tools,
+        blocked_tools=blocked_tools,
+        allowed_operations=allowed_operations,
+        safety_boundaries=safety_boundaries,
     )
 
 
 def load_mcp_bridge_descriptor_payload(
     tool_adapter: Any | None = None,
+    bridge_mode: str = "read_only_descriptor_only",
 ) -> dict[str, Any]:
-    return load_mcp_bridge_descriptor(tool_adapter).to_dict()
+    return load_mcp_bridge_descriptor(tool_adapter, bridge_mode=bridge_mode).to_dict()
 
 
 @dataclass(frozen=True)

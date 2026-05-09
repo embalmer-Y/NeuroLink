@@ -24,6 +24,7 @@ from neurolink_core.tools import (
     ToolContract,
     load_mcp_bridge_descriptor_payload,
     load_neuro_cli_skill_descriptor_payload,
+    validate_tool_workflow_catalog_consistency,
 )
 
 
@@ -42,6 +43,26 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertNotIn("system_restart_app", read_only_names)
         self.assertIn("system_restart_app", blocked_names)
         self.assertIn("system_stop_app", blocked_names)
+
+    def test_mcp_bridge_descriptor_payload_supports_governed_approval_proposal_mode(self) -> None:
+        payload = load_mcp_bridge_descriptor_payload(
+            bridge_mode="core_governed_approval_required_proposal"
+        )
+
+        self.assertEqual(
+            payload["bridge_mode"],
+            "core_governed_approval_required_proposal",
+        )
+        self.assertFalse(payload["safety_boundaries"]["descriptor_only"])
+        self.assertTrue(
+            payload["safety_boundaries"]["approval_required_tool_proposals_allowed"]
+        )
+        self.assertTrue(
+            payload["safety_boundaries"]["side_effecting_tools_execute_directly_forbidden"]
+        )
+        proposal_names = {tool["name"] for tool in payload["approval_required_tools"]}
+        self.assertIn("system_restart_app", proposal_names)
+        self.assertIn("system_rollback_app", proposal_names)
 
     def test_skill_descriptor_payload_parses_neuro_cli_skill_contract(self) -> None:
         payload = load_neuro_cli_skill_descriptor_payload()
@@ -363,6 +384,55 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertEqual(payload["bridge_mode"], "read_only_descriptor_only")
         self.assertTrue(payload["safety_boundaries"]["descriptor_only"])
         self.assertTrue(payload["safety_boundaries"]["tool_execution_via_mcp_forbidden"])
+
+    def test_cli_mcp_descriptor_outputs_governed_approval_proposal_contract(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "mcp-descriptor",
+                    "--bridge-mode",
+                    "core_governed_approval_required_proposal",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            payload["bridge_mode"],
+            "core_governed_approval_required_proposal",
+        )
+        self.assertTrue(
+            payload["safety_boundaries"]["approval_required_tool_proposals_allowed"]
+        )
+        self.assertFalse(payload["safety_boundaries"]["external_mcp_connection_enabled"])
+
+    def test_workflow_catalog_consistency_treats_state_sync_as_internal_core_tool(self) -> None:
+        contract = FakeUnitToolAdapter().describe_tool("system_state_sync")
+
+        assert contract is not None
+        consistency = validate_tool_workflow_catalog_consistency(contract)
+
+        self.assertTrue(consistency["valid"])
+        self.assertTrue(consistency["internal_core_only"])
+        self.assertTrue(consistency["workflow_entries_present"])
+
+    def test_workflow_catalog_consistency_covers_governed_restart_contract(self) -> None:
+        contract = FakeUnitToolAdapter().describe_tool("system_restart_app")
+
+        assert contract is not None
+        consistency = validate_tool_workflow_catalog_consistency(contract)
+
+        self.assertTrue(consistency["valid"])
+        self.assertFalse(consistency["internal_core_only"])
+        self.assertIn("control-app-restart", consistency["coverage_workflows"])
+        self.assertIn(
+            "control-app-restart",
+            consistency["command_coverage_workflows"],
+        )
+        self.assertTrue(consistency["destructive_alignment"])
+        self.assertTrue(consistency["lease_governance_alignment"])
 
     def test_cli_activation_health_guard_outputs_structured_observation(self) -> None:
         out = io.StringIO()

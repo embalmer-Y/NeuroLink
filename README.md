@@ -2,7 +2,7 @@
 
 NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
 
-The project is currently on closed release `1.2.5`, which completed the multimodal Agent runtime, inference profile routing, memory governance, and safe Agent Tool/Skill/MCP closure slice. The canonical host CLI now advertises `RELEASE_TARGET = "1.2.5"`, and release `1.2.6` is the next planned HLD delivery slice.
+The project is currently implementing release `1.2.7` on top of the closed release `1.2.6` baseline. Release `1.2.6` completed the federation, relay, hardware-abstraction, and governed Agent Tool/Skill/MCP closure slice, and the canonical host CLI now advertises `RELEASE_TARGET = "1.2.6"`. Release `1.2.7` is the active productization and release-2.0.0-readiness line and must preserve the same hardware-agnostic, Core-governed architecture rather than hardcoding the current validation board.
 
 Release `1.2.0` remains the earlier local AI Core baseline. Release `1.2.1` is now the closed Core-Agent baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, guarded real-provider wiring, approval-gated resumable tool execution, and bounded real Neuro CLI control integration validated on the connected DNESP32S3B hardware path. The validated release `1.1.10` Unit/demo platform remains the underlying hardware/runtime baseline for later provider or live-event follow-up work.
 
@@ -13,6 +13,10 @@ Release `1.2.3` is the closed autonomous-perception line. Core now has determini
 Release `1.2.4` is the closed Core App Build/Deploy Orchestrator and production live event service slice. It moved the project from about 64% total HLD completion to about 75% by turning existing script and Neuro CLI paths into Core-owned build, artifact-admission, deploy, activation, recovery, and supervised event-service workflows.
 
 Release `1.2.5` is the closed multimodal Agent runtime and governance slice. It carried the project to about 88% HLD completion by making deterministic multimodal normalization, inference profile routing, provider-safe prompt context, governed memory lifecycle and recall, and Tool/Skill/MCP closure evidence executable and release-gated.
+
+Release `1.2.6` is the closed federation, relay, and Agent platform slice. It carried the project to about 94% HLD completion by making Core-to-Core topology sync, delegated execution planning, Gateway Unit relay route evidence, hardware-agnostic capability descriptors, and higher-quality Agent Tool/Skill/MCP governance executable without hardcoding the current validation hardware.
+
+Release `1.2.7` is the active productization and release-2.0.0 readiness slice. It targets about 98% HLD completion through multi-board acceptance evidence, stronger rollback/release policy hardening, resource-budget governance, signing/provenance enforcement maturation, and acceptance-runbook completion.
 
 ## Project Layout
 

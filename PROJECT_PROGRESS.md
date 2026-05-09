@@ -1,3 +1,575 @@
+2026-05-10: Closed release-1.2.6 by promoting the canonical repository release identity after the WS-7 closure bundle, focused regressions, refreshed post-promotion artifact evidence, and explicit promotion approval all converged. The host CLI and workflow catalog now advertise `RELEASE_TARGET = "1.2.6"`, the sample Unit App source identity and rebuilt artifact now report `neuro_unit_app-1.2.6-cbor-v2`, the top-level README and AI Core runbooks no longer describe release-1.2.6 as merely active implementation work, and release-1.2.7 is now the active productization line. The final release-1.2.6 bundle still reports all twelve validation gates green after post-promotion documentation and hardware-compatibility refresh, so release-1.2.6 is now closed both in evidence and in canonical repository identity. - Copilot
+
+#### EXEC-332 Release 1.2.6 Release Identity Promotion And Closure
+
+- Status: completed; release-1.2.6 is now the canonical promoted repository release identity and closed release line
+- Owner: GitHub Copilot completing release-1.2.6 promotion under explicit user instruction
+- Scope:
+  - promote the canonical Neuro CLI release identity from `1.2.5` to `1.2.6`
+  - promote the workflow catalog release marker and sample Unit App source identity to `1.2.6`
+  - align README, release plans, and English/Chinese AI Core runbooks so release-1.2.6 is described as closed and release-1.2.7 as active
+  - add a dedicated release-1.2.6 promotion checklist document plus machine-readable promotion checklist, approval, and final closure decision artifacts
+  - rebuild the sample app artifact and refresh post-promotion capability/hardware evidence so the final closure bundle matches the promoted repository identity
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.6_FEDERATION_RELAY_AGENT_PLATFORM_PLAN.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.6_PROMOTION_CHECKLIST.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.7_PRODUCTIZATION_AND_2000_READINESS_PLAN.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.6-closure-20260509T174539Z/*`
+- Result:
+  - the host CLI now advertises `RELEASE_TARGET = "1.2.6"`
+  - the workflow catalog release label and sample Unit App build identity now match the promoted release marker
+  - release-1.2.6 is now closed both in closure evidence and in canonical repository identity
+  - release-1.2.7 is now the active implementation line with release-1.2.6 as its closed baseline
+  - promotion approval is explicit and reviewable through dedicated checklist, approval, and final closure decision artifacts
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q -k 'capabilities or workflow_commands_do_not_embed_release_target_literals or sample_app_source_identity_matches_release_target'` -> `5 passed, 122 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python neuro_cli/src/neuro_cli.py --output json system capabilities` -> `ok=true`, `release_target=1.2.6`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && bash scripts/build_neurolink.sh --preset unit-app --no-c-style-check` -> rebuilt `build/neurolink_unit_app/neuro_unit_app.llext`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && strings /home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext | grep 'neuro_unit_app-1.2.6-cbor-v2'` -> promoted artifact identity present
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli hardware-compatibility-smoke --app-source-dir /home/emb/project/zephyrproject/applocation/NeuroLink/subprojects/neuro_unit_app --artifact-file /home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext --required-heap-free-bytes 4096 --required-app-slot-bytes 32768` -> `ok=true`, `app_version=1.2.6`, `build_id=neuro_unit_app-1.2.6-cbor-v2`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db smoke-evidence/release-1.2.6-closure-20260509T174539Z/closure.db --session-id release-1.2.6-closure-001 --documentation-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/documentation-closure-final.json --provider-smoke-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/provider-smoke.json --require-provider-smoke --multimodal-profile-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/multimodal-profile-smoke.json --require-multimodal-profile --regression-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/regression-closure-final.json --relay-failure-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/relay-failure.json --hardware-compatibility-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/hardware-compatibility-final.json --output json` -> `validation_gate_summary.ok=true`, `passed_count=12`, `failed_gate_ids=[]`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: 100%
+  - release-1.2.6 closure progress: 100%
+  - overall HLD completion: about 94%
+
+2026-05-10: Continued WS-7 by moving from gate-by-gate convergence into an explicit release-1.2.6 closure bundle and next-release planning surface. The regression closure contract now covers the requested high-level focused set instead of only the earlier three inherited booleans: release-1.2.5 Agent closure, release-1.2.4 lifecycle/event-service, release-1.2.6 federation/relay, and hardware-compatibility regressions were rerun into a new bundle, the English and Chinese AI Core runbooks now explicitly anchor the active 1.2.6 line and the planned 1.2.7 productization line, a dedicated release-1.2.7 plan now exists, and a new release-1.2.6 closure bundle reports all twelve validation gates passing while canonical release identity intentionally remains `1.2.5`. This closes WS-7 item 3 and item 4 at the local deterministic plus bounded live-evidence level without performing the actual release identity promotion. - Copilot
+
+#### EXEC-331 Release 1.2.6 Focused Regression Closure And Release 1.2.7 Plan Slice
+
+- Status: completed for high-level focused regression closure evidence, release-1.2.7 planning, and explicit release-1.2.6 closure decision artifacts
+- Owner: GitHub Copilot continuing the release-1.2.6 WS-7 closure track
+- Plan alignment check:
+  - matches WS-7 item 3 by rerunning and bundling the requested focused regression set across release-1.2.5 Agent closure, release-1.2.4 lifecycle/event-service, release-1.2.6 federation/relay, and hardware compatibility
+  - matches WS-7 item 4 by creating a dedicated release-1.2.7 plan before any release-1.2.6 identity promotion and by materializing a machine-readable release-1.2.6 closure decision surface
+  - keeps canonical release identity frozen at `1.2.5` even though the local deterministic plus bounded live closure bundle is now technically ready
+- Scope:
+  - expand regression closure evidence to a new `1.2.6-regression-closure-v2` contract with Agent, lifecycle/event-service, federation, relay, and hardware-compatibility focused regressions
+  - create a new `release-1.2.6` closure bundle with no-model session evidence, provider smoke, multimodal profile smoke, documentation closure, relay failure closure, hardware compatibility evidence, regression closure, closure summary, and closure decision JSON
+  - create the new release-1.2.7 productization and release-2.0.0 readiness plan
+  - anchor the English and Chinese AI Core runbooks to the active 1.2.6 line and planned 1.2.7 line for documentation-gate alignment
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.7_PRODUCTIZATION_AND_2000_READINESS_PLAN.md`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.6-closure-20260509T174539Z/*`
+- Result:
+  - release-1.2.6 now has a concrete closure bundle instead of only dispersed gate slices; the bundle reports `validation_gate_summary.ok=true`, `passed_count=12`, and no failed gate ids
+  - the focused regression surface is now explicit and higher-level than the earlier inherited three-boolean regression contract
+  - release-1.2.7 is no longer implicit debt behind release-2.0.0; it now has its own executable planning surface
+  - release-1.2.6 is technically closure-ready from the local deterministic plus bounded live evidence perspective, while release identity remains intentionally unpromoted pending explicit promotion approval
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied'` -> `1 passed, 106 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'rejects_manifest_mismatched_tool_contract_before_adapter_execution or dry_run_persists_before_reasoning_and_seals_audit or file_backed_dry_run_reports_counts or dry_run_reports_execution_evidence_snapshot or low_salience_tick_does_not_delegate or cli_live_event_smoke_maps_raw_state_event_to_operational_wake_topic'` -> `6 passed, 101 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'workflow_rejects_manifest_mismatched_tool_contract_before_adapter_execution or workflow_rejects_skill_ground_rule_violation_before_adapter_execution or cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or cli_closure_summary_records_invalid_provider_tool_rejection_in_tool_skill_mcp_bundle or cli_closure_summary_can_pass_relay_gate_with_failure_runbook_evidence'` -> `5 passed, 102 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'event_service or live_event_smoke or event_daemon or app_deploy_plan or app_deploy_prepare_verify or app_deploy_activate or app_deploy_rollback'` -> `37 passed, 70 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_federation.py -q -k 'relay or transport_mismatch or delegated_core or peer_relay'` -> `11 passed, 8 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'app_artifact_admission_reports_identity_and_hash or closure_summary_can_pass_hardware_and_artifact_gates_with_compatibility_evidence'` -> `2 passed, 105 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db smoke-evidence/release-1.2.6-closure-20260509T174539Z/closure.db --session-id release-1.2.6-closure-001 --documentation-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/documentation-closure.json --provider-smoke-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/provider-smoke.json --require-provider-smoke --multimodal-profile-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/multimodal-profile-smoke.json --require-multimodal-profile --regression-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/regression-closure-final.json --relay-failure-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/relay-failure.json --hardware-compatibility-file smoke-evidence/release-1.2.6-closure-20260509T174539Z/hardware-compatibility.json --output json` -> `validation_gate_summary.ok=true`, `passed_count=12`, `failed_gate_ids=[]`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 60%
+  - release-1.2.6 closure progress: about 92%
+  - overall HLD completion: about 94%
+
+2026-05-10: Continued WS-7 by closing the last missing integration layer inside `closure-summary` itself instead of only expanding the underlying evidence surfaces. The release validation matrix now includes an explicit `closure_summary_gate`, the validation checklist reports that gate directly, and top-level closure readiness no longer goes green from aggregate bundle checks alone when the integrated validation matrix is still red. This keeps release-1.2.6 aligned with its own plan language: the closure summary must prove that all validation gates pass with no failed gate ids, not merely that raw evidence bundles exist. - Copilot
+
+#### EXEC-330 Release 1.2.6 Closure Summary Gate Convergence Slice
+
+- Status: completed for explicit closure-summary gate convergence in the integrated release validation matrix
+- Owner: GitHub Copilot continuing the release-1.2.6 WS-7 closure track
+- Plan alignment check:
+  - matches WS-7 item 1 by tightening the existing closure-summary surface rather than adding a parallel closure state
+  - matches Validation Gate 8 by making `closure_summary_gate` an explicit gate instead of leaving it implicit in `validation_gate_summary.ok`
+  - keeps release identity unchanged and does not yet claim the broader focused regression reruns or release-1.2.7 plan generation from the remaining WS-7 items
+- Scope:
+  - add explicit `closure_summary_gate` computation to the release validation matrix
+  - extend the validation checklist with a dedicated closure-summary gate entry
+  - require top-level `closure-summary` readiness to satisfy both aggregate bundle gates and the full validation matrix
+  - update focused closure-summary regression expectations for the expanded gate count
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release-1.2.6 closure reporting now distinguishes bundle readiness from full validation-matrix closure and exposes that distinction as an explicit gate
+  - `closure-summary` can no longer report top-level `ok=true` when aggregate bundle evidence exists but one of the integrated validation gates remains red
+  - Validation Gate 8 is now represented in the same executable matrix as the other release gates instead of being inferred out-of-band
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or cli_closure_summary_records_invalid_provider_tool_rejection_in_tool_skill_mcp_bundle or cli_closure_summary_can_pass_relay_gate_with_failure_runbook_evidence'` -> `3 passed, 104 deselected`
+  - VS Code diagnostics for `neurolink_core/cli.py` and `neurolink_core/tests/test_neurolink_core.py` -> no new errors from this slice; remaining diagnostics are pre-existing live-event typing and older test typing debt outside the WS-7 closure-summary path
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 53%
+  - release-1.2.6 closure progress: about 31%
+  - overall HLD completion: about 93%
+
+2026-05-10: Started WS-6 by turning the existing Tool/Skill/MCP descriptor surfaces into executable governance instead of leaving them as descriptive closure metadata. `NoModelCoreWorkflow` now rejects ToolContracts that violate the Neuro CLI skill ground rules before policy or adapter execution, validates governed contracts against canonical workflow catalog coverage and workflow metadata, and derives a Core-governed MCP bridge mode that distinguishes read-only execution from approval-required proposal handling without enabling direct external MCP bypass. This exec matches the requested order precisely: it closes WS-6 item 1 with executable skill ground-rule validation, closes WS-6 item 2 with workflow catalog and ToolContract consistency checks plus missing controlled workflow plans, and closes the first governed WS-6 item 3 with mode-level Core MCP governance while keeping default descriptor-only closure behavior intact. - Copilot
+
+#### EXEC-329 Release 1.2.6 Tool Skill Catalog And Governed MCP Slice
+
+- Status: completed for executable skill ground-rule validation, workflow catalog/ToolContract consistency gates, and governed MCP descriptor modes
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches WS-6 item 1 by failing a rational plan before policy execution when the selected ToolContract does not honor canonical Neuro CLI wrapper/JSON/callback ground rules
+  - matches WS-6 item 2 by requiring selected governed tools to have canonical workflow catalog coverage with aligned destructive and lease semantics instead of relying on manifest description alone
+  - matches WS-6 item 3 by adding Core-governed MCP descriptor modes for read-only execution and approval-required proposal handling while keeping descriptor-only as the default external boundary
+- Scope:
+  - add executable `skill_ground_rules` validation and explicit failure statuses to `plan_quality`
+  - add workflow catalog loading plus ToolContract coverage/metadata consistency validation in the descriptor layer
+  - add missing controlled workflow catalog entries for app start, app restart, and rollback so governed tools have canonical workflow coverage
+  - extend MCP descriptors and CLI inspection to support `read_only_descriptor_only`, `core_governed_read_only_execution`, and `core_governed_approval_required_proposal`
+  - surface the new WS-6 outcomes through `closure-summary` in the existing tool/skill/MCP gate bundle
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+- Result:
+  - invalid manifest contracts can no longer slip through as merely descriptive mismatches because the workflow now rejects skill ground-rule violations before policy and adapter execution
+  - governed tool contracts are now tied to the canonical workflow catalog with explicit coverage, command, destructive, and lease-governance checks
+  - MCP governance is no longer collapsed into a single read-only descriptor mode; the Core can now explicitly describe read-only execution and approval-required proposal paths without exposing direct side-effect execution or external MCP connectivity
+  - closure reporting now exposes these WS-6 gates inside the existing `tool_skill_mcp_summary` instead of requiring a parallel reporting path
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'workflow_rejects_manifest_mismatched_tool_contract_before_adapter_execution or workflow_rejects_skill_ground_rule_violation_before_adapter_execution'` -> `2 passed, 105 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py -q -k 'workflow_catalog_consistency or mcp_bridge_descriptor_payload or cli_mcp_descriptor_outputs'` -> `6 passed, 40 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'closure_summary_records_invalid_provider_tool_rejection_in_tool_skill_mcp_bundle or cli_closure_summary_can_pass_memory_governance_and_recall_gates_when_closure_evidence_is_present'` -> `1 passed, 106 deselected`
+  - VS Code diagnostics for `neurolink_core/workflow.py`, `neurolink_core/cli.py`, `neurolink_core/tests/test_tools.py`, and `neurolink_core/tests/test_neurolink_core.py` -> no new errors found; remaining `tools.py` partial-unknown live-event typing diagnostics are pre-existing outside the WS-6 slice
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 52%
+  - release-1.2.6 closure progress: about 28%
+  - overall HLD completion: about 93%
+
+2026-05-10: Continued release-1.2.6 WS-5 closure by converting the previously diagnosed live-board blockers into closed executable evidence instead of leaving them as environment notes. The active DNESP32S3B board was reattached into WSL, the runtime Zenoh endpoint drift was inspected over the existing serial control path, and `serial zenoh set tcp/192.168.2.90:7447` restored live `query device` reachability without hardcoding the host IP into shared Core contracts. A second root cause was then closed in the sample app itself: `subprojects/neuro_unit_app/src/main.c` already advertised `app_version` and `app_build_id` as `1.2.5`, but the embedded `app_runtime_manifest.version.patch` was still `4`, which made the new WS-5 artifact admission fail with `source_manifest_version_mismatch` even after the artifact was rebuilt. Aligning that manifest patch to `5`, rebuilding `unit-app`, rerunning `hardware-compatibility-smoke`, and executing the real Linux smoke path now produce passing hardware-compatible closure evidence on the connected board. This exec still matches the plan narrowly: it advances WS-5 real closure evidence and inherited hardware regression confidence without widening into board-specific contract design or starting WS-6 Tool/Skill/MCP implementation. - Copilot
+
+#### EXEC-328 Release 1.2.6 Live Hardware Compatibility Closure Slice
+
+- Status: completed for live board endpoint recovery, source/artifact identity alignment, and bounded Linux smoke evidence
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches WS-5 item 2 by closing the real `source_manifest_version_mismatch` blocker in the app identity/manifest surface before deploy
+  - matches WS-5 item 3 by adding build-plus-real-device coverage on the active non-host runtime path without baking current board IP or lab networking into Core contracts
+  - supports WS-7 item 3 by rerunning a bounded inherited Linux smoke regression after the compatibility gate passed
+- Scope:
+  - inspect and correct live board runtime Zenoh endpoint drift through existing serial Zenoh commands
+  - align `neuro_unit_app` source manifest version with the existing `1.2.5` app version/build id
+  - rebuild the canonical `unit-app` artifact and rerun `hardware-compatibility-smoke`
+  - rerun bounded real Linux smoke on the connected DNESP32S3B board
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+- Result:
+  - live board reachability is restored in WSL without requiring privileged host IP alias changes because the board endpoint override now matches the current host router address `tcp/192.168.2.90:7447`
+  - the canonical `neuro_unit_app` source identity is internally consistent again (`app_version`, `app_build_id`, and manifest version all report `1.2.5`)
+  - the WS-5 executable hardware compatibility gate now passes against the real `build/neurolink_unit_app/neuro_unit_app.llext` artifact, and bounded Linux smoke passes on the connected board
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject && bash applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh --attach-only` -> board reattached into WSL as `/dev/ttyACM0`
+  - `cd /home/emb/project/zephyrproject && /home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py serial zenoh show --port /dev/ttyACM0` -> reported stale board endpoint `tcp/192.168.2.94:7447`
+  - `cd /home/emb/project/zephyrproject && /home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py serial zenoh set tcp/192.168.2.90:7447 --port /dev/ttyACM0` -> `zenoh connect override applied`, UART showed `tcp probe succeeded` and `queryables ready on node 'unit-01'`
+  - `cd /home/emb/project/zephyrproject && bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh --require-serial --output json` -> `status=ready`, `query.status=ok`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli hardware-compatibility-smoke --app-source-dir /home/emb/project/zephyrproject/applocation/NeuroLink/subprojects/neuro_unit_app --artifact-file /home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext --required-heap-free-bytes 4096 --required-app-slot-bytes 32768` -> `status=ready`, `ok=true`
+  - `cd /home/emb/project/zephyrproject && bash applocation/NeuroLink/scripts/smoke_neurolink_linux.sh --events-duration-sec 1` -> `result=PASS`, evidence `applocation/NeuroLink/smoke-evidence/SMOKE-017B-LINUX-001-20260509-171407.summary.txt`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 47%
+  - release-1.2.6 closure progress: about 24%
+  - overall HLD completion: about 92%
+
+2026-05-10: Continued WS-5 by turning hardware capability and artifact compatibility from plan text into an executable closure surface. `closure-summary` now accepts a dedicated hardware-compatibility payload and exposes separate `hardware_abstraction_gate` and `artifact_compatibility_gate` results, while the new deterministic `hardware-compatibility-smoke` command reuses app artifact admission plus Unit capability evidence to prove capability fields are hardware-agnostic and that incompatible architecture/capability requirements are rejected before load or activation. This exec matches the plan directly: it closes the first executable part of WS-5 without hardcoding the current validation board into shared contracts, and it also surfaced two concrete environment signals during real-world validation: Linux preflight currently stops at `router_not_listening` on tcp/7447, and the current built `neuro_unit_app.llext` does not match the checked-in source manifest (`source_manifest_version_mismatch`). - Copilot
+
+#### EXEC-327 Release 1.2.6 Hardware Capability And Artifact Compatibility Gate Slice
+
+- Status: completed for executable hardware-abstraction and artifact-compatibility closure gates
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches WS-5 item 1 by surfacing architecture, ABI, board family, LLEXT compatibility, storage class, network transports, signing, and resource budget as executable capability evidence
+  - matches WS-5 item 2 and Validation Gates 4-5 by requiring explicit compatibility checks plus negative cross-architecture rejection proof before release closure can pass
+  - intentionally does not yet claim full multi-board hardware farm closure, signing productization, or release-1.2.7 matrix coverage
+- Scope:
+  - add `hardware-compatibility-smoke` CLI output for capability and artifact compatibility evidence
+  - add `hardware_compatibility_summary` ingestion to `closure-summary`
+  - add dedicated `hardware_abstraction_gate` and `artifact_compatibility_gate` to the release validation matrix
+  - add focused tests proving both gates can pass from executable compatibility evidence and participate in the full closure matrix
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release-1.2.6 closure reporting now distinguishes hardware-abstraction readiness from artifact-compatibility readiness instead of burying both inside generic deployment evidence
+  - capability evidence remains hardware-agnostic while still recording the concrete fields needed for later multi-board closure work
+  - deterministic compatibility evidence now includes explicit negative rejection proof for incompatible architecture expectations
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'closure_summary_reads_session_evidence or closure_summary_can_pass_relay_gate_with_failure_runbook_evidence or closure_summary_can_pass_hardware_and_artifact_gates_with_compatibility_evidence or closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or app_artifact_admission_reports_identity_and_hash'` -> `5 passed, 101 deselected`
+  - `cd /home/emb/project/zephyrproject && bash applocation/NeuroLink/scripts/preflight_neurolink_linux.sh` -> `status=router_not_listening`, `artifact_present=1`, `detail=zenohd is not listening on tcp port 7447`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli hardware-compatibility-smoke --app-source-dir /home/emb/project/zephyrproject/applocation/NeuroLink/subprojects/neuro_unit_app --artifact-file /home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext --required-heap-free-bytes 4096 --required-app-slot-bytes 32768` -> `failure_status=source_manifest_version_mismatch`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 44%
+  - release-1.2.6 closure progress: about 19%
+  - overall HLD completion: about 92%
+
+2026-05-10: Continued WS-4 by making relay failure disposition part of release closure instead of treating relay attachment evidence alone as sufficient. `closure-summary` now accepts a dedicated relay-failure closure payload, reports `relay_failure_summary`, and only allows the release `relay_gate` to pass when relay route structure evidence and deterministic failure/runbook closure evidence are both present. This exec matches the plan directly: it closes the `route failure evidence` part of the Relay gate without inventing a parallel runtime contract or widening into hardware-specific behavior. - Copilot
+
+#### EXEC-326 Release 1.2.6 Relay Failure Runbook Closure Slice
+
+- Status: completed for relay-failure runbook/closure evidence integration
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches the WS-4 Relay gate requirement that route failure evidence be explicit and closure-visible rather than implicit in raw route status only
+  - keeps relay closure aligned to the existing federation evidence path by adding a separate failure/runbook payload instead of duplicating route evidence contracts
+  - intentionally does not yet claim live relay failure runbook evidence from hardware smoke; the new gate is executable and ready for that evidence to plug in
+- Scope:
+  - add `relay_failure_summary` ingestion to `closure-summary`
+  - require a relay failure/runbook payload for `relay_gate` to pass in the release validation matrix
+  - add focused tests covering missing relay-failure evidence, successful relay gate closure, and the full validation matrix path
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release closure now distinguishes successful relay structure evidence from closed-loop relay failure disposition evidence
+  - `relay_gate` remains red when relay attachment metadata is present but no failure/runbook closure payload has been provided
+  - runbook/failure evidence can now be added through the same file-driven closure-summary workflow already used for documentation and regression gates
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'closure_summary_reads_session_evidence or closure_summary_can_pass_relay_gate_with_failure_runbook_evidence or closure_summary_can_pass_hardware_and_artifact_gates_with_compatibility_evidence or closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or app_artifact_admission_reports_identity_and_hash'` -> `5 passed, 101 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 40%
+  - release-1.2.6 closure progress: about 16%
+  - overall HLD completion: about 91%
+
+2026-05-10: Continued WS-4 by wiring relay-specific closure accounting into the standard `closure-summary` path instead of leaving relay evidence visible only in planner tests and raw federation payloads. The closure summary now derives a dedicated `relay_summary` and `relay_gate` from the existing federation route evidence, so relay attachment metadata and explicit relay failure reasons are surfaced as first-class release validation signals without inventing a parallel evidence source. This exec matches the plan directly: it advances the `Relay gate` line item and keeps the implementation constrained to relay evidence/reporting rather than broadening into WS-5 hardware compatibility or live hardware-specific workflows. - Copilot
+
+#### EXEC-325 Release 1.2.6 Relay Closure Summary Gate Slice
+
+- Status: completed for relay-specific closure-summary reporting and gating
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches the release-1.2.6 plan `Relay gate` requirement by turning relay attachment/failure evidence into an explicit closure-summary validation gate
+  - reuses the standard federation workflow evidence path so closure logic stays aligned with the same deterministic route contract already exercised by federation tests
+  - intentionally does not yet claim full WS-4 closure across route-failure runbooks or live hardware federation closure evidence
+- Scope:
+  - add a `relay_summary` derived from `federation_route_evidence`
+  - add a dedicated `relay_gate` to the closure-summary validation matrix and checklist
+  - add focused closure-summary tests covering non-relay delegated evidence, peer relay attachment evidence, and the full validation matrix path
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - closure-summary now distinguishes generic federation readiness from relay-specific readiness instead of collapsing both into a single federation gate
+  - peer relay attachment metadata and supported transport evidence are now visible in closure summaries and can satisfy a dedicated relay gate
+  - ordinary delegated-core evidence without relay attachment remains valid for federation while correctly leaving relay gate debt visible
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'closure_summary_reads_session_evidence or closure_summary_can_pass_federation_gate_when_route_evidence_is_present or closure_summary_can_pass_relay_gate_when_peer_relay_evidence_is_present or closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied'` -> `4 passed, 100 deselected`
+  - `git -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check -- PROJECT_PROGRESS.md neurolink_core/cli.py neurolink_core/tests/test_neurolink_core.py` -> pending final cleanliness check
+  - VS Code diagnostics for `neurolink_core/cli.py` -> no new errors from this slice; remaining partial-unknown reports are pre-existing in unrelated live-ingest helpers
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 37%
+  - release-1.2.6 closure progress: about 13%
+  - overall HLD completion: about 91%
+
+2026-05-10: Continued the WS-4 relay path by closing the peer-side attachment metadata gap instead of leaving delegated routes with only `target_core` and `target_node`. Peer advertisements can now carry remote Unit attachment records, delegated route planning preserves relay-path metadata for those remote Units, and delegated relay planning rejects transport requirements that the peer-side attachment does not advertise. This exec still matches the plan narrowly: it advances the `relay-visible Unit attachment` and relay mismatch portions of WS-4 for delegated peer routes without claiming the full Relay gate, closure-summary relay reporting, or broader hardware/artifact completion. - Copilot
+
+#### EXEC-324 Release 1.2.6 Peer Relay Attachment Metadata Slice
+
+- Status: completed for delegated peer relay attachment visibility and transport-compatibility rejection
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches WS-4 item 3 by extending relay-visible attachment metadata from local relay routes into delegated peer-advertised Units
+  - matches the Relay gate directionally by ensuring peer relay routes preserve relay-path evidence and reject incompatible transport requirements explicitly
+  - intentionally does not yet claim full relay closure across closure-summary relay gating, route failure runbook evidence, or WS-5 hardware/artifact compatibility work
+- Scope:
+  - extend peer advertisements with optional remote Unit attachment metadata records
+  - preserve peer relay-path metadata in delegated route decisions and deterministic smoke evidence
+  - reject delegated peer relay routes when the requested transport is absent from the peer attachment advertisement
+  - add focused federation tests for peer relay attachment visibility and mismatch rejection
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/federation.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_federation.py`
+- Result:
+  - delegated federation routes no longer lose relay attachment metadata when the target Unit is advertised through a peer Core
+  - peer-side relay evidence now exposes relay path and supported transport sets through the same deterministic smoke contract used by the existing federation workflow
+  - delegated relay transport mismatch now fails closed as structured route evidence instead of silently returning a route-ready delegated path
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_federation.py -q -k 'peer_relay or transport_mismatch or delegated_core'` -> `6 passed, 13 deselected`
+  - VS Code diagnostics for `neurolink_core/federation.py` and `neurolink_core/tests/test_federation.py` -> no errors found
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 34%
+  - release-1.2.6 closure progress: about 10%
+  - overall HLD completion: about 90%
+
+2026-05-10: Continued the WS-4 relay route slice by adding the first explicit transport-compatibility rule and a clearer relay attachment evidence check instead of leaving relay routing as path-only metadata. The federation planner now rejects a local direct or relay route when the caller requires a transport the Unit capability descriptor does not advertise, and the deterministic smoke payload now reports both requested transport and supported transport sets alongside relay-path metadata. This exec matches the plan directly: it advances the `transport mismatch rejection` and `relay-visible Unit attachment` parts of WS-4 without widening into hardware-specific implementations or claiming the full Relay gate is closed. - Copilot
+
+#### EXEC-323 Release 1.2.6 Relay Transport Mismatch And Attachment Slice
+
+- Status: completed for the first explicit relay transport-compatibility rule and attachment-metadata validation
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches WS-4 item 3 by rejecting an incompatible transport requirement as explicit route failure evidence
+  - matches the Relay gate directionally by covering relay route, relay mismatch rejection, and relay-visible attachment metadata in deterministic tests
+  - intentionally does not yet claim full relay closure across peer-side relay attachment, closure-summary relay gate reporting, or broader hardware compatibility enforcement
+- Scope:
+  - add an optional `required_transport` compatibility check to local federation route planning
+  - propagate requested and supported transport evidence through `federation_route_smoke`
+  - add focused tests for transport mismatch rejection and successful relay attachment metadata visibility
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/federation.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_federation.py`
+- Result:
+  - local federation planning now fails closed when a requested transport is not present in the Unit capability descriptor rather than silently returning a route-ready path
+  - successful local relay evidence now preserves relay path plus supported transport metadata in the deterministic smoke surface
+  - release-1.2.6 relay planning now covers both capability mismatch and transport mismatch as separate explicit failure reasons
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_federation.py -q -k 'relay or transport_mismatch or stale_route'` -> `8 passed, 7 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 31%
+  - release-1.2.6 closure progress: about 9%
+  - overall HLD completion: about 90%
+
+2026-05-09: Started the first explicit relay-route correctness slice for release-1.2.6 by closing a real WS-4 mismatch case instead of only carrying relay metadata through route records. The federation topology registry now rejects a local relay route when a Unit advertises a relay path but does not advertise `relay_capable`, and the smoke helper can model both the valid relay and mismatch-rejection variants consistently. This exec matches the plan directly: it implements the `relay mismatch rejection` requirement from WS-4 and the Relay gate expectation that incompatible routes produce explicit route failure evidence rather than silently appearing route-ready. - Copilot
+
+#### EXEC-322 Release 1.2.6 Relay Capability Mismatch Rejection Slice
+
+- Status: completed for the first explicit relay mismatch rejection rule
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches WS-4 item 3 by adding explicit relay mismatch rejection instead of treating all relay-path records as valid routes
+  - matches the Relay gate directionally by ensuring incompatible relay capability state returns structured route failure evidence
+  - intentionally does not yet claim full relay closure across transport mismatch, relay-visible Unit attachment, or closure-summary relay gate reporting
+- Scope:
+  - reject local relay routes when `relay_path` is present but `relay_capable` is false
+  - keep successful relay routes valid when capability and path are both present
+  - extend federation smoke coverage to exercise relay capability mismatch as an explicit failure outcome
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/federation.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_federation.py`
+- Result:
+  - relay route planning no longer treats an inconsistent capability descriptor as route-ready
+  - mismatch outcomes are now explicit `route_rejected` evidence with `failure_reason=relay_capability_mismatch`
+  - the deterministic federation smoke/helper layer can now model both valid relay and rejected relay-capability cases using the same contract surface
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_federation.py -q -k 'relay or delegated_core or stale_route'` -> `6 passed, 6 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 29%
+  - release-1.2.6 closure progress: about 8%
+  - overall HLD completion: about 90%
+
+2026-05-09: Extended federation evidence propagation into the bounded live event-service path so release-1.2.6 no longer has a gap between direct/replay workflows and live ingest sessions. `run_live_event_service` now accepts the same optional federation route provider and preserves the resulting route evidence inside the generated workflow execution bundle while keeping the live monitor/runtime lifecycle unchanged. This exec still matches the staged plan: it completes the remaining core evidence-surface propagation before any broader relay-specific route logic, hardware-capability closure, or live multi-Core smoke claims are made. - Copilot
+
+#### EXEC-321 Release 1.2.6 Live Event Service Federation Evidence Slice
+
+- Status: completed for bounded live event-service federation evidence propagation
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches the staged follow-on after replay propagation by closing the remaining standard workflow evidence surface for live bounded ingest
+  - supports WS-2 evidence persistence and WS-7 closure readiness by keeping live session evidence structurally aligned with direct and replay execution bundles
+  - intentionally does not claim live multi-Core federation smoke, relay validation, or hardware/productization closure
+- Scope:
+  - add optional federation route provider support to `run_live_event_service`
+  - add a focused function-level regression proving live event-service executions preserve federation route evidence in stored execution evidence
+  - confirm a neighboring existing live event smoke path still passes unchanged
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release-1.2.6 federation route evidence can now flow through direct workflow, replay, daemon replay, and bounded live event-service paths using the same audit/session-context contract
+  - closure and later operator review surfaces can rely on a single federation evidence shape across the main Core execution entrypoints
+  - bounded live ingest behavior remains unchanged apart from the additional optional federation evidence recording hook
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'live_event_service_can_record_federation_route_evidence or cli_live_event_smoke_ingests_app_events_with_real_adapter_evidence'` -> `2 passed, 101 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 27%
+  - release-1.2.6 closure progress: about 7%
+  - overall HLD completion: about 89%
+
+2026-05-09: Propagated the release-1.2.6 federation route provider through replay execution surfaces so federation evidence is no longer limited to direct dry-run and closure-summary spot checks. `run_event_replay` and `run_event_daemon_replay` now accept the same optional federation route provider used by the core workflow and preserve the resulting route decision inside the standard execution-evidence bundle for replayed sessions. This exec matches the active plan: it extends the same WS-2/WS-7 federation evidence path into existing replay validation surfaces before broader relay or live event-service integration, which keeps the implementation sequence narrow and auditable. - Copilot
+
+#### EXEC-320 Release 1.2.6 Replay Federation Evidence Propagation Slice
+
+- Status: completed for replay and daemon replay federation evidence propagation
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches the active next-slice plan by completing the pending replay propagation task before widening to live event service or relay routing
+  - supports WS-2 evidence persistence and WS-7 closure-readiness by ensuring replayed sessions emit the same federation route evidence shape as direct workflow runs
+  - intentionally leaves live event-service federation plumbing and relay-specific route accounting for later execs
+- Scope:
+  - add optional federation route provider support to `run_event_replay`
+  - add optional federation route provider support to `run_event_daemon_replay`
+  - add focused tests proving replay and daemon replay preserve federation route evidence in execution bundles
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - replay-generated execution evidence can now carry federation route decisions and delegated-execution metadata through the same audit/session-context path as direct workflow runs
+  - daemon replay remains dedupe-aware while still preserving federation route evidence for each cycle execution
+  - release-1.2.6 federation evidence is now available across direct run, replay, daemon replay, and closure-summary slices without introducing hardware-specific assumptions
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'event_replay_can_record_federation_route_evidence or event_daemon_replay_can_record_federation_route_evidence or event_replay_reports_duplicate_summary or event_daemon_replay_dedupes_across_batches'` -> `4 passed, 98 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 24%
+  - release-1.2.6 closure progress: about 6%
+  - overall HLD completion: about 89%
+
+2026-05-09: Extended the release-1.2.6 closure-summary surface with the first federation-aware validation gate instead of leaving federation evidence visible only inside raw execution bundles. `closure-summary` now advances to `1.2.6-closure-summary-v8`, reports a dedicated `federation_gate`, and summarizes whether standard workflow audit evidence contains a consistent federation route decision plus delegated-execution contract when required. This exec matches the release-1.2.6 plan directly: it implements WS-7 item 1 for the federation portion and begins turning Validation Gate 2 from plan text into executable release accounting without yet claiming relay/hardware/artifact closure. - Copilot
+
+#### EXEC-319 Release 1.2.6 Closure Summary Federation Gate Slice
+
+- Status: completed for the first closure-summary federation gate integration
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Plan alignment check:
+  - matches WS-7 item 1 in `docs/project/RELEASE_1.2.6_FEDERATION_RELAY_AGENT_PLATFORM_PLAN.md` by extending `closure-summary` with release-1.2.6 federation reporting
+  - matches Validation Gate 2 directionally by requiring recorded federation route evidence in the standard audit/evidence path before the gate can pass
+  - intentionally does not claim relay, hardware abstraction, artifact compatibility, or final release closure coverage yet
+- Scope:
+  - add a `federation_summary` block to closure execution summaries
+  - add a dedicated `federation_gate` to the closure-summary validation matrix and checklist
+  - bump the closure-summary schema to reflect the new release-1.2.6 gate surface
+  - add focused tests for both missing and present federation evidence paths, plus the full validation-matrix path
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release-1.2.6 closure reporting now exposes federation readiness as an explicit validation gate rather than burying it inside raw execution evidence
+  - federation gate pass/fail is derived from the same workflow audit/session-context evidence path introduced in the prior exec, so closure logic and runtime evidence remain aligned
+  - existing non-federated closure sessions still report the inherited release-1.2.5 aggregate bundles, but the validation matrix now shows federation debt explicitly
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'closure_summary_reads_session_evidence or closure_summary_can_pass_federation_gate or closure_summary_includes_memory_governance_bundle_for_local_memory or closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied'` -> `4 passed, 96 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 21%
+  - release-1.2.6 closure progress: about 5%
+  - overall HLD completion: about 89%
+
+2026-05-09: Extended the release-1.2.6 federation slice into the standard Core workflow evidence path instead of keeping route outcomes isolated in the dedicated smoke command. `NoModelCoreWorkflow` now accepts an optional federation route provider, records the returned route/delegation payload into session-context audit evidence, persists a dedicated `federation_route` fact, and carries route status/kind into the execution-span payload. This keeps the integration hardware-agnostic and opt-in while making later closure-summary and operator review work consume the same route evidence shape already produced by the federation planner. - Copilot
+
+#### EXEC-318 Release 1.2.6 Federation Workflow Evidence Integration Slice
+
+- Status: completed for the first standard workflow evidence integration slice
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Scope:
+  - add an optional federation route evidence provider to `NoModelCoreWorkflow`
+  - record federation route evidence in workflow session-context audit payloads and execution-span metadata
+  - persist a dedicated `federation_route` fact so execution evidence exposes the route decision in the normal fact stream
+  - add a focused workflow regression test proving the route evidence survives through `run_no_model_dry_run`
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - federation route decisions can now flow through the standard workflow audit/evidence bundle rather than only a standalone smoke payload
+  - the integration remains opt-in and hardware-capability-driven, so shared Core contracts still avoid hardcoding current validation hardware or transport assumptions
+  - later closure, runbook, and operator-facing federation gates can build on the existing execution evidence path instead of a parallel custom surface
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'federation_route_evidence or execution_evidence_snapshot'` -> `2 passed, 97 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 18%
+  - release-1.2.6 closure progress: 0%
+  - overall HLD completion: about 89%
+
+2026-05-09: Extended the release-1.2.6 federation slice with a deterministic CLI evidence surface instead of leaving the new planner as an internal-only library. `neurolink_core.federation` now exposes `federation_route_smoke`, and the Core CLI provides `federation-route-smoke` for direct, relay, delegated-core, stale-route, and failure-path validation. This gives release-1.2.6 a runnable route/delegation smoke command that later runbooks, closure-summary integration, and operator review can consume without requiring a live multi-Core lab. - Copilot
+
+#### EXEC-317 Release 1.2.6 Federation Route Smoke CLI Slice
+
+- Status: completed for the deterministic federation smoke surface
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Scope:
+  - add a deterministic federation route smoke helper on top of the new topology registry and planner
+  - expose the helper through a new `neurolink_core.cli federation-route-smoke` command
+  - add focused tests for the smoke helper and CLI delegated/stale-path behavior
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/federation.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_federation.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release-1.2.6 federation planning now has a CLI-visible deterministic smoke/evidence entrypoint
+  - route and delegation evidence can be consumed without a live multi-Core deployment
+  - stale peer and trust/freshness failures remain explicit route outcomes rather than collapsing into generic errors
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_federation.py neurolink_core/tests/test_neurolink_core.py -q -k 'federation_route_smoke or TestFederationTopologyRegistry'` -> `12 passed, 96 deselected`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 15%
+  - release-1.2.6 closure progress: 0%
+  - overall HLD completion: about 88%
+
+2026-05-09: Implemented the first executable release-1.2.6 Core federation slice by adding a deterministic topology registry and route planner in `neurolink_core.federation`. The new module introduces local/direct, local/relay, delegated-core, stale-route, trust-mismatch, and peer-unreachable route outcomes plus a validated delegated execution proposal contract and hardware capability descriptor payload. This is intentionally a small standalone slice: it establishes the route/delegation contract and UT surface before deeper workflow or closure-summary integration so later federation logic can compose on a stable deterministic base. - Copilot
+
+#### EXEC-316 Release 1.2.6 Deterministic Federation Planner Slice
+
+- Status: completed for the first executable federation planning slice
+- Owner: GitHub Copilot continuing release-1.2.6 implementation
+- Scope:
+  - add a minimal `neurolink_core.federation` module for topology-aware route planning
+  - implement deterministic route decisions for direct, relay, delegated-core, stale, rejected, failed, and no-route outcomes
+  - implement a delegated execution proposal builder that only accepts ready delegated-core routes
+  - add focused federation tests for trust scope, freshness, reachability, relay path preservation, and capability descriptor serialization
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/federation.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_federation.py`
+- Result:
+  - release-1.2.6 now has an executable deterministic federation planning kernel instead of only LLD documentation
+  - route outcomes are explicit and machine-readable, which keeps stale, trust-mismatch, peer-unreachable, and no-route cases separate from generic transport failure
+  - delegated execution proposals now have a stable contract for later workflow, audit, and closure-summary integration
+  - hardware-related route planning remains capability-driven and does not hardcode the current validation board or transport path
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_federation.py -q` -> `8 passed`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 12%
+  - release-1.2.6 closure progress: 0%
+  - overall HLD completion: about 88%
+
+2026-05-09: Started release-1.2.6 implementation with the federation, relay, hardware-agnostic capability, and Agent Tool/Skill/MCP platform kickoff slice. The new release plan converts the remaining post-1.2.5 HLD debt into a two-minor-release burn-down: release-1.2.6 closes Core-to-Core topology/delegation, Gateway Unit relay evidence, capability-driven hardware planning, and governed Agent platform quality, while release-1.2.7 is reserved for multi-board productization, signing/resource/rollback hardening, observability, and release-2.0.0 readiness. README now marks release-1.2.6 as the active implementation slice while preserving canonical release identity at `1.2.5` until closure evidence passes and promotion is approved. AI Core LLD and Unit LLD now carry the first release-1.2.6 contract deltas for federation route lifecycles, hardware capability route lifecycles, delegated execution records, Unit capability descriptors, Gateway route records, and explicit hardware-agnostic rules. - Copilot
+
+#### EXEC-315 Release 1.2.6 Scope Lock And HLD Burn-Down Kickoff
+
+- Status: in progress; release-1.2.6 is now the active implementation slice, with release identity intentionally still at `1.2.5`
+- Owner: GitHub Copilot starting release-1.2.6 implementation
+- Scope:
+  - create the release-1.2.6 federation, relay, hardware-agnostic capability, and Agent platform plan
+  - align README with release-1.2.6 as active development while preserving release-1.2.5 as the closed baseline
+  - add AI Core LLD release-1.2.6 federation route, delegated execution, route decision, and Unit capability descriptor contracts
+  - add Unit LLD release-1.2.6 Gateway route, hardware capability, and artifact compatibility contracts
+  - assign the remaining HLD work across release-1.2.6, release-1.2.7, and release-2.0.0 stabilization
+  - record non-negotiable hardware abstraction guidance so current validation hardware does not become the shared design contract
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_LLD.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.6_FEDERATION_RELAY_AGENT_PLATFORM_PLAN.md`
+  - `applocation/NeuroLink/docs/project/UNIT_LLD.md`
+- Result:
+  - release-1.2.6 has a concrete validation-gated implementation plan
+  - AI Core LLD now defines release-1.2.6 federation and hardware-capability route lifecycles plus peer, delegation, route, and Unit capability data structures
+  - Unit LLD now defines transport-neutral Gateway route and hardware capability descriptors with explicit artifact compatibility rejection rules
+  - the two-minor-release path to release-2.0.0 is explicit: 1.2.6 for federation/relay/Agent platform, 1.2.7 for productization and multi-hardware hardening
+  - Agent Tool/Skill/MCP quality improvements are in scope but remain governed by Core policy, approval, audit, and tool-adapter execution boundaries
+  - hardware-related development is explicitly capability-driven and must not hardcode DNESP32S3B, Wi-Fi, SD-card, PSRAM, or lab network assumptions into shared contracts
+- Validation evidence:
+  - VS Code Markdown diagnostics for `README.md`, `PROJECT_PROGRESS.md`, `docs/project/RELEASE_1.2.6_FEDERATION_RELAY_AGENT_PLATFORM_PLAN.md`, `docs/project/AI_CORE_LLD.md`, and `docs/project/UNIT_LLD.md` -> no errors found
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && git -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check -- README.md PROJECT_PROGRESS.md docs/project/RELEASE_1.2.6_FEDERATION_RELAY_AGENT_PLATFORM_PLAN.md docs/project/AI_CORE_LLD.md docs/project/UNIT_LLD.md` -> no whitespace errors
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python neuro_cli/src/neuro_cli.py --output json system capabilities` -> `ok=true`, `release_target=1.2.5`
+- Updated progress estimate:
+  - release-1.2.6 implementation progress: about 8%
+  - release-1.2.6 closure progress: 0%
+  - overall HLD completion: about 88%
+
 2026-05-09: Promoted release identity for release-1.2.5 after the local deterministic closure bundle, broader regressions, and explicit approval all converged. The canonical Neuro CLI release marker now advances from `1.2.4` to `1.2.5`, the workflow catalog and sample Unit App source identity move with it, and the operator-facing README/runbook/plan text is aligned so the repository no longer describes release-1.2.5 as merely the next planned slice. This promotion closes release-1.2.5 at the repository identity layer while leaving the previously recorded closure evidence bundle intact as the proof set for the decision. - Copilot
 
 #### EXEC-314 Release 1.2.5 Release Identity Promotion

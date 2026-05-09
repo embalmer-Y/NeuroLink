@@ -22,6 +22,7 @@ from neurolink_core.tools import (
     ToolExecutionResult,
 )
 from neurolink_core.data import CoreDataStore
+from neurolink_core.federation import federation_route_smoke
 from neurolink_core.session import CoreSessionManager
 from neurolink_core.workflow import (
     NoModelCoreWorkflow,
@@ -29,6 +30,7 @@ from neurolink_core.workflow import (
     build_user_prompt_event,
     run_event_daemon_replay,
     run_event_replay,
+    run_live_event_service,
     run_no_model_dry_run,
     sample_events,
 )
@@ -76,6 +78,57 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(data_store.count("policy_decisions"), 0)
         decisions = data_store.get_policy_decisions(result.execution_span_id)
         self.assertEqual(decisions, [])
+        data_store.close()
+
+    def test_workflow_rejects_skill_ground_rule_violation_before_adapter_execution(self) -> None:
+        class InvalidSkillContractAdapter:
+            executed = False
+
+            def tool_manifest(self) -> tuple[ToolContract, ...]:
+                return (
+                    ToolContract(
+                        tool_name="system_state_sync",
+                        description="state sync without canonical wrapper/json contract",
+                        side_effect_level=SideEffectLevel.READ_ONLY,
+                        argv_template=("python", "direct_cli.py", "system", "state-sync"),
+                        required_arguments=("--node",),
+                        retryable=True,
+                        output_contract={"format": "text", "top_level_ok": False},
+                    ),
+                )
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                assert tool_name == "system_state_sync"
+                return self.tool_manifest()[0]
+
+            def execute(self, tool_name: str, args: dict[str, Any]) -> None:
+                del tool_name, args
+                self.executed = True
+                raise AssertionError("skill ground-rule gate should block before adapter execution")
+
+        adapter = InvalidSkillContractAdapter()
+        data_store = CoreDataStore()
+        workflow = NoModelCoreWorkflow(data_store=data_store, tool_adapter=adapter)
+
+        result = workflow.run(sample_events())
+
+        self.assertFalse(adapter.executed)
+        self.assertEqual(result.tool_results[0]["status"], "error")
+        self.assertEqual(
+            result.tool_results[0]["payload"]["failure_status"],
+            "missing_required_arguments",
+        )
+        plan_quality = result.tool_results[0]["payload"]["plan_quality"]
+        self.assertFalse(plan_quality["valid"])
+        self.assertEqual(plan_quality["failure_status"], "skill_ground_rule_violation")
+        self.assertFalse(plan_quality["skill_ground_rules"]["valid"])
+        self.assertFalse(
+            plan_quality["skill_ground_rules"]["closure_gates"]["wrapper_command_required"]
+        )
+        self.assertFalse(
+            plan_quality["skill_ground_rules"]["closure_gates"]["json_output_required"]
+        )
+        self.assertEqual(data_store.count("policy_decisions"), 0)
         data_store.close()
 
     def test_dry_run_persists_before_reasoning_and_seals_audit(self) -> None:
@@ -207,7 +260,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(run_code, 0)
         self.assertEqual(summary_code, 0)
         payload = json.loads(summary_out.getvalue())
-        self.assertEqual(payload["schema_version"], "1.2.5-closure-summary-v7")
+        self.assertEqual(payload["schema_version"], "1.2.6-closure-summary-v10")
         self.assertEqual(payload["session_id"], "closure-summary-session-001")
         self.assertEqual(payload["execution_count"], 1)
         self.assertTrue(payload["ok"])
@@ -223,6 +276,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             payload["validation_gate_summary"]["failed_gate_ids"],
             [
                 "documentation_gate",
+                "federation_gate",
+                "relay_gate",
+                "hardware_abstraction_gate",
+                "artifact_compatibility_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -230,12 +287,20 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             ],
         )
         self.assertFalse(payload["validation_gates"]["documentation_gate"])
+        self.assertFalse(payload["validation_gates"]["federation_gate"])
+        self.assertFalse(payload["validation_gates"]["relay_gate"])
+        self.assertFalse(payload["validation_gates"]["hardware_abstraction_gate"])
+        self.assertFalse(payload["validation_gates"]["artifact_compatibility_gate"])
         self.assertTrue(payload["validation_gates"]["memory_governance_gate"])
         self.assertTrue(payload["validation_gates"]["tool_skill_mcp_gate"])
         self.assertEqual(
             [item["item_id"] for item in payload["checklist"]],
             [
                 "documentation_gate",
+                "federation_gate",
+                "relay_gate",
+                "hardware_abstraction_gate",
+                "artifact_compatibility_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -257,6 +322,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "multimodal_profile_bundle",
             ],
         )
+        self.assertFalse(payload["relay_failure_summary"]["ok"])
         self.assertTrue(all(item["passed"] for item in payload["bundle_checklist"]))
         execution_summary = payload["execution_summaries"][0]
         self.assertTrue(execution_summary["ok"])
@@ -274,6 +340,214 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(execution_summary["tool_skill_mcp_summary"]["closure_gates"]["side_effect_tools_require_approval"])
         self.assertTrue(execution_summary["tool_skill_mcp_summary"]["closure_gates"]["mcp_descriptor_read_only"])
         self.assertEqual(execution_summary["rational_plan_evidence"]["status"], "tool_selected")
+        self.assertFalse(execution_summary["federation_summary"]["ok"])
+        self.assertFalse(execution_summary["relay_summary"]["ok"])
+
+    def test_cli_closure_summary_can_pass_federation_gate_when_route_evidence_is_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+
+            run_no_model_dry_run(
+                db_path,
+                session_id="closure-summary-federation-001",
+                federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                    target_node="unit-remote-01",
+                    now="2026-05-09T12:00:00Z",
+                    required_trust_scope="lab-federation",
+                ),
+            )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-federation-001",
+                    ]
+                )
+
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["aggregate_gates"]["session_has_execution_evidence"])
+        self.assertTrue(payload["validation_gates"]["federation_gate"])
+        self.assertFalse(payload["validation_gates"]["relay_gate"])
+        execution_summary = payload["execution_summaries"][0]
+        self.assertTrue(execution_summary["federation_summary"]["ok"])
+        self.assertFalse(execution_summary["relay_summary"]["ok"])
+        self.assertEqual(
+            execution_summary["federation_summary"]["route_kind"],
+            "delegated_core",
+        )
+        self.assertTrue(
+            execution_summary["federation_summary"]["delegated_execution_present"]
+        )
+
+    def test_cli_closure_summary_can_pass_relay_gate_when_peer_relay_evidence_is_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+
+            run_no_model_dry_run(
+                db_path,
+                session_id="closure-summary-relay-001",
+                federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                    target_node="unit-remote-01",
+                    now="2026-05-10T12:00:00Z",
+                    required_trust_scope="lab-federation",
+                    peer_expires_at="2026-05-10T12:30:00Z",
+                    peer_relay_via=("gateway-b-01",),
+                    peer_network_transports=("ethernet", "serial_bridge"),
+                ),
+            )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-relay-001",
+                    ]
+                )
+
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["federation_gate"])
+        self.assertFalse(payload["validation_gates"]["relay_gate"])
+        execution_summary = payload["execution_summaries"][0]
+        self.assertTrue(execution_summary["relay_summary"]["ok"])
+        self.assertEqual(
+            execution_summary["relay_summary"]["relay_path"],
+            ["gateway-b-01"],
+        )
+        self.assertEqual(
+            execution_summary["relay_summary"]["supported_transports"],
+            ["ethernet", "serial_bridge"],
+        )
+
+    def test_cli_closure_summary_can_pass_relay_gate_with_failure_runbook_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            relay_failure_file = Path(tmpdir) / "relay-failure.json"
+
+            run_no_model_dry_run(
+                db_path,
+                session_id="closure-summary-relay-runbook-001",
+                federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                    target_node="unit-remote-01",
+                    now="2026-05-10T12:00:00Z",
+                    required_trust_scope="lab-federation",
+                    peer_expires_at="2026-05-10T12:30:00Z",
+                    peer_relay_via=("gateway-b-01",),
+                    peer_network_transports=("ethernet", "serial_bridge"),
+                ),
+            )
+            relay_failure_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.6-relay-failure-closure-v1",
+                        "status": "ready",
+                        "reason": "route_failure_runbook_reviewed",
+                        "closure_gates": {
+                            "route_failure_recorded": True,
+                            "fallback_path_recorded": True,
+                            "operator_runbook_recorded": True,
+                            "deterministic_validation_recorded": True,
+                        },
+                        "evidence_summary": {
+                            "route_failure_reason": "peer_unreachable",
+                            "fallback_action": "direct_local_retry_then_manual_operator_review",
+                            "runbook_id": "relay-route-failure-v1",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-relay-runbook-001",
+                        "--relay-failure-file",
+                        str(relay_failure_file),
+                    ]
+                )
+
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["relay_gate"])
+        self.assertTrue(payload["relay_failure_summary"]["ok"])
+
+    def test_cli_closure_summary_can_pass_hardware_and_artifact_gates_with_compatibility_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            hardware_file = Path(tmpdir) / "hardware-compatibility.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-hardware-001")
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+
+            hardware_out = io.StringIO()
+            with redirect_stdout(hardware_out):
+                hardware_code = core_cli_main(
+                    [
+                        "hardware-compatibility-smoke",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                        "--required-heap-free-bytes",
+                        "4096",
+                        "--required-app-slot-bytes",
+                        "32768",
+                    ]
+                )
+            hardware_file.write_text(hardware_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-hardware-001",
+                        "--hardware-compatibility-file",
+                        str(hardware_file),
+                    ]
+                )
+
+        self.assertEqual(hardware_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["hardware_abstraction_gate"])
+        self.assertTrue(payload["validation_gates"]["artifact_compatibility_gate"])
+        self.assertTrue(payload["hardware_compatibility_summary"]["hardware_abstraction_ok"])
+        self.assertTrue(payload["hardware_compatibility_summary"]["artifact_compatibility_ok"])
 
     def test_cli_closure_summary_includes_memory_governance_bundle_for_local_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -313,6 +587,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["aggregate_gates"]["tool_skill_mcp_gate_satisfied"])
         self.assertFalse(payload["validation_gate_summary"]["ok"])
         self.assertFalse(payload["validation_gates"]["documentation_gate"])
+        self.assertFalse(payload["validation_gates"]["federation_gate"])
         self.assertTrue(payload["validation_gates"]["memory_governance_gate"])
         self.assertTrue(payload["validation_gates"]["tool_skill_mcp_gate"])
         execution_summary = payload["execution_summaries"][0]
@@ -405,19 +680,25 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             provider_smoke_file = Path(tmpdir) / "provider-smoke.json"
             multimodal_profile_file = Path(tmpdir) / "multimodal-profile.json"
             regression_file = Path(tmpdir) / "regression.json"
+            relay_failure_file = Path(tmpdir) / "relay-failure.json"
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            hardware_file = Path(tmpdir) / "hardware-compatibility.json"
 
-            with redirect_stdout(io.StringIO()):
-                run_code = core_cli_main(
-                    [
-                        "no-model-dry-run",
-                        "--db",
-                        db_path,
-                        "--session-id",
-                        "closure-summary-gates-001",
-                        "--memory-backend",
-                        "local",
-                    ]
-                )
+            run_payload = run_no_model_dry_run(
+                db_path,
+                session_id="closure-summary-gates-001",
+                memory_backend="local",
+                federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                    target_node="unit-remote-01",
+                    now="2026-05-10T12:00:00Z",
+                    required_trust_scope="lab-federation",
+                    peer_expires_at="2026-05-10T12:30:00Z",
+                    peer_relay_via=("gateway-b-01",),
+                    peer_network_transports=("ethernet", "serial_bridge"),
+                ),
+            )
+            run_code = 0
 
             documentation_file.write_text(
                 json.dumps(
@@ -481,15 +762,70 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             regression_file.write_text(
                 json.dumps(
                     {
-                        "schema_version": "1.2.5-regression-closure-v1",
+                        "schema_version": "1.2.6-regression-closure-v2",
                         "status": "ready",
-                        "reason": "focused_regressions_green",
+                        "reason": "focused_agent_release124_federation_relay_hardware_regressions_green",
                         "closure_gates": {
                             "core_tests_passed": True,
+                            "agent_closure_regression_passed": True,
                             "app_lifecycle_regression_passed": True,
                             "event_service_regression_passed": True,
+                            "federation_regression_passed": True,
+                            "relay_regression_passed": True,
+                            "hardware_compatibility_regression_passed": True,
                         },
-                        "evidence_summary": {"command_count": 3},
+                        "evidence_summary": {"command_count": 6},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            hardware_out = io.StringIO()
+            with redirect_stdout(hardware_out):
+                hardware_code = core_cli_main(
+                    [
+                        "hardware-compatibility-smoke",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                        "--required-heap-free-bytes",
+                        "4096",
+                        "--required-app-slot-bytes",
+                        "32768",
+                    ]
+                )
+            hardware_file.write_text(hardware_out.getvalue(), encoding="utf-8")
+            relay_failure_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.6-relay-failure-closure-v1",
+                        "status": "ready",
+                        "reason": "route_failure_runbook_reviewed",
+                        "closure_gates": {
+                            "route_failure_recorded": True,
+                            "fallback_path_recorded": True,
+                            "operator_runbook_recorded": True,
+                            "deterministic_validation_recorded": True,
+                        },
+                        "evidence_summary": {
+                            "route_failure_reason": "peer_unreachable",
+                            "fallback_action": "direct_local_retry_then_manual_operator_review",
+                            "runbook_id": "relay-route-failure-v1",
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -512,17 +848,24 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         str(multimodal_profile_file),
                         "--regression-file",
                         str(regression_file),
+                        "--relay-failure-file",
+                        str(relay_failure_file),
+                        "--hardware-compatibility-file",
+                        str(hardware_file),
                     ]
                 )
 
         self.assertEqual(run_code, 0)
+        self.assertEqual(hardware_code, 0)
         self.assertEqual(summary_code, 0)
+        self.assertEqual(run_payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["federation_route_evidence"]["route_decision"]["route_kind"], "delegated_core")
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 7)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 12)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
+        self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
         self.assertTrue(all(item["passed"] for item in payload["checklist"]))
         self.assertEqual(
             payload["documentation_summary"]["schema_version"],
@@ -530,7 +873,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         )
         self.assertEqual(
             payload["regression_summary"]["schema_version"],
-            "1.2.5-regression-closure-v1",
+            "1.2.6-regression-closure-v2",
         )
 
     def test_low_salience_tick_does_not_delegate(self) -> None:
@@ -853,6 +1196,27 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             ["time.tick", "unit.callback"],
         )
 
+    def test_event_replay_can_record_federation_route_evidence(self) -> None:
+        payload = run_event_replay(
+            sample_events(),
+            federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                target_node="unit-remote-01",
+                now="2026-05-09T12:00:00Z",
+                required_trust_scope="lab-federation",
+            ),
+        )
+
+        session_context = payload["execution_evidence"]["audit_record"]["payload"]["session_context"]
+        self.assertEqual(payload["event_source"], "replay_file")
+        self.assertEqual(
+            session_context["federation_route_evidence"]["route_decision"]["route_kind"],
+            "delegated_core",
+        )
+        self.assertEqual(
+            payload["execution_evidence"]["execution_span"]["payload"]["federation_route_status"],
+            "route_ready",
+        )
+
     def test_event_daemon_replay_dedupes_across_batches(self) -> None:
         callback = sample_events()[0]
         tick = sample_events()[1]
@@ -881,6 +1245,55 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(daemon_payload["db_counts"]["perception_events"], 2)
         self.assertEqual(daemon_payload["db_counts"]["execution_spans"], 2)
 
+    def test_event_daemon_replay_can_record_federation_route_evidence(self) -> None:
+        callback = sample_events()[0]
+        payload = run_event_daemon_replay(
+            [[callback]],
+            session_id="session-daemon-fed-001",
+            federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                target_node="unit-remote-01",
+                now="2026-05-09T12:00:00Z",
+                required_trust_scope="lab-federation",
+            ),
+        )
+
+        self.assertEqual(payload["event_daemon_evidence"]["cycle_count"], 1)
+        self.assertEqual(payload["session_id"], "session-daemon-fed-001")
+        self.assertEqual(payload["db_counts"]["audit_records"], 1)
+
+        cycle = payload["event_daemon_evidence"]["cycles"][0]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "daemon-fed.db")
+            persisted = run_event_daemon_replay(
+                [[callback]],
+                db_path,
+                session_id="session-daemon-fed-verify-001",
+                federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                    target_node="unit-remote-01",
+                    now="2026-05-09T12:00:00Z",
+                    required_trust_scope="lab-federation",
+                ),
+            )
+            verification_store = CoreDataStore(db_path)
+            try:
+                execution_span_id = str(
+                    persisted["event_daemon_evidence"]["cycles"][0]["execution_span_id"]
+                )
+                audit_id = str(persisted["event_daemon_evidence"]["cycles"][0]["audit_id"])
+                evidence = verification_store.build_execution_evidence(
+                    execution_span_id,
+                    audit_id,
+                )
+            finally:
+                verification_store.close()
+
+        self.assertEqual(cycle["status"], "ok")
+        self.assertEqual(evidence["execution_span"]["payload"]["federation_route_kind"], "delegated_core")
+        self.assertEqual(
+            evidence["audit_record"]["payload"]["session_context"]["federation_route_evidence"]["status"],
+            "route_ready",
+        )
+
     def test_event_daemon_replay_seeds_dedupe_keys_from_existing_database(self) -> None:
         callback = sample_events()[0]
         tick = sample_events()[1]
@@ -904,6 +1317,87 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(second["event_daemon_evidence"]["duplicate_event_count"], 2)
         self.assertEqual(second["db_counts"]["perception_events"], 2)
         self.assertEqual(second["db_counts"]["execution_spans"], 2)
+
+    def test_live_event_service_can_record_federation_route_evidence(self) -> None:
+        class FakeLiveAdapter:
+            def runtime_metadata(self) -> dict[str, Any]:
+                return {"adapter_kind": "fake-live"}
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                if tool_name != "system_state_sync":
+                    return None
+                return ToolContract(
+                    tool_name="system_state_sync",
+                    description="state sync",
+                    side_effect_level=SideEffectLevel.READ_ONLY,
+                    required_resources=("state sync aggregate",),
+                )
+
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                del args
+                if tool_name != "system_state_sync":
+                    raise AssertionError(f"unexpected tool: {tool_name}")
+                return ToolExecutionResult(
+                    tool_result_id="tool-live-fed-001",
+                    tool_name="system_state_sync",
+                    status="ok",
+                    payload={
+                        "state_sync": {
+                            "status": "ok",
+                            "recommended_next_actions": ["continue"],
+                        }
+                    },
+                )
+
+            def collect_live_events(
+                self,
+                *,
+                duration: int,
+                max_events: int,
+                ready_file: str,
+            ) -> dict[str, Any]:
+                del duration, max_events, ready_file
+                return {
+                    "ok": True,
+                    "subscription": "neuro/unit-01/event/unit/**",
+                    "listener_mode": "callback",
+                    "handler_audit": {"enabled": False, "executed": 0},
+                    "events": [sample_events()[0]],
+                }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "event-service-fed.db")
+            payload = run_live_event_service(
+                db_path,
+                event_source="unit",
+                duration=1,
+                max_events=1,
+                cycles=1,
+                session_id="event-service-fed-001",
+                tool_adapter=FakeLiveAdapter(),
+                federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                    target_node="unit-remote-01",
+                    now="2026-05-09T12:00:00Z",
+                    required_trust_scope="lab-federation",
+                ),
+            )
+            data_store = CoreDataStore(db_path)
+            try:
+                evidence = data_store.build_execution_evidence(
+                    str(payload["execution_span_id"]),
+                    str(payload["audit_id"]),
+                )
+            finally:
+                data_store.close()
+
+        self.assertEqual(payload["command"], "event-service")
+        self.assertEqual(payload["event_source"], "neuro_cli_events_live")
+        self.assertEqual(payload["event_service"]["cycle_count"], 1)
+        self.assertEqual(payload["execution_evidence"]["execution_span"]["payload"]["federation_route_kind"], "delegated_core")
+        self.assertEqual(
+            evidence["audit_record"]["payload"]["session_context"]["federation_route_evidence"]["status"],
+            "route_ready",
+        )
 
     def test_dry_run_reports_execution_evidence_snapshot(self) -> None:
         payload = run_no_model_dry_run()
@@ -937,6 +1431,29 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(
             {candidate["semantic_topic"] for candidate in evidence["memory_candidates"]},
             {"time.tick", "unit.callback"},
+        )
+
+    def test_dry_run_can_record_federation_route_evidence_in_audit_and_span(self) -> None:
+        payload = run_no_model_dry_run(
+            federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                target_node="unit-remote-01",
+                now="2026-05-09T12:00:00Z",
+                required_trust_scope="lab-federation",
+            )
+        )
+
+        evidence = payload["execution_evidence"]
+        execution_span_payload = evidence["execution_span"]["payload"]
+        audit_session_context = evidence["audit_record"]["payload"]["session_context"]
+        federation_route = audit_session_context["federation_route_evidence"]
+
+        self.assertEqual(execution_span_payload["federation_route_status"], "route_ready")
+        self.assertEqual(execution_span_payload["federation_route_kind"], "delegated_core")
+        self.assertEqual(federation_route["route_decision"]["route_kind"], "delegated_core")
+        self.assertEqual(federation_route["delegated_execution"]["target_core"], "core-b")
+        self.assertIn(
+            "federation_route",
+            {fact["fact_type"] for fact in evidence["facts"]},
         )
 
     def test_local_memory_backend_commits_long_term_memories(self) -> None:
@@ -1152,6 +1669,47 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["maf_runtime"]["provider_mode"], "provider_available_no_call")
         self.assertEqual(payload["session"]["session_id"], "session-cli-001")
         self.assertEqual(len(payload["session"]["recent_execution_spans"]), 1)
+
+    def test_cli_federation_route_smoke_outputs_delegated_route_payload(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "federation-route-smoke",
+                    "--target-node",
+                    "unit-remote-01",
+                    "--required-trust-scope",
+                    "lab-federation",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "route_ready")
+        self.assertEqual(payload["route_decision"]["route_kind"], "delegated_core")
+        self.assertEqual(payload["delegated_execution"]["target_core"], "core-b")
+
+    def test_cli_federation_route_smoke_reports_stale_peer_as_failure(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "federation-route-smoke",
+                    "--target-node",
+                    "unit-remote-01",
+                    "--required-trust-scope",
+                    "lab-federation",
+                    "--peer-expires-at",
+                    "2026-05-09T11:59:59Z",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "stale_route")
+        self.assertEqual(payload["route_decision"]["failure_reason"], "peer_advertisement_stale")
 
     def test_cli_no_model_dry_run_rejects_real_provider_without_allow_flag(self) -> None:
         out = io.StringIO()

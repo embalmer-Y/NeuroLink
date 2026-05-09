@@ -525,6 +525,20 @@ States:
 5. `UNREACHABLE`
 6. `REMOVED`
 
+Rules:
+
+1. A child Unit record must expose attachment metadata without assuming the
+  gateway uses Wi-Fi, Ethernet, Thread, serial bridge, or any single physical
+  transport.
+2. A relay route must carry forwarded metadata, source Core, target child,
+  route freshness, and trust scope so the Core can distinguish direct, relayed,
+  stale, and no-route outcomes.
+3. Gateway forwarding must not grant new authority by reachability alone; lease,
+  policy, and source metadata checks still apply at the controlling Core and at
+  the target Unit surface where applicable.
+4. Gateway route cache records must expire deterministically and emit stale-child
+  evidence instead of silently forwarding through unknown routes.
+
 UT anchor: `UT-UNIT-GW-*`
 
 ### 5.11 Reboot Recovery Lifecycle
@@ -758,6 +772,57 @@ struct neuro_memory_snapshot {
 };
 ```
 
+### 6.14 Release 1.2.6 Hardware Capability Descriptor
+
+```c
+struct neuro_unit_capability_desc {
+  char node_id[32];
+  char architecture[24];
+  char abi[32];
+  char board_family[32];
+  bool llext_supported;
+  char storage_class[24];
+  uint32_t network_transport_mask;
+  bool relay_capable;
+  bool signing_enforced;
+  uint32_t heap_free_bytes;
+  uint32_t app_slot_bytes;
+  uint32_t stack_margin_bytes;
+};
+```
+
+Rules:
+
+1. Capability fields must describe compatibility classes, not a single lab
+   board identity.
+2. Board-specific discovery belongs in the port provider or board support layer;
+   shared query serialization must consume the normalized descriptor.
+3. Artifact verification must reject incompatible architecture, ABI, board
+   family, LLEXT support, storage class, signing state, or resource budget before
+   activation.
+
+### 6.15 Release 1.2.6 Gateway Route Record
+
+```c
+struct neuro_gateway_route_record {
+  char child_node_id[32];
+  char relay_node_id[32];
+  uint32_t transport_mask;
+  uint8_t state;
+  uint8_t trust_scope;
+  int64_t last_seen_ms;
+  int64_t expires_at_ms;
+};
+```
+
+Rules:
+
+1. The route record is transport-neutral and must not encode Wi-Fi-only state.
+2. Stale or incompatible routes must be returned as explicit route failure
+   evidence instead of being hidden behind generic timeout behavior.
+3. Forwarded command, query, update, and event metadata must preserve the relay
+   path for Core audit correlation.
+
 ### 6.14 Gateway Route Record
 
 ```c
@@ -914,6 +979,8 @@ Production additions to existing runtime exception model:
   - route cache, relay forwarding metadata, child stale detection.
 13. `UT-UNIT-RECOVERY-*`
   - reboot reconciliation, stale lease cleanup, staged artifact recovery.
+14. `UT-UNIT-HWCAP-*`
+  - capability descriptor normalization, board-provider injection, artifact compatibility rejection.
 
 ### 10.2 Mandatory Traceability Rules
 
@@ -932,6 +999,7 @@ Production additions to existing runtime exception model:
 7. Add manifest dependency and budget enforcement.
 8. Add recovery reconciliation.
 9. Add gateway route record and query surface.
+10. Add release-1.2.6 capability descriptor and artifact compatibility rejection surface.
 
 ## 12. Traceability Prefixes
 

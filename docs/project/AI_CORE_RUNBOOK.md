@@ -1,12 +1,16 @@
 # NeuroLink AI Core Runbook
 
-This runbook explains how to start and validate `neurolink_core` for the
-closed release-1.2.5 multimodal Agent runtime and governance line, while still
-covering the inherited release-1.2.4 Core orchestrator and live-event-service
-surfaces that remain part of the closure baseline. It is written for operators
-and developers who need to run Core locally, check provider and memory
-readiness, execute the Core-owned build/deploy gates, or close bounded live
-service and AI Core release evidence.
+This runbook explains how to start and validate `neurolink_core` on top of the
+closed release-1.2.6 federation, relay, and Agent-platform baseline while the
+project moves through the active release-1.2.7 productization and
+release-2.0.0-readiness line. It still covers the closed release-1.2.5
+multimodal governance baseline and the inherited release-1.2.4 Core
+orchestrator/live-event-service surfaces that remain part of release evidence.
+Release identity is now promoted to `1.2.6`; the next promotion boundary is
+release-1.2.7 after its own closure evidence and explicit approval. This
+runbook is written for operators and developers who need to run Core locally,
+check provider and memory readiness, execute the Core-owned build/deploy gates,
+or close bounded live service and AI Core release evidence.
 
 ## 1. Runtime Shape
 
