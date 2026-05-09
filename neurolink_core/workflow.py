@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import hashlib
+import json
+from pathlib import Path
 import re
+import struct
+import sys
 from typing import Any, Callable, cast
 
 from .agents import AffectiveDecision
-from .common import PerceptionEvent, PerceptionFrame, WorkflowResult, new_id
+from .common import PerceptionEvent, PerceptionFrame, WorkflowResult, new_id, utc_now_iso
 from .data import CoreDataStore
 from .events import PerceptionEventRouter
 from .maf import (
@@ -19,10 +24,1683 @@ from .maf import (
 from .memory import FakeLongTermMemory, LongTermMemory, build_memory_backend
 from .policy import ReadOnlyToolPolicy
 from .session import CoreSessionManager, build_prompt_safe_context
-from .tools import FakeUnitToolAdapter, ToolContract, ToolExecutionResult
+from .tools import (
+    CommandExecutionResult,
+    FakeUnitToolAdapter,
+    NeuroCliToolAdapter,
+    ToolContract,
+    ToolExecutionResult,
+)
 
 
 AGENT_RUN_EVIDENCE_SCHEMA_VERSION = "1.2.2-agent-run-evidence-v1"
+APP_BUILD_PLAN_SCHEMA_VERSION = "1.2.4-app-build-plan-v1"
+APP_ARTIFACT_ADMISSION_SCHEMA_VERSION = "1.2.4-app-artifact-admission-v1"
+APP_DEPLOY_PLAN_SCHEMA_VERSION = "1.2.4-app-deploy-plan-v1"
+APP_DEPLOY_PREPARE_VERIFY_SCHEMA_VERSION = "1.2.4-app-deploy-prepare-verify-v1"
+APP_DEPLOY_ACTIVATE_SCHEMA_VERSION = "1.2.4-app-deploy-activate-v1"
+APP_DEPLOY_ROLLBACK_SCHEMA_VERSION = "1.2.4-app-deploy-rollback-v1"
+EVENT_SERVICE_SCHEMA_VERSION = "1.2.4-event-service-v1"
+
+
+ELF_MACHINE_NAMES = {
+    3: "x86",
+    40: "arm",
+    62: "x86_64",
+    94: "xtensa",
+    183: "aarch64",
+    243: "riscv",
+}
+
+
+BOARD_ARCHITECTURE_NAMES = {
+    "dnesp32s3b/esp32s3/procpu": "xtensa",
+}
+
+
+def _validate_app_build_app_id(app_id: str) -> str:
+    normalized = app_id.strip()
+    if not normalized:
+        raise ValueError("app_build_plan_requires_app_id")
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", normalized):
+        raise ValueError("invalid_app_build_app_id")
+    return normalized
+
+
+def _validate_app_build_dir(build_dir: str) -> str:
+    normalized = build_dir.strip().replace("\\", "/")
+    if not normalized:
+        raise ValueError("app_build_plan_requires_build_dir")
+    if ".." in normalized:
+        raise ValueError("invalid_app_build_dir")
+    if re.fullmatch(r"build_[^/]+", normalized):
+        raise ValueError("invalid_app_build_dir")
+    if not re.fullmatch(r"build/.+", normalized):
+        raise ValueError("invalid_app_build_dir")
+    return normalized
+
+
+def _resolve_app_build_source_dir(app_id: str, app_source_dir: str | None) -> str:
+    candidate = (app_source_dir or "").strip().replace("\\", "/")
+    if not candidate:
+        candidate = f"applocation/NeuroLink/subprojects/{app_id}"
+    if ".." in candidate:
+        raise ValueError("invalid_app_build_source_dir")
+    return candidate
+
+
+def _get_unit_app_build_dir(build_dir: str, app_id: str) -> str:
+    parent_dir, _, base_name = build_dir.rpartition("/")
+    if app_id == "neuro_unit_app":
+        return f"{parent_dir}/{base_name}_app"
+    normalized_app_id = app_id.replace("-", "_")
+    return f"{parent_dir}/{base_name}_{normalized_app_id}_app"
+
+
+def build_app_build_plan(
+    *,
+    preset: str = "unit-app",
+    app_id: str = "neuro_unit_app",
+    app_source_dir: str | None = None,
+    board: str = "dnesp32s3b/esp32s3/procpu",
+    build_dir: str = "build/neurolink_unit",
+    check_c_style: bool = False,
+) -> dict[str, Any]:
+    normalized_preset = preset.strip()
+    if normalized_preset not in ("unit-app", "unit-ext"):
+        raise ValueError("unsupported_app_build_preset")
+
+    normalized_app_id = _validate_app_build_app_id(app_id)
+    normalized_build_dir = _validate_app_build_dir(build_dir)
+    normalized_source_dir = _resolve_app_build_source_dir(
+        normalized_app_id,
+        app_source_dir,
+    )
+    app_build_dir = _get_unit_app_build_dir(normalized_build_dir, normalized_app_id)
+    source_artifact_file = f"{app_build_dir}/{normalized_app_id}.llext"
+    staged_artifact_file = f"{normalized_build_dir}/llext/{normalized_app_id}.llext"
+
+    build_command_parts = [
+        "bash",
+        "applocation/NeuroLink/scripts/build_neurolink.sh",
+        "--preset",
+        normalized_preset,
+    ]
+    if normalized_app_id != "neuro_unit_app":
+        build_command_parts.extend(["--app", normalized_app_id])
+    if normalized_source_dir != f"applocation/NeuroLink/subprojects/{normalized_app_id}":
+        build_command_parts.extend(["--app-source-dir", normalized_source_dir])
+    if normalized_build_dir != "build/neurolink_unit":
+        build_command_parts.extend(["--build-dir", normalized_build_dir])
+    if board != "dnesp32s3b/esp32s3/procpu":
+        build_command_parts.extend(["--board", board])
+    if not check_c_style:
+        build_command_parts.append("--no-c-style-check")
+
+    plan = {
+        "schema_version": APP_BUILD_PLAN_SCHEMA_VERSION,
+        "release_slice": "1.2.4",
+        "preset": normalized_preset,
+        "board": board,
+        "app_id": normalized_app_id,
+        "app_source_dir": normalized_source_dir,
+        "unit_build_dir": normalized_build_dir,
+        "app_build_dir": app_build_dir,
+        "source_artifact_file": source_artifact_file,
+        "staged_artifact_file": staged_artifact_file,
+        "canonical_artifact_file": source_artifact_file,
+        "build_script": "applocation/NeuroLink/scripts/build_neurolink.sh",
+        "build_command": " ".join(build_command_parts),
+        "uses_edk_external_app_flow": True,
+        "admission_checks": [
+            "source_artifact_exists",
+            "source_artifact_is_nonempty",
+            "source_artifact_has_valid_elf_header",
+            "staged_artifact_exists",
+            "staged_artifact_is_nonempty",
+            "staged_artifact_has_valid_elf_header",
+            "artifact_app_id_matches_request",
+        ],
+    }
+    return {
+        "ok": True,
+        "status": "ok",
+        "command": "app-build-plan",
+        "build_plan": plan,
+    }
+
+
+def _resolve_app_artifact_file(artifact_file: str | None, fallback_file: str) -> str:
+    candidate = (artifact_file or "").strip().replace("\\", "/")
+    if not candidate:
+        candidate = fallback_file
+    if not candidate:
+        raise ValueError("app_artifact_admission_requires_artifact_file")
+    return candidate
+
+
+def _validate_deploy_plan_identifier(value: str, failure_status: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(failure_status)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", normalized):
+        raise ValueError(failure_status)
+    return normalized
+
+
+def _suggest_activation_lease_id(app_id: str) -> str:
+    return f"l-{app_id.replace('_', '-').replace('.', '-').lower()}-act"
+
+
+def _load_app_source_identity(app_source_dir: str, app_id: str) -> dict[str, str]:
+    source_file = Path(app_source_dir) / "src" / "main.c"
+    if not source_file.is_file():
+        raise ValueError("source_identity_file_missing")
+
+    source_text = source_file.read_text(encoding="utf-8")
+
+    def require_match(pattern: str, failure_status: str) -> re.Match[str]:
+        match = re.search(pattern, source_text, re.MULTILINE | re.DOTALL)
+        if match is None:
+            raise ValueError(failure_status)
+        return match
+
+    source_app_id = require_match(
+        r'static const char app_id\[\]\s*=\s*"([^"]+)";',
+        "source_identity_app_id_missing",
+    ).group(1)
+    if source_app_id != app_id:
+        raise ValueError("source_app_id_mismatch")
+
+    app_version = require_match(
+        r'static const char app_version\[\]\s*=\s*"([^"]+)";',
+        "source_identity_version_missing",
+    ).group(1)
+    build_id = require_match(
+        r'static const char app_build_id\[\]\s*=\s*"([^"]+)";',
+        "source_identity_build_id_missing",
+    ).group(1)
+    manifest_match = require_match(
+        r'\.version\s*=\s*\{\s*\.major\s*=\s*(\d+)\s*,\s*\.minor\s*=\s*(\d+)\s*,\s*\.patch\s*=\s*(\d+)',
+        "source_identity_manifest_version_missing",
+    )
+    manifest_version = ".".join(manifest_match.groups())
+    if manifest_version != app_version:
+        raise ValueError("source_manifest_version_mismatch")
+
+    return {
+        "source_identity_file": source_file.as_posix(),
+        "app_id": source_app_id,
+        "app_version": app_version,
+        "build_id": build_id,
+        "manifest_version": manifest_version,
+    }
+
+
+def _read_elf_identity(artifact_bytes: bytes) -> dict[str, Any]:
+    if len(artifact_bytes) < 24:
+        raise ValueError("artifact_invalid_elf_header")
+    if artifact_bytes[:4] != b"\x7fELF":
+        raise ValueError("artifact_invalid_elf_header")
+
+    elf_class = artifact_bytes[4]
+    elf_data = artifact_bytes[5]
+    elf_version = artifact_bytes[6]
+    if elf_class not in (1, 2) or elf_data not in (1, 2) or elf_version != 1:
+        raise ValueError("artifact_invalid_elf_header")
+
+    byte_order = "little" if elf_data == 1 else "big"
+    struct_prefix = "<" if elf_data == 1 else ">"
+    e_type = struct.unpack(f"{struct_prefix}H", artifact_bytes[16:18])[0]
+    e_machine = struct.unpack(f"{struct_prefix}H", artifact_bytes[18:20])[0]
+    e_version_word = struct.unpack(f"{struct_prefix}I", artifact_bytes[20:24])[0]
+    if e_version_word != 1:
+        raise ValueError("artifact_invalid_elf_header")
+
+    return {
+        "elf_class": "ELF32" if elf_class == 1 else "ELF64",
+        "endianness": "little_endian" if byte_order == "little" else "big_endian",
+        "elf_version": e_version_word,
+        "elf_type": e_type,
+        "machine_id": e_machine,
+        "machine_name": ELF_MACHINE_NAMES.get(e_machine, f"unknown-{e_machine}"),
+    }
+
+
+def build_app_artifact_admission(
+    *,
+    preset: str = "unit-app",
+    app_id: str = "neuro_unit_app",
+    app_source_dir: str | None = None,
+    board: str = "dnesp32s3b/esp32s3/procpu",
+    build_dir: str = "build/neurolink_unit",
+    artifact_file: str | None = None,
+) -> dict[str, Any]:
+    build_plan_payload = build_app_build_plan(
+        preset=preset,
+        app_id=app_id,
+        app_source_dir=app_source_dir,
+        board=board,
+        build_dir=build_dir,
+    )
+    build_plan = cast(dict[str, Any], build_plan_payload["build_plan"])
+    resolved_artifact_file = _resolve_app_artifact_file(
+        artifact_file,
+        str(build_plan["source_artifact_file"]),
+    )
+    artifact_path = Path(resolved_artifact_file)
+    if artifact_path.name != f"{app_id}.llext":
+        raise ValueError("artifact_filename_app_id_mismatch")
+    if not artifact_path.is_file():
+        raise ValueError("artifact_missing")
+
+    artifact_bytes = artifact_path.read_bytes()
+    if not artifact_bytes:
+        raise ValueError("artifact_empty")
+
+    source_identity = _load_app_source_identity(str(build_plan["app_source_dir"]), app_id)
+    elf_identity = _read_elf_identity(artifact_bytes)
+    expected_architecture = BOARD_ARCHITECTURE_NAMES.get(board, "unknown")
+    if (
+        expected_architecture != "unknown"
+        and elf_identity["machine_name"] != expected_architecture
+    ):
+        raise ValueError("artifact_target_arch_mismatch")
+
+    contains_app_id = source_identity["app_id"].encode("utf-8") in artifact_bytes
+    contains_build_id = source_identity["build_id"].encode("utf-8") in artifact_bytes
+    contains_version = source_identity["app_version"].encode("utf-8") in artifact_bytes
+    if not contains_app_id:
+        raise ValueError("artifact_app_id_missing")
+    if not contains_build_id:
+        raise ValueError("artifact_build_id_missing")
+    if not contains_version:
+        raise ValueError("artifact_version_missing")
+
+    artifact_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+    artifact_size_bytes = len(artifact_bytes)
+    admission = {
+        "schema_version": APP_ARTIFACT_ADMISSION_SCHEMA_VERSION,
+        "artifact_file": artifact_path.as_posix(),
+        "artifact_size_bytes": artifact_size_bytes,
+        "artifact_sha256": artifact_sha256,
+        "expected_architecture": expected_architecture,
+        "elf_identity": elf_identity,
+        "source_identity": source_identity,
+        "filename_matches_app_id": True,
+        "artifact_contains_app_id_string": contains_app_id,
+        "artifact_contains_build_id_string": contains_build_id,
+        "artifact_contains_version_string": contains_version,
+        "admission_checks": [
+            "artifact_exists",
+            "artifact_is_nonempty",
+            "artifact_filename_matches_app_id",
+            "artifact_has_valid_elf_header",
+            "artifact_target_architecture_matches_board",
+            "artifact_contains_app_id_string",
+            "artifact_contains_build_id_string",
+            "artifact_contains_version_string",
+            "source_manifest_version_matches_source_version",
+        ],
+        "admitted": True,
+    }
+    return {
+        "ok": True,
+        "status": "ok",
+        "command": "app-artifact-admission",
+        "build_plan": build_plan,
+        "artifact_admission": admission,
+    }
+
+
+def build_app_deploy_plan(
+    *,
+    preset: str = "unit-app",
+    app_id: str = "neuro_unit_app",
+    app_source_dir: str | None = None,
+    board: str = "dnesp32s3b/esp32s3/procpu",
+    build_dir: str = "build/neurolink_unit",
+    artifact_file: str | None = None,
+    node_id: str = "unit-01",
+    source_agent: str = "rational",
+    lease_ttl_ms: int = 120000,
+    start_args: str | None = None,
+) -> dict[str, Any]:
+    normalized_node_id = _validate_deploy_plan_identifier(node_id, "invalid_deploy_node_id")
+    normalized_source_agent = _validate_deploy_plan_identifier(
+        source_agent,
+        "invalid_deploy_source_agent",
+    )
+    if lease_ttl_ms <= 0:
+        raise ValueError("invalid_deploy_lease_ttl_ms")
+
+    admission_payload = build_app_artifact_admission(
+        preset=preset,
+        app_id=app_id,
+        app_source_dir=app_source_dir,
+        board=board,
+        build_dir=build_dir,
+        artifact_file=artifact_file,
+    )
+    build_plan = cast(dict[str, Any], admission_payload["build_plan"])
+    artifact_admission = cast(dict[str, Any], admission_payload["artifact_admission"])
+    resolved_artifact_file = str(artifact_admission["artifact_file"])
+    activation_resource = f"update/app/{app_id}/activate"
+    suggested_lease_id = _suggest_activation_lease_id(app_id)
+    normalized_start_args = (start_args or "").strip()
+
+    preflight_command_parts = [
+        "bash",
+        "applocation/NeuroLink/scripts/preflight_neurolink_linux.sh",
+        "--node",
+        normalized_node_id,
+        "--artifact-file",
+        resolved_artifact_file,
+        "--auto-start-router",
+        "--require-serial",
+        "--install-missing-cli-deps",
+        "--output",
+        "json",
+    ]
+    cli_prefix = [
+        sys.executable,
+        "applocation/NeuroLink/neuro_cli/src/neuro_cli.py",
+        "--output",
+        "json",
+        "--node",
+        normalized_node_id,
+        "--source-agent",
+        normalized_source_agent,
+    ]
+    lease_acquire_parts = cli_prefix + [
+        "lease",
+        "acquire",
+        "--resource",
+        activation_resource,
+        "--lease-id",
+        suggested_lease_id,
+        "--ttl-ms",
+        str(lease_ttl_ms),
+    ]
+    prepare_parts = cli_prefix + [
+        "deploy",
+        "prepare",
+        "--app-id",
+        app_id,
+        "--file",
+        resolved_artifact_file,
+    ]
+    verify_parts = cli_prefix + [
+        "deploy",
+        "verify",
+        "--app-id",
+        app_id,
+    ]
+    activate_parts = cli_prefix + [
+        "deploy",
+        "activate",
+        "--app-id",
+        app_id,
+        "--lease-id",
+        suggested_lease_id,
+    ]
+    if normalized_start_args:
+        activate_parts.extend(["--start-args", normalized_start_args])
+    health_guard_parts = [
+        sys.executable,
+        "-m",
+        "neurolink_core.cli",
+        "activation-health-guard",
+        "--app-id",
+        app_id,
+        "--tool-adapter",
+        "neuro-cli",
+        "--output",
+        "json",
+    ]
+    query_apps_parts = cli_prefix + ["query", "apps"]
+    lease_release_parts = cli_prefix + [
+        "lease",
+        "release",
+        "--lease-id",
+        suggested_lease_id,
+    ]
+    query_leases_parts = cli_prefix + ["query", "leases"]
+
+    steps = [
+        {
+            "name": "preflight",
+            "kind": "preflight",
+            "side_effect_free": False,
+            "command": " ".join(preflight_command_parts),
+            "argv": preflight_command_parts,
+            "expected_status": "ready",
+        },
+        {
+            "name": "artifact_admission",
+            "kind": "admission",
+            "side_effect_free": True,
+            "command": "neurolink_core app-artifact-admission",
+            "expected_status": "ok",
+        },
+        {
+            "name": "lease_acquire_activate",
+            "kind": "lease",
+            "side_effect_free": False,
+            "command": " ".join(lease_acquire_parts),
+            "argv": lease_acquire_parts,
+            "required_resource": activation_resource,
+            "expected_status": "ok",
+        },
+        {
+            "name": "deploy_prepare",
+            "kind": "deploy_prepare",
+            "side_effect_free": False,
+            "command": " ".join(prepare_parts),
+            "argv": prepare_parts,
+            "expected_nested_payload_status": "ok",
+        },
+        {
+            "name": "deploy_verify",
+            "kind": "deploy_verify",
+            "side_effect_free": False,
+            "command": " ".join(verify_parts),
+            "argv": verify_parts,
+            "expected_nested_payload_status": "ok",
+        },
+        {
+            "name": "activation_approval_gate",
+            "kind": "approval_gate",
+            "side_effect_free": True,
+            "approval_required": True,
+            "required_resource": activation_resource,
+            "expected_decision": "approved",
+        },
+        {
+            "name": "deploy_activate",
+            "kind": "deploy_activate",
+            "side_effect_free": False,
+            "command": " ".join(activate_parts),
+            "argv": activate_parts,
+            "approval_required": True,
+            "expected_nested_payload_status": "ok",
+        },
+        {
+            "name": "activation_health_guard",
+            "kind": "health_guard",
+            "side_effect_free": True,
+            "command": " ".join(health_guard_parts),
+            "argv": health_guard_parts,
+            "expected_status": "ok",
+        },
+        {
+            "name": "query_apps",
+            "kind": "query_apps",
+            "side_effect_free": True,
+            "command": " ".join(query_apps_parts),
+            "argv": query_apps_parts,
+            "expected_status": "ok",
+        },
+        {
+            "name": "lease_release_activate",
+            "kind": "lease_cleanup",
+            "side_effect_free": False,
+            "command": " ".join(lease_release_parts),
+            "argv": lease_release_parts,
+            "expected_status": "ok_or_lease_not_found",
+        },
+        {
+            "name": "query_leases",
+            "kind": "query_leases",
+            "side_effect_free": True,
+            "command": " ".join(query_leases_parts),
+            "argv": query_leases_parts,
+            "expected_status": "ok",
+            "expected_leases": [],
+        },
+    ]
+
+    deploy_plan = {
+        "schema_version": APP_DEPLOY_PLAN_SCHEMA_VERSION,
+        "release_slice": "1.2.4",
+        "node_id": normalized_node_id,
+        "source_agent": normalized_source_agent,
+        "board": board,
+        "app_id": app_id,
+        "artifact_file": resolved_artifact_file,
+        "activation_resource": activation_resource,
+        "suggested_activate_lease_id": suggested_lease_id,
+        "lease_ttl_ms": lease_ttl_ms,
+        "start_args": normalized_start_args,
+        "activation_approval_required": True,
+        "cleanup_requires_empty_leases": True,
+        "final_expected_app_state": "RUNNING_ACTIVE",
+        "steps": steps,
+    }
+    return {
+        "ok": True,
+        "status": "ok",
+        "command": "app-deploy-plan",
+        "build_plan": build_plan,
+        "artifact_admission": artifact_admission,
+        "deploy_plan": deploy_plan,
+    }
+
+
+def _parse_command_json_result(command_result: CommandExecutionResult) -> dict[str, Any]:
+    normalized_stdout = command_result.stdout.strip()
+    candidates = [normalized_stdout]
+    start = normalized_stdout.find("{")
+    end = normalized_stdout.rfind("}")
+    if start != -1 and end != -1 and end >= start:
+        candidates.append(normalized_stdout[start : end + 1])
+
+    payload: Any | None = None
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+            last_error = None
+            break
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+
+    if payload is None:
+        if command_result.exit_code != 0:
+            raise ValueError(f"command_exit_{command_result.exit_code}") from last_error
+        raise ValueError("parse_failed") from last_error
+    if not isinstance(payload, dict):
+        raise ValueError("parse_failed")
+    return cast(dict[str, Any], payload)
+
+
+def _command_payload_failure_status(payload: dict[str, Any]) -> str:
+    top_level_status = str(payload.get("status") or "")
+    if payload.get("ok") is False and top_level_status:
+        return top_level_status
+    nested_payload = payload.get("payload")
+    if isinstance(nested_payload, dict):
+        nested_status = str(cast(dict[str, Any], nested_payload).get("status") or "")
+        if nested_status and nested_status != "ok":
+            return nested_status
+    replies = payload.get("replies")
+    if isinstance(replies, list):
+        for reply in cast(list[Any], replies):
+            if not isinstance(reply, dict):
+                continue
+            reply_payload = cast(dict[str, Any] | None, reply.get("payload"))
+            if not isinstance(reply_payload, dict):
+                continue
+            reply_status = str(reply_payload.get("status") or "")
+            if reply_status and reply_status != "ok":
+                return reply_status
+    return ""
+
+
+def _build_execution_step_result(
+    *,
+    name: str,
+    argv: list[str],
+    command_result: CommandExecutionResult | None,
+    payload: dict[str, Any] | None,
+    failure_status: str = "",
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "name": name,
+        "command": " ".join(argv),
+        "argv": list(argv),
+        "ok": not failure_status,
+        "failure_status": failure_status,
+    }
+    if command_result is not None:
+        result["exit_code"] = command_result.exit_code
+        if command_result.stderr:
+            result["stderr"] = command_result.stderr
+    if payload is not None:
+        result["result"] = payload
+    return result
+
+
+def _build_tool_execution_step_result(
+    *,
+    name: str,
+    tool_name: str,
+    tool_result: ToolExecutionResult,
+    failure_status: str = "",
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "tool_name": tool_name,
+        "status": tool_result.status,
+        "ok": not failure_status,
+        "failure_status": failure_status,
+        "result": dict(tool_result.payload),
+    }
+
+
+def _tool_execution_failure_status(tool_result: ToolExecutionResult) -> str:
+    if tool_result.status != "ok":
+        return str(
+            tool_result.payload.get("failure_status")
+            or tool_result.status
+            or "tool_execution_failed"
+        )
+    result_payload = tool_result.payload.get("result")
+    if isinstance(result_payload, dict):
+        nested_failure_status = _command_payload_failure_status(
+            cast(dict[str, Any], result_payload)
+        )
+        if nested_failure_status:
+            return nested_failure_status
+    return ""
+
+
+def _normalize_activation_approval_decision(decision: str) -> str:
+    normalized = decision.strip().lower()
+    if normalized in {"approve", "approved"}:
+        return "approved"
+    if normalized in {"deny", "denied"}:
+        return "denied"
+    if normalized in {"expire", "expired"}:
+        return "expired"
+    if normalized in {"pending", ""}:
+        return "pending"
+    raise ValueError("invalid_activation_approval_decision")
+
+
+def _release_gate_approval_failure_class(status: str, *, prefix: str) -> str:
+    if status == "pending_approval":
+        return f"{prefix}_approval_required"
+    if status == "denied":
+        return f"{prefix}_approval_denied"
+    if status == "expired":
+        return f"{prefix}_approval_expired"
+    return f"{prefix}_approval_required"
+
+
+def _build_guarded_rollback_approval(
+    *,
+    tool_adapter: Any,
+    recovery_candidate_summary: dict[str, Any],
+) -> dict[str, Any]:
+    rollback_contract = None
+    describe_tool = getattr(tool_adapter, "describe_tool", None)
+    if callable(describe_tool):
+        rollback_contract = describe_tool("system_rollback_app")
+
+    matching_lease_ids = cast(
+        list[Any],
+        recovery_candidate_summary.get("matching_lease_ids") or [],
+    )
+    requested_args = {
+        "app_id": str(recovery_candidate_summary.get("app_id") or ""),
+        "app": str(recovery_candidate_summary.get("app_id") or ""),
+        "lease_id": str(matching_lease_ids[0] if matching_lease_ids else ""),
+        "reason": "guarded_rollback_after_activation_health_failure",
+    }
+    payload: dict[str, Any] = {
+        "status": "pending_approval",
+        "tool_name": "system_rollback_app",
+        "reason": "operator_approval_required_for_guarded_rollback",
+        "requested_args": requested_args,
+        "required_resources": ["update_rollback_lease"],
+        "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+        "target_app_id": str(recovery_candidate_summary.get("app_id") or ""),
+        "recovery_candidate_summary": dict(recovery_candidate_summary),
+    }
+    if rollback_contract is not None:
+        payload["required_resources"] = list(rollback_contract.required_resources)
+        payload["cleanup_hint"] = rollback_contract.cleanup_hint
+        payload["contract"] = rollback_contract.to_dict()
+    return payload
+
+
+def _persist_release_gate_command_result(
+    db_path: str,
+    *,
+    command_name: str,
+    payload: dict[str, Any],
+    fact_records: list[tuple[str, str, dict[str, Any]]],
+) -> dict[str, str]:
+    data_store = CoreDataStore(db_path)
+    session_id = new_id("session")
+    execution_span_id = new_id("exec")
+    audit_id = new_id("audit")
+    try:
+        data_store.persist_execution_span(
+            execution_span_id,
+            "running",
+            {"command": command_name, "status": "running"},
+            session_id=session_id,
+        )
+        data_store.persist_fact(
+            execution_span_id,
+            "release_gate_command",
+            command_name,
+            {
+                "command": command_name,
+                "ok": bool(payload.get("ok", False)),
+                "status": str(payload.get("status") or "unknown"),
+            },
+        )
+        for fact_type, subject, fact_payload in fact_records:
+            data_store.persist_fact(
+                execution_span_id,
+                fact_type,
+                subject,
+                fact_payload,
+            )
+        data_store.persist_audit_record(
+            audit_id,
+            execution_span_id,
+            str(payload.get("status") or ("ok" if payload.get("ok") else "error")),
+            payload,
+            session_id=session_id,
+        )
+        data_store.persist_execution_span(
+            execution_span_id,
+            "ok" if bool(payload.get("ok", False)) else str(payload.get("status") or "error"),
+            {
+                "command": command_name,
+                "status": str(payload.get("status") or "unknown"),
+                "audit_id": audit_id,
+            },
+            session_id=session_id,
+        )
+    finally:
+        data_store.close()
+    return {
+        "db_path": db_path,
+        "session_id": session_id,
+        "execution_span_id": execution_span_id,
+        "audit_id": audit_id,
+    }
+
+
+def persist_app_deploy_activate_evidence(
+    db_path: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    activation_decision = cast(dict[str, Any], payload.get("activation_decision") or {})
+    app_id = str(activation_decision.get("resolved_app_id") or "app-deploy-activate")
+    fact_records: list[tuple[str, str, dict[str, Any]]] = []
+    if activation_decision:
+        fact_records.append(("activation_decision", app_id, activation_decision))
+    deploy_execution = cast(dict[str, Any], payload.get("deploy_execution") or {})
+    activation_health_guard = cast(
+        dict[str, Any],
+        deploy_execution.get("activation_health_guard") or {},
+    )
+    activation_health_result = cast(
+        dict[str, Any],
+        activation_health_guard.get("result") or {},
+    )
+    activation_health = cast(
+        dict[str, Any],
+        activation_health_result.get("activation_health")
+        or activation_health_result.get("health_observation")
+        or {},
+    )
+    if activation_health:
+        fact_records.append(
+            (
+                "activation_health_observation",
+                str(activation_health.get("app_id") or app_id),
+                activation_health,
+            )
+        )
+    recovery_candidate_summary = cast(
+        dict[str, Any],
+        payload.get("recovery_candidate_summary") or {},
+    )
+    if recovery_candidate_summary:
+        fact_records.append(
+            (
+                "recovery_candidate",
+                str(recovery_candidate_summary.get("app_id") or app_id),
+                recovery_candidate_summary,
+            )
+        )
+    rollback_approval = cast(dict[str, Any], payload.get("rollback_approval") or {})
+    if rollback_approval:
+        fact_records.append(
+            (
+                "rollback_approval",
+                str(rollback_approval.get("target_app_id") or app_id),
+                rollback_approval,
+            )
+        )
+    return _persist_release_gate_command_result(
+        db_path,
+        command_name="app-deploy-activate",
+        payload=payload,
+        fact_records=fact_records,
+    )
+
+
+def persist_app_deploy_rollback_evidence(
+    db_path: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    rollback_decision = cast(dict[str, Any], payload.get("rollback_decision") or {})
+    app_id = str(rollback_decision.get("resolved_app_id") or "app-deploy-rollback")
+    fact_records: list[tuple[str, str, dict[str, Any]]] = []
+    if rollback_decision:
+        fact_records.append(("rollback_decision", app_id, rollback_decision))
+    rollback_execution = cast(dict[str, Any], payload.get("rollback_execution") or {})
+    rollback_step = cast(dict[str, Any], rollback_execution.get("rollback") or {})
+    rollback_result = cast(dict[str, Any], rollback_step.get("result") or {})
+    if rollback_result:
+        fact_records.append(("rollback_result", app_id, rollback_result))
+    rollback_failure_summary = cast(
+        dict[str, Any],
+        payload.get("rollback_failure_summary") or {},
+    )
+    if rollback_failure_summary:
+        fact_records.append(("rollback_failure_summary", app_id, rollback_failure_summary))
+    return _persist_release_gate_command_result(
+        db_path,
+        command_name="app-deploy-rollback",
+        payload=payload,
+        fact_records=fact_records,
+    )
+
+
+def _extract_query_apps_target_state(
+    payload: dict[str, Any],
+    *,
+    app_id: str,
+) -> dict[str, Any]:
+    observed_apps: list[Any] = []
+    nested_payload = payload.get("payload")
+    if isinstance(nested_payload, dict) and isinstance(nested_payload.get("apps"), list):
+        observed_apps = cast(list[Any], nested_payload["apps"])
+    else:
+        replies = payload.get("replies")
+        if isinstance(replies, list):
+            for reply in cast(list[Any], replies):
+                if not isinstance(reply, dict):
+                    continue
+                reply_payload = cast(dict[str, Any] | None, reply.get("payload"))
+                if isinstance(reply_payload, dict) and isinstance(reply_payload.get("apps"), list):
+                    observed_apps = cast(list[Any], reply_payload["apps"])
+                    break
+
+    matched_app: dict[str, Any] | None = None
+    for candidate in observed_apps:
+        if not isinstance(candidate, dict):
+            continue
+        app_payload = cast(dict[str, Any], candidate)
+        candidate_app_id = str(app_payload.get("app_id") or app_payload.get("name") or "")
+        if candidate_app_id == app_id:
+            matched_app = app_payload
+            break
+
+    if matched_app is None:
+        return {
+            "app_present": False,
+            "observed_app_state": "missing",
+            "app_running": False,
+        }
+
+    observed_app_state = str(
+        matched_app.get("state") or matched_app.get("status") or "unknown"
+    )
+    normalized_state = observed_app_state.lower()
+    return {
+        "app_present": True,
+        "observed_app_state": observed_app_state,
+        "app_running": normalized_state in {"running", "active", "started", "running_active"},
+    }
+
+
+def run_app_deploy_prepare_verify(
+    *,
+    preset: str = "unit-app",
+    app_id: str = "neuro_unit_app",
+    app_source_dir: str | None = None,
+    board: str = "dnesp32s3b/esp32s3/procpu",
+    build_dir: str = "build/neurolink_unit",
+    artifact_file: str | None = None,
+    node_id: str = "unit-01",
+    source_agent: str = "rational",
+    lease_ttl_ms: int = 120000,
+    timeout_seconds: int = 30,
+    tool_adapter: NeuroCliToolAdapter | None = None,
+) -> dict[str, Any]:
+    deploy_payload = build_app_deploy_plan(
+        preset=preset,
+        app_id=app_id,
+        app_source_dir=app_source_dir,
+        board=board,
+        build_dir=build_dir,
+        artifact_file=artifact_file,
+        node_id=node_id,
+        source_agent=source_agent,
+        lease_ttl_ms=lease_ttl_ms,
+    )
+    build_plan = cast(dict[str, Any], deploy_payload["build_plan"])
+    artifact_admission = cast(dict[str, Any], deploy_payload["artifact_admission"])
+    deploy_plan = cast(dict[str, Any], deploy_payload["deploy_plan"])
+    adapter = tool_adapter or NeuroCliToolAdapter(
+        node=node_id,
+        source_agent=source_agent,
+        timeout_seconds=timeout_seconds,
+    )
+
+    execution: dict[str, Any] = {
+        "schema_version": APP_DEPLOY_PREPARE_VERIFY_SCHEMA_VERSION,
+        "completed_through": "",
+        "cleanup_attempted": False,
+    }
+
+    def run_json_step(name: str, argv: list[str], *, expected_status: str | None = None) -> tuple[dict[str, Any], str]:
+        command_result = adapter.runner(argv, timeout_seconds)
+        try:
+            payload = _parse_command_json_result(command_result)
+        except ValueError as exc:
+            failure_status = str(exc)
+            return (
+                _build_execution_step_result(
+                    name=name,
+                    argv=argv,
+                    command_result=command_result,
+                    payload=None,
+                    failure_status=failure_status,
+                ),
+                failure_status,
+            )
+        failure_status = _command_payload_failure_status(payload)
+        if expected_status is not None and str(payload.get("status") or "") != expected_status:
+            failure_status = str(payload.get("status") or "unexpected_status")
+        return (
+            _build_execution_step_result(
+                name=name,
+                argv=argv,
+                command_result=command_result,
+                payload=payload,
+                failure_status=failure_status,
+            ),
+            failure_status,
+        )
+
+    steps = cast(list[dict[str, Any]], deploy_plan["steps"])
+    preflight_step, preflight_failure = run_json_step(
+        "preflight",
+        cast(list[str], steps[0]["argv"]),
+        expected_status="ready",
+    )
+    execution["preflight"] = preflight_step
+    if preflight_failure:
+        return {
+            "ok": False,
+            "status": "error",
+            "command": "app-deploy-prepare-verify",
+            "failure_class": "app_deploy_prepare_verify_failed",
+            "failure_status": preflight_failure,
+            "failed_step": "preflight",
+            "build_plan": build_plan,
+            "artifact_admission": artifact_admission,
+            "deploy_plan": deploy_plan,
+            "deploy_execution": execution,
+        }
+
+    lease_step, lease_failure = run_json_step(
+        "lease_acquire_activate",
+        cast(list[str], steps[2]["argv"]),
+    )
+    execution["lease_acquire"] = lease_step
+    lease_acquired = not lease_failure
+
+    failed_step = ""
+    failure_status = ""
+
+    if lease_failure:
+        failed_step = "lease_acquire_activate"
+        failure_status = lease_failure
+    else:
+        prepare_step, prepare_failure = run_json_step(
+            "deploy_prepare",
+            cast(list[str], steps[3]["argv"]),
+        )
+        execution["deploy_prepare"] = prepare_step
+        if prepare_failure:
+            failed_step = "deploy_prepare"
+            failure_status = prepare_failure
+        else:
+            verify_step, verify_failure = run_json_step(
+                "deploy_verify",
+                cast(list[str], steps[4]["argv"]),
+            )
+            execution["deploy_verify"] = verify_step
+            if verify_failure:
+                failed_step = "deploy_verify"
+                failure_status = verify_failure
+            else:
+                execution["completed_through"] = "deploy_verify"
+
+    if lease_acquired:
+        execution["cleanup_attempted"] = True
+        release_step, release_failure = run_json_step(
+            "lease_release_activate",
+            cast(list[str], steps[9]["argv"]),
+        )
+        execution["lease_release"] = release_step
+        leases_step, leases_failure = run_json_step(
+            "query_leases",
+            cast(list[str], steps[10]["argv"]),
+        )
+        execution["query_leases"] = leases_step
+        leases_payload = cast(dict[str, Any] | None, leases_step.get("result"))
+        observed_leases: list[Any] = []
+        if isinstance(leases_payload, dict):
+            replies = cast(list[Any] | None, leases_payload.get("replies"))
+            if isinstance(replies, list):
+                for reply in replies:
+                    if not isinstance(reply, dict):
+                        continue
+                    reply_payload = cast(dict[str, Any] | None, reply.get("payload"))
+                    if isinstance(reply_payload, dict) and isinstance(reply_payload.get("leases"), list):
+                        observed_leases = cast(list[Any], reply_payload["leases"])
+                        break
+        if release_failure and not failure_status:
+            failed_step = "lease_release_activate"
+            failure_status = release_failure
+        if not leases_failure and observed_leases:
+            leases_failure = "cleanup_leases_not_empty"
+            execution["query_leases"]["failure_status"] = leases_failure
+            execution["query_leases"]["ok"] = False
+        if leases_failure and not failure_status:
+            failed_step = "query_leases"
+            failure_status = leases_failure
+
+    if failure_status:
+        return {
+            "ok": False,
+            "status": "error",
+            "command": "app-deploy-prepare-verify",
+            "failure_class": "app_deploy_prepare_verify_failed",
+            "failure_status": failure_status,
+            "failed_step": failed_step,
+            "build_plan": build_plan,
+            "artifact_admission": artifact_admission,
+            "deploy_plan": deploy_plan,
+            "deploy_execution": execution,
+        }
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "command": "app-deploy-prepare-verify",
+        "build_plan": build_plan,
+        "artifact_admission": artifact_admission,
+        "deploy_plan": deploy_plan,
+        "deploy_execution": execution,
+    }
+
+
+def run_app_deploy_activate(
+    *,
+    preset: str = "unit-app",
+    app_id: str = "neuro_unit_app",
+    app_source_dir: str | None = None,
+    board: str = "dnesp32s3b/esp32s3/procpu",
+    build_dir: str = "build/neurolink_unit",
+    artifact_file: str | None = None,
+    node_id: str = "unit-01",
+    source_agent: str = "rational",
+    lease_ttl_ms: int = 120000,
+    start_args: str | None = None,
+    timeout_seconds: int = 30,
+    activation_approval_decision: str = "pending",
+    activation_approval_note: str = "",
+    tool_adapter: Any | None = None,
+) -> dict[str, Any]:
+    normalized_approval_decision = _normalize_activation_approval_decision(
+        activation_approval_decision,
+    )
+    deploy_payload = build_app_deploy_plan(
+        preset=preset,
+        app_id=app_id,
+        app_source_dir=app_source_dir,
+        board=board,
+        build_dir=build_dir,
+        artifact_file=artifact_file,
+        node_id=node_id,
+        source_agent=source_agent,
+        lease_ttl_ms=lease_ttl_ms,
+        start_args=start_args,
+    )
+    build_plan = cast(dict[str, Any], deploy_payload["build_plan"])
+    artifact_admission = cast(dict[str, Any], deploy_payload["artifact_admission"])
+    deploy_plan = cast(dict[str, Any], deploy_payload["deploy_plan"])
+    adapter = tool_adapter or NeuroCliToolAdapter(
+        node=node_id,
+        source_agent=source_agent,
+        timeout_seconds=timeout_seconds,
+    )
+
+    activation_decision = {
+        "approval_required": True,
+        "decision": normalized_approval_decision,
+        "status": (
+            "approved"
+            if normalized_approval_decision == "approved"
+            else "pending_approval"
+            if normalized_approval_decision == "pending"
+            else "expired"
+            if normalized_approval_decision == "expired"
+            else "denied"
+        ),
+        "activation_resource": str(deploy_plan["activation_resource"]),
+        "resolved_app_id": app_id,
+        "resolved_lease_id": str(deploy_plan["suggested_activate_lease_id"]),
+        "approval_note": activation_approval_note.strip(),
+        "resume_hint": "rerun with --approval-decision approve to execute activation",
+    }
+    execution: dict[str, Any] = {
+        "schema_version": APP_DEPLOY_ACTIVATE_SCHEMA_VERSION,
+        "completed_through": "",
+        "cleanup_attempted": False,
+    }
+    recovery_candidate_summary: dict[str, Any] | None = None
+    rollback_approval: dict[str, Any] | None = None
+
+    if normalized_approval_decision != "approved":
+        return {
+            "ok": False,
+            "status": activation_decision["status"],
+            "command": "app-deploy-activate",
+            "failure_class": _release_gate_approval_failure_class(
+                activation_decision["status"],
+                prefix="activation",
+            ),
+            "failure_status": activation_decision["status"],
+            "build_plan": build_plan,
+            "artifact_admission": artifact_admission,
+            "deploy_plan": deploy_plan,
+            "activation_decision": activation_decision,
+            "deploy_execution": execution,
+        }
+
+    def run_json_step(
+        name: str,
+        argv: list[str],
+        *,
+        expected_status: str | None = None,
+        allowed_failure_statuses: tuple[str, ...] = (),
+    ) -> tuple[dict[str, Any], str]:
+        command_result = adapter.runner(argv, timeout_seconds)
+        try:
+            payload = _parse_command_json_result(command_result)
+        except ValueError as exc:
+            failure_status = str(exc)
+            return (
+                _build_execution_step_result(
+                    name=name,
+                    argv=argv,
+                    command_result=command_result,
+                    payload=None,
+                    failure_status=failure_status,
+                ),
+                failure_status,
+            )
+        failure_status = _command_payload_failure_status(payload)
+        if expected_status is not None and str(payload.get("status") or "") != expected_status:
+            failure_status = str(payload.get("status") or "unexpected_status")
+        if failure_status in allowed_failure_statuses:
+            failure_status = ""
+        return (
+            _build_execution_step_result(
+                name=name,
+                argv=argv,
+                command_result=command_result,
+                payload=payload,
+                failure_status=failure_status,
+            ),
+            failure_status,
+        )
+
+    steps = cast(list[dict[str, Any]], deploy_plan["steps"])
+    step_indices = {
+        "preflight": 0,
+        "lease_acquire_activate": 2,
+        "deploy_prepare": 3,
+        "deploy_verify": 4,
+        "deploy_activate": 6,
+        "query_apps": 8,
+        "lease_release_activate": 9,
+        "query_leases": 10,
+    }
+
+    failed_step = ""
+    failure_status = ""
+    lease_acquired = False
+
+    preflight_step, preflight_failure = run_json_step(
+        "preflight",
+        cast(list[str], steps[step_indices["preflight"]]["argv"]),
+        expected_status="ready",
+    )
+    execution["preflight"] = preflight_step
+    if preflight_failure:
+        return {
+            "ok": False,
+            "status": "error",
+            "command": "app-deploy-activate",
+            "failure_class": "app_deploy_activate_failed",
+            "failure_status": preflight_failure,
+            "failed_step": "preflight",
+            "build_plan": build_plan,
+            "artifact_admission": artifact_admission,
+            "deploy_plan": deploy_plan,
+            "activation_decision": activation_decision,
+            "deploy_execution": execution,
+        }
+
+    lease_step, lease_failure = run_json_step(
+        "lease_acquire_activate",
+        cast(list[str], steps[step_indices["lease_acquire_activate"]]["argv"]),
+    )
+    execution["lease_acquire"] = lease_step
+    lease_acquired = not lease_failure
+    if lease_failure:
+        failed_step = "lease_acquire_activate"
+        failure_status = lease_failure
+    else:
+        prepare_step, prepare_failure = run_json_step(
+            "deploy_prepare",
+            cast(list[str], steps[step_indices["deploy_prepare"]]["argv"]),
+        )
+        execution["deploy_prepare"] = prepare_step
+        if prepare_failure:
+            failed_step = "deploy_prepare"
+            failure_status = prepare_failure
+        else:
+            verify_step, verify_failure = run_json_step(
+                "deploy_verify",
+                cast(list[str], steps[step_indices["deploy_verify"]]["argv"]),
+            )
+            execution["deploy_verify"] = verify_step
+            if verify_failure:
+                failed_step = "deploy_verify"
+                failure_status = verify_failure
+            else:
+                activate_step, activate_failure = run_json_step(
+                    "deploy_activate",
+                    cast(list[str], steps[step_indices["deploy_activate"]]["argv"]),
+                )
+                execution["deploy_activate"] = activate_step
+                if activate_failure:
+                    failed_step = "deploy_activate"
+                    failure_status = activate_failure
+                else:
+                    health_tool_result = adapter.execute(
+                        "system_activation_health_guard",
+                        {"app_id": app_id, "app": app_id},
+                    )
+                    health_failure = ""
+                    health_payload = dict(health_tool_result.payload)
+                    if health_tool_result.status != "ok":
+                        health_failure = str(
+                            health_payload.get("failure_status")
+                            or health_tool_result.status
+                            or "activation_health_failed"
+                        )
+                    else:
+                        activation_health = cast(
+                            dict[str, Any],
+                            health_payload.get("activation_health")
+                            or health_payload.get("health_observation")
+                            or {},
+                        )
+                        health_classification = str(
+                            activation_health.get("classification") or "unknown"
+                        )
+                        if health_classification != "healthy":
+                            health_failure = (
+                                health_classification
+                                if health_classification != "unknown"
+                                else "activation_health_not_healthy"
+                            )
+                    execution["activation_health_guard"] = _build_tool_execution_step_result(
+                        name="activation_health_guard",
+                        tool_name="system_activation_health_guard",
+                        tool_result=health_tool_result,
+                        failure_status=health_failure,
+                    )
+                    if health_failure:
+                        lease_observation_result = adapter.execute(
+                            "system_query_leases",
+                            {
+                                "app_id": app_id,
+                                "app": app_id,
+                                "reason": "activation_rollback_candidate_lease_observation",
+                            },
+                        )
+                        lease_observation_failure = ""
+                        if lease_observation_result.status != "ok":
+                            lease_observation_failure = str(
+                                lease_observation_result.payload.get("failure_status")
+                                or lease_observation_result.status
+                                or "rollback_candidate_lease_observation_failed"
+                            )
+                        execution["rollback_candidate_lease_observation"] = _build_tool_execution_step_result(
+                            name="rollback_candidate_lease_observation",
+                            tool_name="system_query_leases",
+                            tool_result=lease_observation_result,
+                            failure_status=lease_observation_failure,
+                        )
+                        recovery_candidate_summary = _build_recovery_candidate_summary(
+                            activation_health=activation_health,
+                            lease_observation=lease_observation_result.to_dict(),
+                            activate_failed_payload={
+                                "target_app_id": app_id,
+                                "artifact_id": str(
+                                    cast(
+                                        dict[str, Any],
+                                        artifact_admission.get("source_identity") or {},
+                                    ).get("build_id")
+                                    or artifact_admission.get("artifact_sha256")
+                                    or ""
+                                ),
+                                "activation_result": health_failure,
+                                "status": health_failure,
+                            },
+                        )
+                        if health_failure == "rollback_required":
+                            rollback_approval = _build_guarded_rollback_approval(
+                                tool_adapter=adapter,
+                                recovery_candidate_summary=recovery_candidate_summary,
+                            )
+                        failed_step = "activation_health_guard"
+                        failure_status = health_failure
+                    else:
+                        query_apps_step, query_apps_failure = run_json_step(
+                            "query_apps",
+                            cast(list[str], steps[step_indices["query_apps"]]["argv"]),
+                        )
+                        query_apps_payload = cast(
+                            dict[str, Any] | None,
+                            query_apps_step.get("result"),
+                        )
+                        if isinstance(query_apps_payload, dict):
+                            query_app_state = _extract_query_apps_target_state(
+                                query_apps_payload,
+                                app_id=app_id,
+                            )
+                            query_apps_step["observed_app_state"] = str(
+                                query_app_state["observed_app_state"]
+                            )
+                            query_apps_step["app_present"] = bool(
+                                query_app_state["app_present"]
+                            )
+                            if not query_apps_failure and not bool(query_app_state["app_running"]):
+                                query_apps_failure = "app_not_running_after_activate"
+                                query_apps_step["failure_status"] = query_apps_failure
+                                query_apps_step["ok"] = False
+                        execution["query_apps"] = query_apps_step
+                        if query_apps_failure:
+                            failed_step = "query_apps"
+                            failure_status = query_apps_failure
+                        else:
+                            execution["completed_through"] = "query_apps"
+
+    if lease_acquired:
+        execution["cleanup_attempted"] = True
+        release_step, release_failure = run_json_step(
+            "lease_release_activate",
+            cast(list[str], steps[step_indices["lease_release_activate"]]["argv"]),
+            allowed_failure_statuses=("lease_not_found",),
+        )
+        execution["lease_release"] = release_step
+        leases_step, leases_failure = run_json_step(
+            "query_leases",
+            cast(list[str], steps[step_indices["query_leases"]]["argv"]),
+        )
+        execution["query_leases"] = leases_step
+        leases_payload = cast(dict[str, Any] | None, leases_step.get("result"))
+        observed_leases: list[Any] = []
+        if isinstance(leases_payload, dict):
+            replies = cast(list[Any] | None, leases_payload.get("replies"))
+            if isinstance(replies, list):
+                for reply in replies:
+                    if not isinstance(reply, dict):
+                        continue
+                    reply_payload = cast(dict[str, Any] | None, reply.get("payload"))
+                    if isinstance(reply_payload, dict) and isinstance(reply_payload.get("leases"), list):
+                        observed_leases = cast(list[Any], reply_payload["leases"])
+                        break
+        if release_failure and not failure_status:
+            failed_step = "lease_release_activate"
+            failure_status = release_failure
+        if not leases_failure and observed_leases:
+            leases_failure = "cleanup_leases_not_empty"
+            execution["query_leases"]["failure_status"] = leases_failure
+            execution["query_leases"]["ok"] = False
+        if leases_failure and not failure_status:
+            failed_step = "query_leases"
+            failure_status = leases_failure
+
+    if failure_status:
+        payload = {
+            "ok": False,
+            "status": "error",
+            "command": "app-deploy-activate",
+            "failure_class": "app_deploy_activate_failed",
+            "failure_status": failure_status,
+            "failed_step": failed_step,
+            "build_plan": build_plan,
+            "artifact_admission": artifact_admission,
+            "deploy_plan": deploy_plan,
+            "activation_decision": activation_decision,
+            "deploy_execution": execution,
+        }
+        if recovery_candidate_summary is not None:
+            payload["recovery_candidate_summary"] = recovery_candidate_summary
+        if rollback_approval is not None:
+            payload["rollback_approval"] = rollback_approval
+        return payload
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "command": "app-deploy-activate",
+        "build_plan": build_plan,
+        "artifact_admission": artifact_admission,
+        "deploy_plan": deploy_plan,
+        "activation_decision": activation_decision,
+        "deploy_execution": execution,
+    }
+
+
+def run_app_deploy_rollback(
+    *,
+    app_id: str,
+    node_id: str = "unit-01",
+    source_agent: str = "rational",
+    lease_id: str | None = None,
+    rollback_reason: str = "guarded_rollback_after_activation_health_failure",
+    timeout_seconds: int = 30,
+    rollback_approval_decision: str = "pending",
+    rollback_approval_note: str = "",
+    tool_adapter: Any | None = None,
+) -> dict[str, Any]:
+    normalized_app_id = _validate_app_build_app_id(app_id)
+    normalized_node_id = _validate_deploy_plan_identifier(node_id, "invalid_deploy_node_id")
+    normalized_source_agent = _validate_deploy_plan_identifier(
+        source_agent,
+        "invalid_deploy_source_agent",
+    )
+    normalized_approval_decision = _normalize_activation_approval_decision(
+        rollback_approval_decision,
+    )
+    normalized_lease_id = (lease_id or "").strip()
+    rollback_decision = {
+        "approval_required": True,
+        "decision": normalized_approval_decision,
+        "status": (
+            "approved"
+            if normalized_approval_decision == "approved"
+            else "pending_approval"
+            if normalized_approval_decision == "pending"
+            else "expired"
+            if normalized_approval_decision == "expired"
+            else "denied"
+        ),
+        "rollback_resource": f"update/app/{normalized_app_id}/rollback",
+        "resolved_app_id": normalized_app_id,
+        "requested_lease_id": normalized_lease_id,
+        "rollback_reason": rollback_reason,
+        "approval_note": rollback_approval_note.strip(),
+        "resume_hint": "rerun with --approval-decision approve to execute rollback",
+        "node_id": normalized_node_id,
+        "source_agent": normalized_source_agent,
+    }
+    execution: dict[str, Any] = {
+        "schema_version": APP_DEPLOY_ROLLBACK_SCHEMA_VERSION,
+        "completed_through": "",
+        "observation_attempted": False,
+    }
+    rollback_failure_summary: dict[str, Any] | None = None
+
+    if normalized_approval_decision != "approved":
+        return {
+            "ok": False,
+            "status": rollback_decision["status"],
+            "command": "app-deploy-rollback",
+            "failure_class": _release_gate_approval_failure_class(
+                rollback_decision["status"],
+                prefix="rollback",
+            ),
+            "failure_status": rollback_decision["status"],
+            "rollback_decision": rollback_decision,
+            "rollback_execution": execution,
+        }
+
+    adapter = tool_adapter or NeuroCliToolAdapter(
+        node=normalized_node_id,
+        source_agent=normalized_source_agent,
+        timeout_seconds=timeout_seconds,
+    )
+    rollback_result = adapter.execute(
+        "system_rollback_app",
+        {
+            "app_id": normalized_app_id,
+            "app": normalized_app_id,
+            **({"lease_id": normalized_lease_id} if normalized_lease_id else {}),
+            "reason": rollback_reason,
+        },
+    )
+    rollback_failure = _tool_execution_failure_status(rollback_result)
+    execution["rollback"] = _build_tool_execution_step_result(
+        name="rollback",
+        tool_name="system_rollback_app",
+        tool_result=rollback_result,
+        failure_status=rollback_failure,
+    )
+
+    failed_step = ""
+    failure_status = ""
+    if rollback_failure:
+        failed_step = "rollback"
+        failure_status = rollback_failure
+    else:
+        execution["observation_attempted"] = True
+        query_apps_result = adapter.execute(
+            "system_query_apps",
+            {
+                "app_id": normalized_app_id,
+                "app": normalized_app_id,
+                "reason": "post_rollback_app_observation",
+            },
+        )
+        query_apps_failure = _tool_execution_failure_status(query_apps_result)
+        execution["query_apps"] = _build_tool_execution_step_result(
+            name="query_apps",
+            tool_name="system_query_apps",
+            tool_result=query_apps_result,
+            failure_status=query_apps_failure,
+        )
+        if not query_apps_failure:
+            query_apps_state = _extract_rollback_query_apps_state(
+                query_apps_result.to_dict(),
+                app_id=normalized_app_id,
+            )
+            execution["query_apps"]["observed_app_state"] = str(
+                query_apps_state["observed_app_state"]
+            )
+            execution["query_apps"]["app_present"] = bool(
+                query_apps_state["app_present"]
+            )
+            if bool(query_apps_state["app_running"]):
+                query_apps_failure = "app_still_running_after_rollback"
+                execution["query_apps"]["failure_status"] = query_apps_failure
+                execution["query_apps"]["ok"] = False
+        query_leases_result = adapter.execute(
+            "system_query_leases",
+            {
+                "app_id": normalized_app_id,
+                "app": normalized_app_id,
+                "reason": "post_rollback_lease_observation",
+            },
+        )
+        query_leases_failure = _tool_execution_failure_status(query_leases_result)
+        execution["query_leases"] = _build_tool_execution_step_result(
+            name="query_leases",
+            tool_name="system_query_leases",
+            tool_result=query_leases_result,
+            failure_status=query_leases_failure,
+        )
+        if not query_leases_failure:
+            rollback_resource = f"update/app/{normalized_app_id}/rollback"
+            matching_lease_ids = _extract_matching_lease_ids_for_resource(
+                query_leases_result.to_dict(),
+                rollback_resource,
+            )
+            execution["query_leases"]["rollback_resource"] = rollback_resource
+            execution["query_leases"]["matching_lease_ids"] = matching_lease_ids
+            if matching_lease_ids:
+                query_leases_failure = "rollback_lease_still_held_after_rollback"
+                execution["query_leases"]["failure_status"] = query_leases_failure
+                execution["query_leases"]["ok"] = False
+        execution["completed_through"] = "query_leases"
+        if query_apps_failure:
+            failed_step = "query_apps"
+            failure_status = query_apps_failure
+        elif query_leases_failure:
+            failed_step = "query_leases"
+            failure_status = query_leases_failure
+
+    if failure_status:
+        rollback_failure_summary = _build_rollback_failure_summary(
+            failed_step=failed_step,
+            failure_status=failure_status,
+            rollback_decision=rollback_decision,
+            rollback_execution=execution,
+        )
+        return {
+            "ok": False,
+            "status": "error",
+            "command": "app-deploy-rollback",
+            "failure_class": "app_deploy_rollback_failed",
+            "failure_status": failure_status,
+            "failed_step": failed_step,
+            "rollback_decision": rollback_decision,
+            "rollback_execution": execution,
+            "rollback_failure_summary": rollback_failure_summary,
+        }
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "command": "app-deploy-rollback",
+        "rollback_decision": rollback_decision,
+        "rollback_execution": execution,
+    }
 
 
 def _extract_observed_resource_names(leases: list[Any]) -> list[str]:
@@ -154,6 +1832,108 @@ def _extract_observed_app_rows(apps_observation: dict[str, Any]) -> list[dict[st
         if isinstance(app, dict):
             rows.append(cast(dict[str, Any], app))
     return rows
+
+
+def _extract_rollback_query_apps_state(
+    apps_observation: dict[str, Any],
+    *,
+    app_id: str,
+) -> dict[str, Any]:
+    matched_app: dict[str, Any] | None = None
+    for candidate in _extract_observed_app_rows(apps_observation):
+        candidate_app_id = str(candidate.get("app_id") or candidate.get("name") or "")
+        if candidate_app_id == app_id:
+            matched_app = candidate
+            break
+
+    if matched_app is None:
+        return {
+            "app_present": False,
+            "observed_app_state": "missing",
+            "app_running": False,
+        }
+
+    observed_app_state = str(
+        matched_app.get("state") or matched_app.get("status") or "unknown"
+    )
+    normalized_state = observed_app_state.lower()
+    return {
+        "app_present": True,
+        "observed_app_state": observed_app_state,
+        "app_running": normalized_state in {"running", "active", "started", "running_active"},
+    }
+
+
+def _build_rollback_failure_summary(
+    *,
+    failed_step: str,
+    failure_status: str,
+    rollback_decision: dict[str, Any],
+    rollback_execution: dict[str, Any],
+) -> dict[str, Any]:
+    rollback_step = cast(dict[str, Any], rollback_execution.get("rollback") or {})
+    rollback_result = cast(dict[str, Any], rollback_step.get("result") or {})
+    resolved_args = cast(dict[str, Any], rollback_result.get("resolved_args") or {})
+
+    category = "rollback_execution"
+    recommended_next_actions: list[str] = [
+        "inspect rollback result and query apps/leases evidence before retry",
+    ]
+    if failure_status == "rollback_args_unresolved":
+        category = "argument_resolution"
+        recommended_next_actions = [
+            "provide explicit rollback lease identity or verify rollback lease discovery before retry",
+        ]
+    elif failure_status == "lease_holder_mismatch":
+        category = "lease_ownership"
+        recommended_next_actions = [
+            "reacquire or release the rollback lease with the correct source_agent before retry",
+        ]
+    elif failure_status == "lease_not_found":
+        category = "lease_resolution"
+        recommended_next_actions = [
+            "query rollback leases and confirm update/app/<app_id>/rollback is held before retry",
+        ]
+    elif failure_status == "no_reply":
+        category = "transport"
+        recommended_next_actions = [
+            "verify Unit and router reachability, then rerun preflight or state sync before retry",
+        ]
+    elif failure_status == "app_still_running_after_rollback":
+        category = "post_rollback_observation"
+        recommended_next_actions = [
+            "inspect app lifecycle state and confirm rollback target actually stopped before retry",
+        ]
+    elif failure_status == "rollback_lease_still_held_after_rollback":
+        category = "post_rollback_cleanup"
+        recommended_next_actions = [
+            "inspect rollback lease ownership and release stale rollback lease state before retry",
+        ]
+
+    summary = {
+        "app_id": str(rollback_decision.get("resolved_app_id") or ""),
+        "failed_step": failed_step,
+        "failure_status": failure_status,
+        "failure_category": category,
+        "rollback_resource": str(rollback_decision.get("rollback_resource") or ""),
+        "requested_lease_id": str(rollback_decision.get("requested_lease_id") or ""),
+        "resolved_lease_id": str(resolved_args.get("lease_id") or ""),
+        "source_agent": str(rollback_decision.get("source_agent") or ""),
+        "recommended_next_actions": recommended_next_actions,
+    }
+
+    if failed_step == "query_apps":
+        query_apps_step = cast(dict[str, Any], rollback_execution.get("query_apps") or {})
+        summary["observed_app_state"] = str(query_apps_step.get("observed_app_state") or "unknown")
+        summary["app_present"] = bool(query_apps_step.get("app_present", False))
+    elif failed_step == "query_leases":
+        query_leases_step = cast(dict[str, Any], rollback_execution.get("query_leases") or {})
+        summary["matching_lease_ids"] = list(query_leases_step.get("matching_lease_ids") or [])
+
+    tool_failure_class = str(rollback_result.get("failure_class") or "")
+    if tool_failure_class:
+        summary["tool_failure_class"] = tool_failure_class
+    return summary
 
 
 def _build_operator_requirements(
@@ -1233,60 +3013,91 @@ def run_no_model_dry_run(
                 else "sample"
             ),
         )
-        payload = result.to_dict()
-        payload["maf_runtime"] = workflow.maf_runtime_metadata()
-        payload["memory_runtime"] = workflow.memory_runtime_metadata()
-        payload["release_gate_require_real_tool_adapter"] = require_real_tool_adapter
-        execution_evidence = data_store.build_execution_evidence(
-            result.execution_span_id,
-            result.audit_id,
+        return _build_workflow_run_payload(
+            result,
+            workflow,
+            data_store,
+            maf_runtime_profile=maf_runtime_profile,
+            use_db_events=use_db_events,
+            query_limit=query_limit,
+            min_priority=min_priority,
+            topic=topic,
+            require_real_tool_adapter=require_real_tool_adapter,
+            event_source=(
+                event_source_label
+                if event_source_label is not None
+                else "provided"
+                if events is not None
+                else "sample"
+            ),
         )
-        payload["runtime_mode"] = (
-            "real_llm"
-            if maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value
-            else "deterministic"
-        )
-        audit_payload = cast(dict[str, Any], execution_evidence["audit_record"]["payload"])
-        session_context = cast(dict[str, Any], audit_payload.get("session_context") or {})
-        payload["model_call_evidence"] = session_context.get("model_call_evidence")
-        payload["db_counts"] = {
-            "perception_events": data_store.count("perception_events"),
-            "execution_spans": data_store.count("execution_spans"),
-            "facts": data_store.count("facts"),
-            "policy_decisions": data_store.count("policy_decisions"),
-            "memory_candidates": data_store.count("memory_candidates"),
-            "long_term_memories": data_store.count("long_term_memories"),
-            "tool_results": data_store.count("tool_results"),
-            "approval_requests": data_store.count("approval_requests"),
-            "approval_decisions": data_store.count("approval_decisions"),
-            "audit_records": data_store.count("audit_records"),
-        }
-        payload["query"] = {
-            "use_db_events": use_db_events,
-            "query_limit": query_limit,
-            "min_priority": min_priority,
-            "topic": topic,
-            "recent_topics": data_store.get_recent_topics(limit=min(query_limit, 10)),
-        }
-        payload["execution_evidence"] = execution_evidence
-        payload["event_source"] = (
-            event_source_label
-            if event_source_label is not None
-            else "provided"
-            if events is not None
-            else "sample"
-        )
-        payload["session"] = {
-            **workflow.session_manager.load_snapshot(
-                result.session_id,
-                current_execution_span_id=result.execution_span_id,
-                limit=5,
-            ).to_dict()
-        }
-        payload["agent_run_evidence"] = _build_agent_run_evidence(payload)
-        return payload
     finally:
         data_store.close()
+
+
+def _build_db_counts(data_store: CoreDataStore) -> dict[str, int]:
+    return {
+        "perception_events": data_store.count("perception_events"),
+        "execution_spans": data_store.count("execution_spans"),
+        "facts": data_store.count("facts"),
+        "policy_decisions": data_store.count("policy_decisions"),
+        "memory_candidates": data_store.count("memory_candidates"),
+        "long_term_memories": data_store.count("long_term_memories"),
+        "tool_results": data_store.count("tool_results"),
+        "approval_requests": data_store.count("approval_requests"),
+        "approval_decisions": data_store.count("approval_decisions"),
+        "audit_records": data_store.count("audit_records"),
+    }
+
+
+def _build_workflow_run_payload(
+    result: WorkflowResult,
+    workflow: NoModelCoreWorkflow,
+    data_store: CoreDataStore,
+    *,
+    maf_runtime_profile: MafRuntimeProfile,
+    use_db_events: bool,
+    query_limit: int,
+    min_priority: int,
+    topic: str | None,
+    require_real_tool_adapter: bool,
+    event_source: str,
+) -> dict[str, Any]:
+    payload = result.to_dict()
+    payload["maf_runtime"] = workflow.maf_runtime_metadata()
+    payload["memory_runtime"] = workflow.memory_runtime_metadata()
+    payload["release_gate_require_real_tool_adapter"] = require_real_tool_adapter
+    execution_evidence = data_store.build_execution_evidence(
+        result.execution_span_id,
+        result.audit_id,
+    )
+    payload["runtime_mode"] = (
+        "real_llm"
+        if maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value
+        else "deterministic"
+    )
+    audit_payload = cast(dict[str, Any], execution_evidence["audit_record"]["payload"])
+    session_context = cast(dict[str, Any], audit_payload.get("session_context") or {})
+    payload["model_call_evidence"] = session_context.get("model_call_evidence")
+    payload["db_counts"] = _build_db_counts(data_store)
+    payload["query"] = {
+        "use_db_events": use_db_events,
+        "query_limit": query_limit,
+        "min_priority": min_priority,
+        "topic": topic,
+        "recent_topics": data_store.get_recent_topics(limit=min(query_limit, 10)),
+    }
+    payload["execution_evidence"] = execution_evidence
+    payload["event_source"] = event_source
+    payload["session"] = {
+        **workflow.session_manager.load_snapshot(
+            result.session_id,
+            current_execution_span_id=result.execution_span_id,
+            limit=5,
+        ).to_dict()
+    }
+    payload["agent_run_evidence"] = _build_agent_run_evidence(payload)
+    return payload
 
 
 def run_event_replay(
@@ -1466,6 +3277,426 @@ def run_event_daemon_replay(
             },
             "release_gate_require_real_tool_adapter": require_real_tool_adapter,
         }
+        return payload
+    finally:
+        data_store.close()
+
+
+def _event_service_failure_class(failure_status: str) -> str:
+    if failure_status == "no_reply":
+        return "event_service_monitor_unreachable"
+    if failure_status in ("endpoint_drift", "stale_endpoint"):
+        return "event_service_stale_endpoint"
+    if failure_status == "no_events_collected":
+        return "event_service_monitor_empty"
+    return "event_service_monitor_failed"
+
+
+def _event_service_topics(events: Iterable[Any]) -> list[str]:
+    topics: set[str] = set()
+    for event in events:
+        if isinstance(event, PerceptionEvent):
+            payload = event.payload
+            if isinstance(payload, dict):
+                payload_topic = str(
+                    payload.get("semantic_topic") or payload.get("event_type") or ""
+                )
+                if payload_topic:
+                    topics.add(payload_topic)
+            topic = str(event.semantic_topic or event.event_type or "")
+        else:
+            payload = event.get("payload") if isinstance(event, dict) else None
+            if isinstance(payload, dict):
+                payload_topic = str(
+                    payload.get("semantic_topic") or payload.get("event_type") or ""
+                )
+                if payload_topic:
+                    topics.add(payload_topic)
+            topic = (
+                str(event.get("semantic_topic") or event.get("event_type") or "")
+                if isinstance(event, dict)
+                else ""
+            )
+        if topic:
+            topics.add(topic)
+    return sorted(topic for topic in topics if topic)
+
+
+def run_live_event_service(
+    db_path: str = ":memory:",
+    *,
+    event_source: str = "app",
+    app_id: str = "",
+    duration: int = 5,
+    max_events: int = 1,
+    cycles: int = 1,
+    ready_file: str = "",
+    session_id: str | None = None,
+    maf_provider_mode: str = "deterministic_fake",
+    allow_model_call: bool = False,
+    memory: Any | None = None,
+    memory_backend: str = "fake",
+    mem0_client: Any | None = None,
+    provider_client: Any | None = None,
+    rational_backend: str = "auto",
+    copilot_agent_factory: Any | None = None,
+    tool_adapter: Any | None = None,
+) -> dict[str, Any]:
+    if event_source not in ("app", "unit"):
+        raise ValueError("event_service_requires_valid_event_source")
+    if event_source == "app" and not app_id:
+        raise ValueError("event_service_requires_app_id")
+    if int(cycles) <= 0:
+        raise ValueError("event_service_requires_positive_cycles")
+
+    resolved_tool_adapter = tool_adapter or NeuroCliToolAdapter()
+    data_store = CoreDataStore(db_path)
+    try:
+        maf_runtime_profile = build_maf_runtime_profile(provider_mode=maf_provider_mode)
+        resolved_provider_client = provider_client
+        if maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value:
+            if not allow_model_call:
+                raise ValueError("real_provider_mode_requires_allow_model_call")
+            if resolved_provider_client is None:
+                resolved_provider_client = build_default_maf_provider_client(
+                    maf_runtime_profile
+                )
+        if rational_backend == "copilot" and not allow_model_call:
+            raise ValueError("copilot_rational_backend_requires_allow_model_call")
+        resolved_memory = memory or build_memory_backend(
+            memory_backend,
+            data_store,
+            mem0_client=mem0_client,
+        )
+        shared_router = PerceptionEventRouter()
+        seeded_dedupe_keys = data_store.get_recent_dedupe_keys(limit=1000)
+        shared_router.seed_dedupe_keys(seeded_dedupe_keys)
+        workflow = NoModelCoreWorkflow(
+            data_store=data_store,
+            memory=resolved_memory,
+            tool_adapter=resolved_tool_adapter,
+            maf_runtime_profile=maf_runtime_profile,
+            provider_client=resolved_provider_client,
+            rational_backend=rational_backend,
+            allow_model_call=allow_model_call,
+            copilot_agent_factory=copilot_agent_factory,
+            event_router=shared_router,
+        )
+        resolved_session_id = workflow.session_manager.resolve_session_id(session_id)
+        service_execution_span_id = new_id("span")
+        service_subject = app_id if event_source == "app" else "unit-events"
+        event_source_label = (
+            "neuro_cli_app_events_live"
+            if event_source == "app"
+            else "neuro_cli_events_live"
+        )
+        monitor_command = "app-events" if event_source == "app" else "events"
+        lifecycle: list[dict[str, Any]] = []
+        cycle_summaries: list[dict[str, Any]] = []
+        total_collected_event_count = 0
+        total_persisted_event_count = 0
+        total_duplicate_event_count = 0
+        last_workflow_payload: dict[str, Any] | None = None
+        last_checkpoint_event_id = ""
+        latest_subscription: Any | None = None
+        latest_listener_mode: Any | None = None
+        latest_handler_audit: Any | None = None
+
+        def record_lifecycle(state: str, **extra: Any) -> None:
+            entry = {
+                "lifecycle_state": state,
+                "timestamp_wall": utc_now_iso(),
+                **extra,
+            }
+            lifecycle.append(entry)
+            data_store.persist_fact(
+                service_execution_span_id,
+                "event_service_lifecycle",
+                service_subject,
+                entry,
+            )
+
+        def base_event_service_payload() -> dict[str, Any]:
+            payload: dict[str, Any] = {
+                "schema_version": EVENT_SERVICE_SCHEMA_VERSION,
+                "bounded_runtime": True,
+                "event_source_kind": event_source,
+                "monitor_command": monitor_command,
+                "duration": duration,
+                "max_events": max_events,
+                "cycle_count": cycles,
+                "execution_span_id": service_execution_span_id,
+                "workflow_execution_span_id": None,
+                "session_id": resolved_session_id,
+                "subscription": None,
+                "listener_mode": None,
+                "handler_audit": None,
+                "lifecycle": lifecycle,
+                "cycle_summaries": cycle_summaries,
+                "checkpoint": {
+                    "last_event_id": "",
+                    "persisted_event_count": 0,
+                },
+                "seeded_dedupe_key_count": len(seeded_dedupe_keys),
+                "collected_event_count": total_collected_event_count,
+                "duplicate_event_count": total_duplicate_event_count,
+                "normalized_event_count": total_persisted_event_count,
+            }
+            if event_source == "app":
+                payload["app_id"] = app_id
+            return payload
+
+        data_store.persist_execution_span(
+            service_execution_span_id,
+            "running",
+            {
+                "command": "event-service",
+                "event_source": event_source_label,
+                "event_source_kind": event_source,
+                "monitor_command": monitor_command,
+                "app_id": app_id,
+                "duration": duration,
+                "max_events": max_events,
+                "cycles": cycles,
+            },
+            session_id=resolved_session_id,
+        )
+        record_lifecycle(
+            "start",
+            service_status="running",
+            event_source=event_source_label,
+            bounded_runtime=True,
+        )
+        if seeded_dedupe_keys:
+            record_lifecycle(
+                "restart",
+                service_status="running",
+                restart_reason="checkpoint_seeded",
+                seeded_dedupe_key_count=len(seeded_dedupe_keys),
+            )
+
+        def fail_event_service(status: str, failure_status: str) -> dict[str, Any]:
+            record_lifecycle(
+                "clean_shutdown",
+                service_status="failed",
+                shutdown_reason=failure_status,
+            )
+            event_service_payload = base_event_service_payload()
+            event_service_payload["failure_status"] = failure_status
+            data_store.persist_fact(
+                service_execution_span_id,
+                "event_service_checkpoint",
+                service_subject,
+                dict(event_service_payload["checkpoint"]),
+            )
+            data_store.persist_execution_span(
+                service_execution_span_id,
+                "failed",
+                {
+                    "command": "event-service",
+                    "status": status,
+                    "failure_status": failure_status,
+                    "event_source": event_source_label,
+                    "event_service": event_service_payload,
+                },
+                session_id=resolved_session_id,
+            )
+            return {
+                "ok": False,
+                "status": status,
+                "command": "event-service",
+                "failure_class": _event_service_failure_class(failure_status),
+                "failure_status": failure_status,
+                "event_source": event_source_label,
+                "tool_adapter_runtime": resolved_tool_adapter.runtime_metadata(),
+                "session_id": resolved_session_id,
+                "db_counts": _build_db_counts(data_store),
+                "event_service": event_service_payload,
+            }
+
+        for cycle_index in range(1, int(cycles) + 1):
+            try:
+                if event_source == "app":
+                    live_event_payload = resolved_tool_adapter.collect_app_events(
+                        app_id,
+                        duration=duration,
+                        max_events=max_events,
+                        ready_file=ready_file,
+                    )
+                else:
+                    live_event_payload = resolved_tool_adapter.collect_live_events(
+                        duration=duration,
+                        max_events=max_events,
+                        ready_file=ready_file,
+                    )
+            except ValueError as exc:
+                failure_status = str(exc) or "event_service_monitor_failed"
+                record_lifecycle(
+                    failure_status,
+                    service_status="failed",
+                    cycle_index=cycle_index,
+                    failure_status=failure_status,
+                )
+                return fail_event_service("event_service_monitor_failed", failure_status)
+
+            events = [
+                dict(event)
+                for event in cast(list[Any], live_event_payload.get("events") or [])
+                if isinstance(event, dict)
+            ]
+            topic_probe_router = PerceptionEventRouter()
+            topic_probe_router.seed_dedupe_keys(shared_router.seen_dedupe_keys)
+            normalized_probe_events = topic_probe_router.normalize(events)
+            duplicate_event_count = max(0, len(events) - len(normalized_probe_events))
+            observed_topics = _event_service_topics(normalized_probe_events or events)
+            total_collected_event_count += len(events)
+            total_duplicate_event_count += duplicate_event_count
+
+            record_lifecycle(
+                "ready",
+                service_status="ready",
+                cycle_index=cycle_index,
+                subscription=live_event_payload.get("subscription"),
+                listener_mode=live_event_payload.get("listener_mode"),
+            )
+
+            event_service_payload = base_event_service_payload()
+            latest_subscription = live_event_payload.get("subscription")
+            latest_listener_mode = live_event_payload.get("listener_mode")
+            latest_handler_audit = live_event_payload.get("handler_audit")
+            event_service_payload["subscription"] = latest_subscription
+            event_service_payload["listener_mode"] = latest_listener_mode
+            event_service_payload["handler_audit"] = latest_handler_audit
+            event_service_payload["collected_event_count"] = total_collected_event_count
+            event_service_payload["duplicate_event_count"] = total_duplicate_event_count
+
+            if not events and cycle_index == 1 and total_persisted_event_count == 0:
+                record_lifecycle(
+                    "no_events",
+                    service_status="completed",
+                    cycle_index=cycle_index,
+                    collected_event_count=0,
+                )
+                return fail_event_service("event_service_ingest_empty", "no_events_collected")
+
+            workflow_result = workflow.run(
+                events,
+                session_id=resolved_session_id,
+                event_source=event_source_label,
+            )
+            resolved_session_id = workflow_result.session_id
+            workflow_payload = _build_workflow_run_payload(
+                workflow_result,
+                workflow,
+                data_store,
+                maf_runtime_profile=maf_runtime_profile,
+                use_db_events=False,
+                query_limit=100,
+                min_priority=0,
+                topic=None,
+                require_real_tool_adapter=True,
+                event_source=event_source_label,
+            )
+            last_workflow_payload = workflow_payload
+            persisted_event_count = int(workflow_payload.get("events_persisted", 0))
+            total_persisted_event_count += persisted_event_count
+            cycle_summary = {
+                "cycle_index": cycle_index,
+                "raw_event_count": len(events),
+                "duplicate_event_count": duplicate_event_count,
+                "persisted_event_count": persisted_event_count,
+                "workflow_execution_span_id": workflow_payload.get("execution_span_id"),
+                "observed_topics": observed_topics,
+                "last_event_id": str(events[-1].get("event_id") or "") if events else "",
+            }
+            cycle_summaries.append(cycle_summary)
+            event_service_payload["normalized_event_count"] = total_persisted_event_count
+            event_service_payload["workflow_execution_span_id"] = workflow_payload.get(
+                "execution_span_id"
+            )
+            if cycle_summary["last_event_id"]:
+                last_checkpoint_event_id = str(cycle_summary["last_event_id"])
+            event_service_payload["checkpoint"] = {
+                "last_event_id": last_checkpoint_event_id,
+                "persisted_event_count": total_persisted_event_count,
+            }
+
+            if "unit.network.endpoint_drift" in observed_topics:
+                record_lifecycle(
+                    "stale_endpoint",
+                    service_status="running",
+                    cycle_index=cycle_index,
+                    observed_topics=observed_topics,
+                )
+
+            if persisted_event_count > 0:
+                record_lifecycle(
+                    "events_persisted",
+                    service_status="running" if cycle_index < int(cycles) else "completed",
+                    cycle_index=cycle_index,
+                    collected_event_count=len(events),
+                    persisted_event_count=persisted_event_count,
+                    duplicate_event_count=duplicate_event_count,
+                    workflow_execution_span_id=workflow_payload.get("execution_span_id"),
+                )
+
+            if cycle_index < int(cycles) or persisted_event_count == 0:
+                record_lifecycle(
+                    "heartbeat",
+                    service_status="running" if cycle_index < int(cycles) else "completed",
+                    cycle_index=cycle_index,
+                    collected_event_count=len(events),
+                    persisted_event_count=persisted_event_count,
+                    duplicate_event_count=duplicate_event_count,
+                    workflow_execution_span_id=workflow_payload.get("execution_span_id"),
+                )
+
+        event_service_payload = base_event_service_payload()
+        event_service_payload["subscription"] = latest_subscription
+        event_service_payload["listener_mode"] = latest_listener_mode
+        event_service_payload["handler_audit"] = latest_handler_audit
+        if last_workflow_payload is not None:
+            event_service_payload["workflow_execution_span_id"] = last_workflow_payload.get(
+                "execution_span_id"
+            )
+        event_service_payload["checkpoint"] = {
+            "last_event_id": last_checkpoint_event_id,
+            "persisted_event_count": total_persisted_event_count,
+        }
+        data_store.persist_fact(
+            service_execution_span_id,
+            "event_service_checkpoint",
+            service_subject,
+            dict(event_service_payload["checkpoint"]),
+        )
+        record_lifecycle(
+            "clean_shutdown",
+            service_status="completed",
+            shutdown_reason="bounded_runtime_complete",
+        )
+        data_store.persist_execution_span(
+            service_execution_span_id,
+            "completed",
+            {
+                "command": "event-service",
+                "status": "ok",
+                "event_source": event_source_label,
+                "event_service": event_service_payload,
+                "workflow_execution_span_id": event_service_payload.get(
+                    "workflow_execution_span_id"
+                ),
+            },
+            session_id=resolved_session_id,
+        )
+        payload = dict(last_workflow_payload or {})
+        payload["ok"] = True
+        payload["status"] = "ok"
+        payload["command"] = "event-service"
+        payload["event_source"] = event_source_label
+        payload["session_id"] = resolved_session_id
+        payload["events_persisted"] = total_persisted_event_count
+        payload["db_counts"] = _build_db_counts(data_store)
+        payload["event_service"] = event_service_payload
         return payload
     finally:
         data_store.close()

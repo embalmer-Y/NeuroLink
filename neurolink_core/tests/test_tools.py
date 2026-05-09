@@ -757,6 +757,72 @@ class TestNeuroCliToolAdapter(unittest.TestCase):
         self.assertEqual(result.payload["result"]["status"], "ok")
         self.assertGreaterEqual(len(calls), 3)
 
+    def test_execute_rollback_app_reports_missing_rollback_lease(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            calls.append(argv)
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_query_leases",
+                                    "description": "query leases",
+                                    "argv_template": ["python", "wrapper.py", "query", "leases"],
+                                    "resource": "lease inventory",
+                                    "required_arguments": [],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_rollback_app",
+                                    "description": "rollback app",
+                                    "argv_template": ["python", "wrapper.py", "deploy", "rollback"],
+                                    "resource": "update rollback lease",
+                                    "required_arguments": ["--app-id", "--lease-id"],
+                                    "side_effect_level": "approval_required",
+                                },
+                            ],
+                        }
+                    ),
+                )
+            if "query" in argv and "leases" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "replies": [
+                                {
+                                    "ok": True,
+                                    "payload": {
+                                        "status": "ok",
+                                        "leases": [],
+                                    },
+                                }
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"rollback command should not run when lease is missing: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+
+        result = adapter.execute("system_rollback_app", {"app_id": "neuro_demo_gpio", "reason": "guarded"})
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.payload["failure_status"], "lease_not_found")
+        self.assertEqual(result.payload["failure_class"], "rollback_lease_resolution_failed")
+        self.assertEqual(result.payload["requested_args"]["app_id"], "neuro_demo_gpio")
+        self.assertEqual(len(calls), 2)
+
     def test_execute_activation_health_guard_from_cli_json(self) -> None:
         calls: list[list[str]] = []
 

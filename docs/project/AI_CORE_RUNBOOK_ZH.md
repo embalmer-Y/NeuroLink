@@ -1,6 +1,6 @@
 # NeuroLink AI Core 中文运行手册
 
-本文档说明 release-1.2.2 真实 LLM Core 线如何启动、验证和收尾。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行真实硬件 gate，或接手 release closure 的开发者和操作者。
+本文档说明当前 active 的 release-1.2.4 Core orchestrator 与 live event service 线如何启动、验证和收尾。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与硬件 closure 的开发者和操作者。
 
 ## 1. Core 运行形态
 
@@ -215,9 +215,9 @@ source /home/emb/.bashrc
 8. `real_tool_adapter_present=true`。
 9. `real_tool_execution_succeeded=true`。
 
-## 5. Release-1.2.3 事件与审批命令
+## 5. Release-1.2.4 编排与实时服务命令
 
-### 5.1 确定性事件回放
+### 5.1 事件回放与 live-ingest 基线
 
 通过标准 workflow 路径回放一组有序事件 fixture：
 
@@ -274,7 +274,83 @@ bash applocation/NeuroLink/scripts/run_unit_live_event_probe.sh \
 
 `--mode` 可切换为 `callback` 或 `update-activate`。
 
-### 5.2 Activation Health Guard
+### 5.2 Core App Build 与 Deploy 编排
+
+先生成默认 Unit app 目标的 canonical build plan：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-build-plan \
+  --app-id neuro_unit_app
+```
+
+在任何 deploy 动作之前，先执行 artifact admission：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-artifact-admission \
+  --app-id neuro_unit_app
+```
+
+只查看受保护的 `prepare -> verify -> approval -> activate -> cleanup` 序列，而不实际执行：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-deploy-plan \
+  --app-id neuro_unit_app \
+  --node unit-01
+```
+
+通过真实 Neuro CLI adapter 执行 bounded、硬件相对安全的 prepare/verify slice：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-deploy-prepare-verify \
+  --app-id neuro_unit_app \
+  --node unit-01 \
+  --db /tmp/neurolink-release-124.db
+```
+
+只有在操作者明确要跨越 approval boundary 时，才使用 activation gate：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-deploy-activate \
+  --app-id neuro_unit_app \
+  --node unit-01 \
+  --approval-decision pending \
+  --db /tmp/neurolink-release-124.db
+```
+
+只有在审查完 pending approval payload、artifact path 和 release-gate evidence 之后，才用 `--approval-decision approve` 继续。如果 activation health 返回 `rollback_required`，应审查 emitted rollback candidate，并通过 `app-deploy-rollback` 的 `pending`、`approve`、`deny` 或 `expire` 结果推进，而不是临时执行脱离 Core 的 rollback。
+
+对真实硬件 gate，最小成功 closure 路径是一条完整的 Core-owned `app-build-plan -> app-artifact-admission -> app-deploy-prepare-verify` 流程，并保证最终 leases 已清理干净。
+
+### 5.3 Event Service 监督与重启连续性
+
+针对 app 级订阅运行新的 bounded event service：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-service \
+  --db /tmp/neurolink-event-service.db \
+  --app-id neuro_unit_app \
+  --duration 5 \
+  --max-events 1 \
+  --cycles 2
+```
+
+针对通用 Unit `event/**` 流运行同一监督式服务：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-service \
+  --event-source unit \
+  --db /tmp/neurolink-event-service.db \
+  --duration 45 \
+  --max-events 4 \
+  --cycles 2 \
+  --ready-file /tmp/neurolink-unit-ready.flag
+```
+
+重点检查 JSON 输出中的 `event_service.lifecycle`、`event_service.cycle_summaries`、`event_service.checkpoint`、`event_service.seeded_dedupe_key_count` 和 `event_service.duplicate_event_count`。健康的 bounded service 现在会记录 `start`、`ready`、`events_persisted`、可选的 `heartbeat`、可选的 `restart`、可选的 `stale_endpoint`，以及 `clean_shutdown`。
+
+如果要验证 restart continuity，请复用相同的 `--db` 和 `--session-id`。服务会从已持久化事件中 seed dedupe state，因此重启后的重复 callback 或 Unit event 不应再次写入新的 perception event 行。
+
+### 5.4 Activation Health Guard
 
 通过只读 state-sync 面观察指定 app 的激活后健康状态：
 
@@ -296,7 +372,7 @@ bash applocation/NeuroLink/scripts/run_unit_live_event_probe.sh \
 事件已经被提升为 `unit.state.online`、`unit.lifecycle.activate_failed` 等
 operational topic，而不是停留在低层事件名。
 
-### 5.3 Session 与 approval 检查
+### 5.5 Session 与 approval 检查
 
 查看 Core session：
 
@@ -344,15 +420,25 @@ operational topic，而不是停留在低层事件名。
 
 `no_reply_board_unreachable` 且 UART 显示 `NETWORK_READY` 时，通常是 Unit router endpoint 漂移。使用 `serial zenoh show` 和 `serial zenoh set` 对齐 Unit endpoint 与当前 host IP。
 
-## 7. Release-1.2.2 收尾 checklist
+`artifact_header_invalid`、`artifact_identity_missing` 或其他 artifact-admission 失败，通常表示 build output 已陈旧或格式异常。应先通过 `scripts/build_neurolink.sh --pristine-always` 重建，再重试 Core admission 或 deploy 路径。
+
+activation 或 rollback 中出现 `lease_holder_mismatch`，表示 lease 确实存在，但当前持有者不是你请求的 `source_agent`。先检查 `query leases`，按正确 holder 释放 lease，再重试 Core gate。
+
+对 `event-service`，需要明确区分以下状态：
+
+1. `no_events_collected`：bounded listener 没看到任何原始事件，需要检查 ready-file 协调和触发路径。
+2. `no_reply`：monitor 路径本身不可达，应先运行 preflight，而不是直接怀疑 Core service。
+3. `stale_endpoint`：服务观察到了 `unit.network.endpoint_drift`，应先修复 Unit endpoint，再期待稳定 live service。
+
+## 7. Release-1.2.4 收尾 checklist
 
 promote release identity 前，需要确认：
 
-1. `maf-provider-smoke --allow-model-call --execute-model-call` 成功。
-2. `no-model-dry-run --memory-backend mem0` 成功，并且 `fallback_active=false`。
-3. hardware preflight 返回 `status=ready`。
-4. 真实 Neuro CLI adapter gate 返回 `real_tool_execution_succeeded=true`。
-5. 组合真实 runtime gate 返回 `agent_run_evidence.ok=true`。
-6. `neurolink_core/tests` 通过。
-7. `neuro_cli/tests/test_neuro_cli.py` 通过。
-8. release notes 记录 provider model、Mem0 config shape、hardware endpoint，以及 deferred next-release follow-up。
+1. `app-build-plan` 与 `app-artifact-admission` 对目标 app 成功。
+2. 至少一条真实硬件 `app-deploy-prepare-verify` 流成功完成，并保证最终 leases 干净。
+3. activation 与 rollback gate 保持 approval-bounded，并且 evidence 完整。
+4. `event-service` 已记录 checkpoint、restart-safe dedupe evidence 和 bounded shutdown facts。
+5. hardware preflight 返回 `status=ready`；如果 live rollback 不安全，需明确记录 bounded simulated recovery 的理由。
+6. `neurolink_core/tests` 中本 release 触达的 slice 全部通过。
+7. `neuro_cli/tests/test_neuro_cli.py` 和触达的 script checks 通过。
+8. 英文/中文 runbook、release plan 和 README 都已把 release-1.2.4 标记为当前 orchestrator/live-service track。

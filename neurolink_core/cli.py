@@ -17,10 +17,19 @@ from .tools import observe_activation_health
 from .data import CoreDataStore
 from .workflow import (
     apply_approval_decision,
+    build_app_artifact_admission,
+    build_app_build_plan,
+    persist_app_deploy_activate_evidence,
+    persist_app_deploy_rollback_evidence,
+    run_app_deploy_activate,
+    run_app_deploy_rollback,
+    build_app_deploy_plan,
+    run_app_deploy_prepare_verify,
     build_approval_context,
     build_user_prompt_event,
     run_event_daemon_replay,
     run_event_replay,
+    run_live_event_service,
     run_no_model_dry_run,
 )
 
@@ -229,6 +238,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Select the Rational planning backend; copilot requires --allow-model-call",
     )
 
+    event_service = subparsers.add_parser("event-service")
+    event_service.add_argument("--db", default=":memory:", help="SQLite database path")
+    event_service.add_argument(
+        "--event-source",
+        choices=("app", "unit"),
+        default="app",
+        help="Subscribe to app callback events or unit-wide operational events",
+    )
+    event_service.add_argument("--app-id", default="", help="Target app identifier for app-scoped live callback subscriptions")
+    event_service.add_argument("--duration", type=int, default=5, help="Subscription duration in seconds")
+    event_service.add_argument("--max-events", type=int, default=1, help="Stop after this many events if non-zero")
+    event_service.add_argument("--cycles", type=int, default=1, help="Run this many bounded service supervision cycles")
+    event_service.add_argument("--ready-file", default="", help="Optional file path written once the live event subscription is ready")
+    event_service.add_argument("--output", choices=("json",), default="json")
+    event_service.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    event_service.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    event_service.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    event_service.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for live event service lookup and candidate commit behavior",
+    )
+    event_service.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+
     activation_health = subparsers.add_parser("activation-health-guard")
     activation_health.add_argument("--db", default=":memory:", help="SQLite database path")
     activation_health.add_argument("--app-id", required=True, help="Activated app identifier to observe")
@@ -239,6 +295,304 @@ def build_parser() -> argparse.ArgumentParser:
         default="fake",
         help="Select the tool adapter implementation used for read-only health observation",
     )
+
+    app_build_plan = subparsers.add_parser("app-build-plan")
+    app_build_plan.add_argument(
+        "--preset",
+        choices=("unit-app", "unit-ext"),
+        default="unit-app",
+        help="Select the external app build preset",
+    )
+    app_build_plan.add_argument(
+        "--app-id",
+        default="neuro_unit_app",
+        help="Target app identifier for the build plan",
+    )
+    app_build_plan.add_argument(
+        "--app-source-dir",
+        default="",
+        help="Optional workspace-relative app source directory override",
+    )
+    app_build_plan.add_argument(
+        "--board",
+        default="dnesp32s3b/esp32s3/procpu",
+        help="Target board identifier for the Unit host build",
+    )
+    app_build_plan.add_argument(
+        "--build-dir",
+        default="build/neurolink_unit",
+        help="Workspace-relative Unit host build directory",
+    )
+    app_build_plan.add_argument("--output", choices=("json",), default="json")
+    app_build_plan.add_argument(
+        "--check-c-style",
+        action="store_true",
+        help="Record a build plan that keeps the C style gate enabled",
+    )
+
+    app_artifact_admission = subparsers.add_parser("app-artifact-admission")
+    app_artifact_admission.add_argument(
+        "--preset",
+        choices=("unit-app", "unit-ext"),
+        default="unit-app",
+        help="Select the external app build preset",
+    )
+    app_artifact_admission.add_argument(
+        "--app-id",
+        default="neuro_unit_app",
+        help="Target app identifier for the admission check",
+    )
+    app_artifact_admission.add_argument(
+        "--app-source-dir",
+        default="",
+        help="Optional workspace-relative app source directory override",
+    )
+    app_artifact_admission.add_argument(
+        "--board",
+        default="dnesp32s3b/esp32s3/procpu",
+        help="Target board identifier for the Unit host build",
+    )
+    app_artifact_admission.add_argument(
+        "--build-dir",
+        default="build/neurolink_unit",
+        help="Workspace-relative Unit host build directory",
+    )
+    app_artifact_admission.add_argument(
+        "--artifact-file",
+        default="",
+        help="Explicit artifact file to admit; defaults to the canonical source artifact path",
+    )
+    app_artifact_admission.add_argument("--output", choices=("json",), default="json")
+
+    app_deploy_plan = subparsers.add_parser("app-deploy-plan")
+    app_deploy_plan.add_argument(
+        "--preset",
+        choices=("unit-app", "unit-ext"),
+        default="unit-app",
+        help="Select the external app build preset",
+    )
+    app_deploy_plan.add_argument(
+        "--app-id",
+        default="neuro_unit_app",
+        help="Target app identifier for the deploy plan",
+    )
+    app_deploy_plan.add_argument(
+        "--app-source-dir",
+        default="",
+        help="Optional workspace-relative app source directory override",
+    )
+    app_deploy_plan.add_argument(
+        "--board",
+        default="dnesp32s3b/esp32s3/procpu",
+        help="Target board identifier for the Unit host build",
+    )
+    app_deploy_plan.add_argument(
+        "--build-dir",
+        default="build/neurolink_unit",
+        help="Workspace-relative Unit host build directory",
+    )
+    app_deploy_plan.add_argument(
+        "--artifact-file",
+        default="",
+        help="Explicit artifact file to deploy; defaults to the admitted source artifact path",
+    )
+    app_deploy_plan.add_argument(
+        "--node",
+        default="unit-01",
+        help="Target Unit node identifier",
+    )
+    app_deploy_plan.add_argument(
+        "--source-agent",
+        default="rational",
+        help="Deploy-plan source_agent metadata for lease and deploy commands",
+    )
+    app_deploy_plan.add_argument(
+        "--lease-ttl-ms",
+        type=int,
+        default=120000,
+        help="Suggested activate-lease TTL in milliseconds",
+    )
+    app_deploy_plan.add_argument(
+        "--start-args",
+        default="",
+        help="Optional start-args string to include in the activate plan step",
+    )
+    app_deploy_plan.add_argument("--output", choices=("json",), default="json")
+
+    app_deploy_prepare_verify = subparsers.add_parser("app-deploy-prepare-verify")
+    app_deploy_prepare_verify.add_argument(
+        "--preset",
+        choices=("unit-app", "unit-ext"),
+        default="unit-app",
+        help="Select the external app build preset",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--app-id",
+        default="neuro_unit_app",
+        help="Target app identifier for the prepare/verify execution slice",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--app-source-dir",
+        default="",
+        help="Optional workspace-relative app source directory override",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--board",
+        default="dnesp32s3b/esp32s3/procpu",
+        help="Target board identifier for the Unit host build",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--build-dir",
+        default="build/neurolink_unit",
+        help="Workspace-relative Unit host build directory",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--artifact-file",
+        default="",
+        help="Explicit artifact file to deploy; defaults to the admitted source artifact path",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--node",
+        default="unit-01",
+        help="Target Unit node identifier",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--source-agent",
+        default="rational",
+        help="Execution source_agent metadata for lease and deploy commands",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--lease-ttl-ms",
+        type=int,
+        default=120000,
+        help="Activate-lease TTL in milliseconds",
+    )
+    app_deploy_prepare_verify.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=30,
+        help="Command timeout in seconds for preflight and Neuro CLI calls",
+    )
+    app_deploy_prepare_verify.add_argument("--output", choices=("json",), default="json")
+
+    app_deploy_activate = subparsers.add_parser("app-deploy-activate")
+    app_deploy_activate.add_argument(
+        "--preset",
+        choices=("unit-app", "unit-ext"),
+        default="unit-app",
+        help="Select the external app build preset",
+    )
+    app_deploy_activate.add_argument(
+        "--app-id",
+        default="neuro_unit_app",
+        help="Target app identifier for the activation execution slice",
+    )
+    app_deploy_activate.add_argument(
+        "--app-source-dir",
+        default="",
+        help="Optional workspace-relative app source directory override",
+    )
+    app_deploy_activate.add_argument(
+        "--board",
+        default="dnesp32s3b/esp32s3/procpu",
+        help="Target board identifier for the Unit host build",
+    )
+    app_deploy_activate.add_argument(
+        "--build-dir",
+        default="build/neurolink_unit",
+        help="Workspace-relative Unit host build directory",
+    )
+    app_deploy_activate.add_argument(
+        "--artifact-file",
+        default="",
+        help="Explicit artifact file to deploy; defaults to the admitted source artifact path",
+    )
+    app_deploy_activate.add_argument(
+        "--node",
+        default="unit-01",
+        help="Target Unit node identifier",
+    )
+    app_deploy_activate.add_argument(
+        "--source-agent",
+        default="rational",
+        help="Execution source_agent metadata for lease and deploy commands",
+    )
+    app_deploy_activate.add_argument(
+        "--lease-ttl-ms",
+        type=int,
+        default=120000,
+        help="Activate-lease TTL in milliseconds",
+    )
+    app_deploy_activate.add_argument(
+        "--start-args",
+        default="",
+        help="Optional start-args string passed to deploy activate",
+    )
+    app_deploy_activate.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=30,
+        help="Command timeout in seconds for preflight and Neuro CLI calls",
+    )
+    app_deploy_activate.add_argument(
+        "--approval-decision",
+        choices=("pending", "approve", "deny"),
+        default="pending",
+        help="Explicit activation approval decision required before activation executes",
+    )
+    app_deploy_activate.add_argument(
+        "--approval-note",
+        default="",
+        help="Optional operator approval note recorded in the activation decision payload",
+    )
+    app_deploy_activate.add_argument("--db", default="", help="Optional SQLite database path for persisting activation release-gate evidence")
+    app_deploy_activate.add_argument("--output", choices=("json",), default="json")
+
+    app_deploy_rollback = subparsers.add_parser("app-deploy-rollback")
+    app_deploy_rollback.add_argument(
+        "--app-id",
+        required=True,
+        help="Target app identifier for the rollback execution slice",
+    )
+    app_deploy_rollback.add_argument(
+        "--node",
+        default="unit-01",
+        help="Target Unit node identifier",
+    )
+    app_deploy_rollback.add_argument(
+        "--source-agent",
+        default="rational",
+        help="Execution source_agent metadata for rollback commands",
+    )
+    app_deploy_rollback.add_argument(
+        "--lease-id",
+        default="",
+        help="Optional explicit rollback lease id; defaults to adapter lease resolution",
+    )
+    app_deploy_rollback.add_argument(
+        "--reason",
+        default="guarded_rollback_after_activation_health_failure",
+        help="Rollback reason recorded in the resumed rollback request",
+    )
+    app_deploy_rollback.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=30,
+        help="Command timeout in seconds for Neuro CLI calls",
+    )
+    app_deploy_rollback.add_argument(
+        "--approval-decision",
+        choices=("pending", "approve", "deny", "expire"),
+        default="pending",
+        help="Explicit rollback approval decision required before rollback executes",
+    )
+    app_deploy_rollback.add_argument(
+        "--approval-note",
+        default="",
+        help="Optional operator approval note recorded in the rollback decision payload",
+    )
+    app_deploy_rollback.add_argument("--db", default="", help="Optional SQLite database path for persisting rollback release-gate evidence")
+    app_deploy_rollback.add_argument("--output", choices=("json",), default="json")
 
     agent_run = subparsers.add_parser("agent-run")
     agent_run.add_argument("--db", default=":memory:", help="SQLite database path")
@@ -632,6 +986,31 @@ def main(argv: list[str] | None = None) -> int:
         }
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "event-service":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        tool_adapter = NeuroCliToolAdapter()
+        try:
+            payload = run_live_event_service(
+                args.db,
+                event_source=args.event_source,
+                app_id=args.app_id,
+                duration=args.duration,
+                max_events=args.max_events,
+                cycles=args.cycles,
+                ready_file=args.ready_file,
+                session_id=args.session_id,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                tool_adapter=tool_adapter,
+            )
+        except (MafProviderNotReadyError, ValueError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "activation-health-guard":
         tool_adapter = (
             NeuroCliToolAdapter()
@@ -655,6 +1034,223 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "app-build-plan":
+        try:
+            payload = build_app_build_plan(
+                preset=args.preset,
+                app_id=args.app_id,
+                app_source_dir=args.app_source_dir or None,
+                board=args.board,
+                build_dir=args.build_dir,
+                check_c_style=args.check_c_style,
+            )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "app_build_plan_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "app-artifact-admission":
+        try:
+            payload = build_app_artifact_admission(
+                preset=args.preset,
+                app_id=args.app_id,
+                app_source_dir=args.app_source_dir or None,
+                board=args.board,
+                build_dir=args.build_dir,
+                artifact_file=args.artifact_file or None,
+            )
+        except ValueError as exc:
+            failure_status = str(exc)
+            failure_class = (
+                "app_artifact_admission_failed"
+                if failure_status.startswith("artifact_") or failure_status.startswith("source_")
+                else "app_artifact_admission_invalid"
+            )
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": failure_class,
+                        "failure_status": failure_status,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "app-deploy-plan":
+        try:
+            payload = build_app_deploy_plan(
+                preset=args.preset,
+                app_id=args.app_id,
+                app_source_dir=args.app_source_dir or None,
+                board=args.board,
+                build_dir=args.build_dir,
+                artifact_file=args.artifact_file or None,
+                node_id=args.node,
+                source_agent=args.source_agent,
+                lease_ttl_ms=args.lease_ttl_ms,
+                start_args=args.start_args or None,
+            )
+        except ValueError as exc:
+            failure_status = str(exc)
+            failure_class = (
+                "app_deploy_plan_failed"
+                if failure_status.startswith("artifact_") or failure_status.startswith("source_")
+                else "app_deploy_plan_invalid"
+            )
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": failure_class,
+                        "failure_status": failure_status,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "app-deploy-prepare-verify":
+        try:
+            tool_adapter = NeuroCliToolAdapter(
+                node=args.node,
+                source_agent=args.source_agent,
+                timeout_seconds=args.timeout_seconds,
+            )
+            payload = run_app_deploy_prepare_verify(
+                preset=args.preset,
+                app_id=args.app_id,
+                app_source_dir=args.app_source_dir or None,
+                board=args.board,
+                build_dir=args.build_dir,
+                artifact_file=args.artifact_file or None,
+                node_id=args.node,
+                source_agent=args.source_agent,
+                lease_ttl_ms=args.lease_ttl_ms,
+                timeout_seconds=args.timeout_seconds,
+                tool_adapter=tool_adapter,
+            )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "app_deploy_prepare_verify_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok") else 2
+    if args.command == "app-deploy-activate":
+        try:
+            if args.db:
+                Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+            tool_adapter = NeuroCliToolAdapter(
+                node=args.node,
+                source_agent=args.source_agent,
+                timeout_seconds=args.timeout_seconds,
+            )
+            payload = run_app_deploy_activate(
+                preset=args.preset,
+                app_id=args.app_id,
+                app_source_dir=args.app_source_dir or None,
+                board=args.board,
+                build_dir=args.build_dir,
+                artifact_file=args.artifact_file or None,
+                node_id=args.node,
+                source_agent=args.source_agent,
+                lease_ttl_ms=args.lease_ttl_ms,
+                start_args=args.start_args or None,
+                timeout_seconds=args.timeout_seconds,
+                activation_approval_decision=args.approval_decision,
+                activation_approval_note=args.approval_note,
+                tool_adapter=tool_adapter,
+            )
+            if args.db:
+                payload["release_gate_evidence"] = persist_app_deploy_activate_evidence(
+                    args.db,
+                    payload,
+                )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "app_deploy_activate_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok") else 2
+    if args.command == "app-deploy-rollback":
+        try:
+            if args.db:
+                Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+            tool_adapter = NeuroCliToolAdapter(
+                node=args.node,
+                source_agent=args.source_agent,
+                timeout_seconds=args.timeout_seconds,
+            )
+            payload = run_app_deploy_rollback(
+                app_id=args.app_id,
+                node_id=args.node,
+                source_agent=args.source_agent,
+                lease_id=args.lease_id or None,
+                rollback_reason=args.reason,
+                timeout_seconds=args.timeout_seconds,
+                rollback_approval_decision=args.approval_decision,
+                rollback_approval_note=args.approval_note,
+                tool_adapter=tool_adapter,
+            )
+            if args.db:
+                payload["release_gate_evidence"] = persist_app_deploy_rollback_evidence(
+                    args.db,
+                    payload,
+                )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "app_deploy_rollback_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok") else 2
     if args.command == "agent-run":
         if args.require_real_tool_adapter and args.tool_adapter != "neuro-cli":
             print(

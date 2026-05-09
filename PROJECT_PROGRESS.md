@@ -1,3 +1,436 @@
+2026-05-09: Closed release-1.2.4 after finishing the remaining WS-6 and closure work on top of the already landed Core app lifecycle slices. The final release pass hardened `event-service` into a restart-safe supervised service with heartbeat, restart, stale-endpoint, and checkpoint continuity evidence; aligned the English/Chinese runbooks and README to the Core-owned build/deploy/event-service operator path; fixed the two real-hardware closure defects exposed by the final prepare/verify run (`parse_failed` on log-prefixed preflight JSON and hardcoded `python` argv templates); reran the Core-owned hardware gate on the connected DNESP32S3B; and then promoted the canonical host release identity to `1.2.4`. Real closure evidence now includes `app-build-plan` for `neuro_unit_app`, explicit artifact admission for `build/neurolink_unit_app/neuro_unit_app.llext`, serial-required preflight `status=ready`, successful `app-deploy-prepare-verify` through `deploy_verify`, successful lease cleanup, and final `query_leases=[]`. Post-closure promotion also aligned the workflow catalog, capabilities payload, and sample app build metadata on `RELEASE_TARGET = "1.2.4"`. - Copilot
+
+#### EXEC-288 Release 1.2.4 Final Closure And Promotion
+
+- Status: completed; release-1.2.4 is closed against the current Linux operator host and connected DNESP32S3B evidence set
+- Owner: GitHub Copilot completing release-1.2.4 closure
+- Scope:
+  - close the remaining WS-6 gap with heartbeat, restart, stale-endpoint, and restart-safe checkpoint continuity in `event-service`
+  - record WS-7 operator alignment now that the English/Chinese runbooks and README describe the Core-owned app lifecycle and supervised event-service path
+  - fix the real-hardware prepare/verify closure defects at the root cause by accepting log-prefixed preflight JSON and by using the active interpreter for deploy-plan command templates
+  - rerun the real Core-owned `app-build-plan -> app-artifact-admission -> app-deploy-prepare-verify` gate on the connected DNESP32S3B with final clean leases
+  - promote the canonical Neuro CLI release identity and sample app identity from `1.2.2` to `1.2.4`
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/neuro_cli/tests/test_neuro_cli.py`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+- Result:
+  - release-1.2.4 now satisfies the full HLD slice it opened: Core owns build planning, artifact admission, protected deploy planning/execution, approval-bounded activation/rollback, and supervised restart-safe live event service evidence
+  - real hardware closure passed on the connected DNESP32S3B through the Core-owned `app-build-plan`, `app-artifact-admission`, and `app-deploy-prepare-verify` path with final empty leases
+  - the operator-facing release surface is now internally consistent: README and runbooks describe release-1.2.4 as closed, the host CLI advertises `RELEASE_TARGET = "1.2.4"`, and the sample Unit App source identity now matches the canonical release marker
+  - remaining HLD work is explicitly pushed into the planned 1.2.5 to 1.2.7 burn-down instead of being left as hidden 1.2.4 release debt
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q -k 'capabilities or workflow_commands_do_not_embed_release_target_literals or sample_app_source_identity_matches_release_target'` -> `5 passed, 122 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'event_service or live_event_smoke or event_daemon'` -> `12 passed, 78 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_plan or app_deploy_prepare_verify'` -> `6 passed, 85 deselected`
+  - `/home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json system capabilities` -> `ok=true`, `release_target=1.2.4`
+  - `bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check && strings build/neurolink_unit_app/neuro_unit_app.llext | grep 'neuro_unit_app-1.2.4-cbor-v2'` -> rebuilt artifact contains the promoted build id
+  - real hardware preflight after endpoint correction -> `status=ready`
+  - real `app-build-plan --app-id neuro_unit_app` -> `ok=true`, canonical artifact `build/neurolink_unit_app/neuro_unit_app.llext`
+  - real `app-artifact-admission --app-id neuro_unit_app` -> `admitted=true`, `machine_name=xtensa`, `build_id=neuro_unit_app-1.2.4-cbor-v2`, SHA256 `d69a84e64274c5f76651ccfd47dbbd7b0f992c97f36981bb9672101a3c6dd872`
+  - real `app-deploy-prepare-verify --app-id neuro_unit_app --node unit-01` -> `ok=true`, `deploy_execution.completed_through=deploy_verify`, `cleanup_attempted=true`, final `query_leases=[]`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && git -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check` -> clean
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: 100%
+  - release-1.2.4 closure progress: 100%
+  - overall HLD completion: about 75%, with the remaining burn-down assigned to release-1.2.5 through release-2.0.0
+
+2026-05-09: Continued release-1.2.4 by starting WS-6 with a first bounded supervised live event service slice. Added a new `event-service` Core command that promotes the existing `live-event-smoke` concepts into a Core-owned bounded service path for both app and unit subscriptions, reuses the existing no-model live-ingest reasoning path, and persists explicit service lifecycle facts plus checkpoint state into `CoreDataStore`. The first slice records `start`, `ready`, `events_persisted`, `no_events`, `no_reply`, and `clean_shutdown`, which closes the most immediate HLD gap between one-shot smoke collection and a restartable production service surface without inventing a new storage schema. Added focused CLI regressions for successful bounded service ingest, fail-closed empty subscription shutdown, and fail-closed `no_reply` monitor setup. Neighboring event command regressions also stayed green. - Copilot
+
+#### EXEC-287 Release 1.2.4 Event Service Baseline Slice
+
+- Status: completed for bounded supervised live event service baseline
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add a new `event-service` Core command for bounded app-scoped and unit-wide live event subscriptions
+  - persist event-service lifecycle facts in `CoreDataStore` for `start`, `ready`, `events_persisted`, `no_events`, `no_reply`, and `clean_shutdown`
+  - persist event-service checkpoint state without adding new datastore tables
+  - keep empty subscription and transport setup failures fail-closed while reusing the existing no-model live-ingest execution path
+  - add focused CLI regressions for successful bounded service ingest and fail-closed monitor edge cases
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release-1.2.4 now has a Core-owned bounded `event-service` command instead of only one-shot `live-event-smoke`
+  - service lifecycle evidence is now persisted into `CoreDataStore` and can distinguish successful bounded completion from `no_events` and `no_reply` failure states
+  - checkpoint state is now persisted with the normalized last event id and persisted event count so later WS-6 restart work can build on the same evidence surface
+  - the remaining WS-6 gap is now narrower: heartbeat, restart, stale-endpoint handling, and longer-lived checkpoint progression still need to be added
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'event_service or live_event_smoke'` -> `7 passed, 81 deselected`
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'event_service or live_event_smoke or event_daemon'` -> `10 passed, 78 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 72%
+  - release-1.2.4 closure progress: about 31%
+  - overall HLD completion: about 74%, target about 75% after release-1.2.4 closure
+
+2026-05-09: Continued release-1.2.4 by closing the remaining missing-lease edge on WS-5. The rollback path no longer reports a missing rollback lease as generic `rollback_args_unresolved`; `system_rollback_app` now distinguishes missing rollback-lease discovery from general argument-resolution failure and surfaces explicit `lease_not_found` when rollback lease ownership cannot be proven. This keeps the release-gate semantics aligned with the real protected rollback resource instead of hiding lease-discovery failure behind a broad argument error, and it guarantees rollback does not execute when the rollback lease cannot be resolved. Added focused tool-layer and Core CLI/workflow regressions for missing rollback lease discovery, including validation that the deploy rollback command is never invoked and that the workflow emits the expected `lease_resolution` failure summary. - Copilot
+
+#### EXEC-286 Release 1.2.4 Rollback Missing-Lease Slice
+
+- Status: completed for explicit missing rollback-lease handling
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - distinguish missing rollback lease discovery from generic rollback argument-resolution failure in `system_rollback_app`
+  - surface explicit `lease_not_found` when rollback lease ownership cannot be resolved
+  - prevent rollback execution from starting when rollback lease discovery fails
+  - add focused tool-layer and Core CLI/workflow regressions for the missing rollback-lease path
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - missing rollback lease is now surfaced as explicit `lease_not_found` instead of generic `rollback_args_unresolved`
+  - tool-layer rollback lease resolution now returns a dedicated `rollback_lease_resolution_failed` class when rollback lease discovery fails
+  - Core rollback workflow now emits the existing `lease_resolution` failure-summary path for missing rollback lease and confirms rollback does not execute in that state
+  - the remaining WS-5 gap is now mostly closure work: bounded hardware recovery evidence on the hardened rollback path
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_tools.py applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'rollback_app or app_deploy_rollback'` -> `16 passed, 107 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 69%
+  - release-1.2.4 closure progress: about 30%
+  - overall HLD completion: about 73%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by taking a larger WS-5 hardening step on the rollback path: rollback failures are no longer just generic `failure_status` strings at the top level. `app-deploy-rollback` now emits a structured `rollback_failure_summary` for rollback execution and post-rollback observation failures, including actionable category and retry guidance, and persists that summary into release-gate evidence when `--db` is used. In the same slice, added focused rollback coverage for `lease_holder_mismatch` and `no_reply`, so the remaining WS-5 gap is no longer missing transport or lease-ownership failure semantics at the Core release-gate boundary. Focused Core CLI regressions passed for the new rollback failure summaries and persisted failure evidence together with the neighboring build/admission/deploy/activate/rollback slices. - Copilot
+
+#### EXEC-285 Release 1.2.4 Rollback Failure Summary Slice
+
+- Status: completed for structured rollback failure summaries and persisted failure evidence
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add structured `rollback_failure_summary` output for rollback execution and rollback observation failures
+  - classify rollback failures into actionable categories such as argument resolution, lease ownership, transport, post-rollback observation, and post-rollback cleanup
+  - persist rollback failure summary evidence into the existing release-gate datastore when `--db` is used
+  - add focused Core CLI regressions for `lease_holder_mismatch`, `no_reply`, and rollback failure-summary persistence
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - failed rollback runs now return a structured summary with failure category, rollback resource, resolved lease id, source agent, and recommended next actions instead of only a bare failure string
+  - rollback failure summaries now explicitly cover `lease_holder_mismatch` and `no_reply` as first-class release-gate outcomes
+  - rollback failure summaries are now persisted into `CoreDataStore` through the same release-gate evidence path already used for rollback decisions and rollback results
+  - the remaining WS-5 gap is narrower again: missing-lease edge handling and bounded hardware recovery evidence remain before the workstream can be considered closed
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_rollback or app_deploy_activate or app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `27 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 68%
+  - release-1.2.4 closure progress: about 28%
+  - overall HLD completion: about 73%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by closing the next operator-outcome gap on WS-5: `app-deploy-rollback` can now represent explicit `deny` and `expire` approval results in-band instead of forcing every non-approved path into the same generic `rollback_approval_required` shape. Extended the rollback release-gate decision model and CLI surface so rollback approval can now end as `pending_approval`, `denied`, or `expired` before any rollback-side effects run, and added focused regressions for both denied and expired rollback outcomes. This makes the rollback gate more faithful to the existing approval system and narrows the remaining WS-5 hardening work to transport and lease-holder failure branches rather than missing operator-state coverage. Focused Core CLI regressions passed for the new deny/expire cases together with the neighboring build/admission/deploy/activate/rollback slices. - Copilot
+
+#### EXEC-284 Release 1.2.4 Rollback Approval Outcome Slice
+
+- Status: completed for explicit rollback deny/expire approval outcome handling
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - extend `app-deploy-rollback --approval-decision` to accept `expire` in addition to pending/approve/deny
+  - surface distinct rollback approval result classes for `pending_approval`, `denied`, and `expired`
+  - keep denied and expired outcomes side-effect free so rollback execution only starts from explicit approval
+  - add focused Core CLI regressions for denied and expired rollback approval states
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - `app-deploy-rollback` now supports explicit expired approval state in the CLI and workflow result model
+  - denied rollback approvals now return `rollback_approval_denied` instead of collapsing into the generic pending-required class
+  - expired rollback approvals now return `rollback_approval_expired`, keeping operator-state semantics aligned with the lower-level approval system
+  - the remaining WS-5 gap is now narrower: lease-holder mismatch and no-reply rollback behavior remain the next concrete hardening slices
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_rollback or app_deploy_activate or app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `24 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 66%
+  - release-1.2.4 closure progress: about 26%
+  - overall HLD completion: about 73%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by closing the next rollback hardening gap on WS-5: `app-deploy-rollback` no longer treats a syntactically successful rollback command as sufficient success if the bounded post-rollback observations still show the target app running or the rollback lease still held. Tightened the rollback resume slice so the same explicit `query apps` and `query leases` evidence it already collected now participates in the release gate instead of remaining informational only. This keeps the Core rollback path fail-closed and removes one more class of false-green recovery result before we move on to the remaining operator-outcome branches such as deny/expire, lease-holder mismatch, and no-reply behavior. Focused Core CLI regressions passed for the new running-app and residual-lease failure cases together with the neighboring build/admission/deploy/activate/rollback slices. - Copilot
+
+#### EXEC-283 Release 1.2.4 Rollback Observation Hardening Slice
+
+- Status: completed for the first fail-closed post-rollback observation hardening slice
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - harden `app-deploy-rollback` so post-rollback `query apps` and `query leases` results participate in success/failure, not only evidence capture
+  - fail rollback resume when the target app is still running after rollback
+  - fail rollback resume when the rollback lease is still held after rollback
+  - add focused Core CLI regressions for both false-green rollback observation cases
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - approved rollback resume now fails closed when bounded observation still reports `RUNNING` / `RUNNING_ACTIVE` target app state after rollback
+  - approved rollback resume now fails closed when the rollback lease resource `update/app/<app_id>/rollback` remains held after rollback
+  - rollback execution evidence now records observed app state and matching rollback lease ids so the failure remains actionable rather than generic
+  - the remaining WS-5 gap is narrower and more explicit: operator decision-state coverage and transport / lease-holder failure branches still need to be hardened
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_rollback or app_deploy_activate or app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `22 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 65%
+  - release-1.2.4 closure progress: about 25%
+  - overall HLD completion: about 73%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by closing the next persistence-oriented gap on the release-gate path: `app-deploy-activate` and `app-deploy-rollback` can now write their decision and execution evidence into the existing Core SQLite store instead of returning JSON only to the terminal. Added optional `--db` support to both commands and reused the existing `execution_spans`, `facts`, and `audit_records` tables rather than inventing a parallel storage model. The new persistence slice records the release-gate command, activation decision, activation health observation, recovery candidate / rollback approval when present, rollback decision, and rollback result evidence in the same datastore shape already used by the no-model workflow. This keeps the new 1.2.4 orchestration surface aligned with the rest of Core evidence handling and directly addresses the remaining WS-5 requirement around persisted activation/rollback decision evidence. Focused Core CLI regressions passed for activate/rollback persistence together with the neighboring build/admission/deploy slices. - Copilot
+
+#### EXEC-282 Release 1.2.4 Release-Gate Evidence Persistence Slice
+
+- Status: completed for the first SQLite-backed activation/rollback evidence persistence slice
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add optional `--db` persistence for `app-deploy-activate` and `app-deploy-rollback`
+  - reuse existing `CoreDataStore` execution span, fact, and audit tables for release-gate evidence
+  - persist activation decision, activation health, recovery candidate / rollback approval, rollback decision, and rollback result evidence
+  - keep the persistence slice narrow and local to the release-gate commands without widening the broader workflow surface
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - `app-deploy-activate` and `app-deploy-rollback` now support optional SQLite-backed release-gate evidence output through the existing Core datastore
+  - activation runs can now persist activation decision, activation health observation, and any generated recovery candidate / rollback approval evidence under one execution span and audit record
+  - rollback runs can now persist rollback decision and rollback result evidence under the same datastore model used elsewhere in Core
+  - release-gate evidence is no longer terminal-only for these commands, reducing the remaining WS-5 gap to operator-outcome and failure-mode hardening rather than missing persistence primitives
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_rollback or app_deploy_activate or app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `20 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 63%
+  - release-1.2.4 closure progress: about 24%
+  - overall HLD completion: about 73%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by closing the next WS-5 gap after rollback-candidate generation: pending rollback approval can now actually be resumed through a Core-owned command instead of stopping at a descriptive payload. Added `neurolink_core.cli app-deploy-rollback`, which mirrors the existing activation approval boundary by holding at `pending_approval` until explicitly approved, then delegating to the existing `system_rollback_app` surface and capturing bounded post-rollback app/lease observations. This keeps the implementation aligned with the existing recovery model rather than creating a second rollback format: the new command reuses `system_rollback_app` argument resolution, preserves explicit operator approval, and turns the previously emitted `rollback_approval` payload into a concrete next action. Focused Core CLI regressions passed for pending rollback approval, successful approved rollback resume, and unresolved rollback-lease failure together with the neighboring build/admission/deploy/activate slices. - Copilot
+
+#### EXEC-281 Release 1.2.4 App Deploy Rollback Slice
+
+- Status: completed for the first explicit Core rollback resume slice after pending rollback approval
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add an executable `app-deploy-rollback` Core CLI entrypoint
+  - require explicit rollback approval before any rollback-side effects run
+  - reuse `system_rollback_app` instead of inventing a second rollback execution path
+  - capture bounded post-rollback app and lease observations for release-gate evidence
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - Core now exposes `app-deploy-rollback` as the first concrete resume path for the pending `rollback_approval` payload emitted by `app-deploy-activate`
+  - the command returns a structured `pending_approval` gate by default and resumes rollback only after explicit approval
+  - approved rollback now reuses `system_rollback_app` argument resolution, then records bounded `query apps` and `query leases` observations as part of the rollback execution evidence
+  - rollback resume now fails closed on unresolved rollback arguments and other rollback execution failures without widening the control surface beyond the existing protected Neuro CLI contract
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_rollback or app_deploy_activate or app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `18 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 58%
+  - release-1.2.4 closure progress: about 21%
+  - overall HLD completion: about 72%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by taking the first concrete WS-5 step after approval-bounded activation: when activation health indicates the app is missing after activate, Core now produces a guarded rollback candidate instead of collapsing that outcome into a generic activation failure. Extended `app-deploy-activate` so the same bounded activation slice reuses the existing recovery-candidate helper from the no-model workflow, performs a rollback-lease observation when activation health is not healthy, and emits structured `recovery_candidate_summary` plus a pending `rollback_approval` payload when the classification is `rollback_required`. This keeps the release-gated behavior explicit: no automatic rollback runs, but the operator now gets resolved app id, rollback lease evidence, and resume-ready rollback arguments in the command result. Updated the release-1.2.4 plan snapshot so the project docs reflect that guarded rollback candidate generation is no longer only planned work. Focused Core CLI regressions passed for the new rollback-required activation branch together with the previously landed build/admission/deploy/activate slices. - Copilot
+
+#### EXEC-280 Release 1.2.4 Activation Rollback Candidate Slice
+
+- Status: completed for the first guarded rollback-candidate bridge on the Core activation path
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - extend `app-deploy-activate` to emit a structured rollback candidate when activation health is not healthy
+  - reuse the existing recovery-candidate helper and rollback lease observation instead of inventing a parallel rollback summary format
+  - emit a pending rollback approval payload when activation health is `rollback_required`
+  - sync the release-1.2.4 plan document with the newly landed WS-5 partial slice
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - `app-deploy-activate` now surfaces `recovery_candidate_summary` when activation health fails after activate instead of only returning a generic failure payload
+  - when activation health is `rollback_required`, the command now also emits a pending `rollback_approval` payload with target app, resolved rollback lease id when available, and rollback resume arguments
+  - the activation slice now records rollback-lease observation inside deploy execution evidence before cleanup, while still leaving rollback itself operator-approved and non-automatic
+  - release-1.2.4 status docs now reflect that guarded rollback candidate generation is implemented on the activation path, while persisted rollback resume remains follow-up work
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_activate or app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `15 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 52%
+  - release-1.2.4 closure progress: about 18%
+  - overall HLD completion: about 71%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by closing the next deploy-orchestrator gap after `prepare/verify`: explicit approval-bounded activation. Added `neurolink_core.cli app-deploy-activate`, which does not silently cross policy. The command now returns a structured `pending_approval` gate by default with resolved activation resource, app id, and lease id, and only executes once the operator passes an explicit approval decision. After approval, the Core-owned slice reacquires the activate lease, replays the bounded preflight/prepare/verify path to avoid stale resume assumptions, executes `deploy activate`, runs the existing activation health guard, queries final app state, and then performs the same lease cleanup contract used by earlier slices. This cut also preserves the important real constraints already proven elsewhere in the repo: activation cleanup tolerates `lease_not_found`, nested reply `payload.status` is authoritative, unhealthy activation observations fail closed, and cleanup still runs after activate failure. Updated the release-1.2.4 plan snapshot so project docs now show activation as part of the implemented baseline instead of future-only scope. Focused Core CLI regressions passed for the approval gate, successful activate/health/query/cleanup, and cleanup after activate failure. - Copilot
+
+#### EXEC-279 Release 1.2.4 App Deploy Activate Slice
+
+- Status: completed for the first approval-bounded Core activation execution slice
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add an executable `app-deploy-activate` Core CLI entrypoint
+  - require explicit activation approval before any activate-side effects run
+  - execute activate together with activation health guard, final app-state query, and lease cleanup
+  - sync the release-1.2.4 plan document to reflect activation as landed implementation status
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - Core now exposes `app-deploy-activate` as the first release-1.2.4 command that carries the deploy path through activation while still holding the policy boundary explicitly in-band
+  - the command emits a structured `pending_approval` payload by default with resolved activation resource, app id, and suggested lease id, so activation can be resumed without hidden operator state
+  - approved activation now executes preflight, activate-lease acquire, prepare, verify, activate, activation health guard, final app-state query, lease release, and final lease cleanup as one bounded Core-owned slice
+  - activation now fails closed on nested `payload.status:error`, unhealthy activation health observations, missing/non-running final app state, and non-empty final lease state, while still attempting cleanup after activate-side failure
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_activate or app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `14 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 47%
+  - release-1.2.4 closure progress: about 15%
+  - overall HLD completion: about 70%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by moving the Core deploy path one step beyond static plans into the first bounded executable execution slice while still keeping activation behind policy. Added `neurolink_core.cli app-deploy-prepare-verify`, which reuses the already-landed build-plan, artifact-admission, and deploy-plan contracts but now actually executes the safe subset of the protected deploy flow through the real Neuro CLI adapter: serial-required Linux preflight, activate-lease acquire, deploy prepare, deploy verify, lease release, and final `query leases` cleanup. This slice intentionally stops before activation so approval remains the explicit release gate, but it already enforces the real operational rules that matter for 1.2.4: nested reply payload `status` is treated as authoritative, cleanup is attempted even after a failed prepare/verify step, and final leases must return empty before the slice is considered clean. In the same pass, updated the release-1.2.4 plan document so the project docs now reflect the concrete implementation baseline rather than only the intended workstreams. Focused Core CLI regressions passed for successful prepare/verify execution plus cleanup after prepare failure. - Copilot
+
+#### EXEC-278 Release 1.2.4 App Deploy Prepare Verify Slice
+
+- Status: completed for the first executable Core deploy slice before approval-gated activation
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add an executable `app-deploy-prepare-verify` Core CLI entrypoint
+  - run the safe protected deploy subset through the real Neuro CLI adapter while keeping activation approval-gated follow-up work
+  - enforce nested payload `status` failure handling and lease cleanup on prepare/verify failure
+  - sync the release-1.2.4 plan document with the now-landed Core orchestration slices
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - Core now exposes `app-deploy-prepare-verify` as the first release-1.2.4 deploy command that executes real preflight, lease, prepare, verify, and cleanup steps instead of only emitting a plan
+  - the new execution slice fails closed on top-level command failures, nested reply `status:error`, parse failures, and non-empty final lease state
+  - cleanup now remains part of the execution contract even when deploy prepare or verify fails after lease acquisition
+  - the release-1.2.4 plan document now includes a current implementation snapshot so project docs stay aligned with landed code
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_prepare_verify or app_deploy_plan or app_artifact_admission or app_build_plan'` -> `11 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 38%
+  - release-1.2.4 closure progress: about 11%
+  - overall HLD completion: about 69%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by promoting the next HLD-critical gap from planning text into executable Core structure: the first read-only `app-deploy-plan`. Added a new `neurolink_core.cli app-deploy-plan` command plus a workflow helper that composes the already-landed build-plan and artifact-admission slices into a release-gated deploy sequence for Unit Apps. The new plan does not execute deploy side effects yet, but it now fixes the canonical orchestration order in Core itself: serial-required Linux preflight, artifact admission, protected activate-lease acquisition, deploy prepare, deploy verify, explicit activation approval gate, deploy activate, activation health guard, final app-state query, lease release, and final `query leases` cleanup. The first cut also preserves the live project constraints that have repeatedly shown up in real validation: activate uses `update/app/<app_id>/activate`, approval remains required before activation, cleanup expects empty leases, and Neuro CLI `source_agent` must be explicit so future execution uses a consistent lease holder. Focused Core CLI regressions passed for canonical release-gate sequencing, custom app/node/source-agent planning, and invalid source-agent rejection. - Copilot
+
+#### EXEC-277 Release 1.2.4 App Deploy Plan Slice
+
+- Status: completed for the first read-only Core deploy-plan and activation-gate contract slice
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add a structured `app-deploy-plan` Core CLI entrypoint
+  - compose build-plan and artifact-admission evidence into a canonical protected deploy sequence
+  - encode approval-gated activation, activation lease requirements, activation health observation, and cleanup expectations without executing deploy side effects yet
+  - add focused Core CLI regressions for canonical, custom-app/custom-node, and invalid-input deploy-plan behavior
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - Core now exposes `app-deploy-plan` as the third executable release-1.2.4 orchestration command after `app-build-plan` and `app-artifact-admission`
+  - the command emits a structured release-gated deploy sequence covering preflight, artifact admission, activate lease acquire, deploy prepare, deploy verify, approval-gated activate, activation health guard, app-state query, lease release, and final lease cleanup
+  - deploy planning now preserves the real protected resource naming contract `update/app/<app_id>/activate` and a deterministic suggested activate lease id for later execution slices
+  - deploy plans now carry explicit `source_agent`, node id, start args, lease TTL, approval requirement, and cleanup expectations so future execution can avoid lease-holder drift and implicit policy assumptions
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_deploy_plan or app_artifact_admission or app_build_plan'` -> `9 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 30%
+  - release-1.2.4 closure progress: about 8%
+  - overall HLD completion: about 68%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by turning the next planned artifact-admission gap into executable Core evidence instead of leaving admission checks inside scripts and operator memory. Added a new read-only `neurolink_core.cli app-artifact-admission` command plus a matching workflow helper so Core can now evaluate a candidate Unit App LLEXT against the same canonical build-plan inputs, inspect the artifact as an ELF instead of trusting file presence, bind the expected target architecture from the board profile, and cross-check the artifact bytes against source-declared app identity metadata (`app_id`, version, build id, and manifest version coherence) from the app source tree. The first admission slice intentionally remains deterministic and side-effect free: it does not invoke build or deploy yet, but it now fails closed for missing files, empty files, invalid ELF placeholders, filename/app-id mismatches, target-architecture mismatches, source identity parse gaps, and stale artifacts that no longer contain the expected build id. Focused Core CLI regressions passed for successful admission, invalid ELF placeholder rejection, and missing build-id rejection. - Copilot
+
+#### EXEC-276 Release 1.2.4 App Artifact Admission Slice
+
+- Status: completed for the first read-only Core artifact admission evidence slice
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add a structured `app-artifact-admission` Core CLI entrypoint
+  - add a workflow helper that resolves canonical build-plan expectations before inspecting a Unit App LLEXT artifact
+  - validate ELF identity, board-to-architecture compatibility, filename/app-id coherence, and source-declared app identity strings without introducing build or deploy side effects
+  - add focused Core CLI regressions for successful admission and fail-closed placeholder/stale-artifact cases
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - Core now exposes `app-artifact-admission` as the second executable release-1.2.4 orchestration command after `app-build-plan`
+  - the command emits structured admission evidence including artifact path, size, sha256, ELF identity, expected architecture, source identity, and explicit admission checks
+  - artifact validation now fails closed when a `.llext` is missing, empty, not a valid ELF, mismatched to the requested app id, or missing the expected app/build/version identity strings
+  - source-declared manifest semantic version is now checked for coherence with the source app version before admission succeeds
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_artifact_admission or app_build_plan'` -> `6 passed, 57 deselected`
+- Updated progress estimate:
+  - release-1.2.4 implementation progress: about 18%
+  - release-1.2.4 closure progress: about 5%
+  - overall HLD completion: about 66%, target about 74% after release-1.2.4 closure
+
+2026-05-07: Continued release-1.2.4 by landing the first executable Core build-orchestrator slice instead of staying at plan-only scope. Added `neurolink_core.cli app-build-plan` plus a matching workflow helper so Core can now emit a structured Unit App build plan for the canonical external-app flow before any hardware or deploy-side side effects occur. The first cut deliberately stays read-only and deterministic: it reuses the existing `build_neurolink.sh` contract, preserves the validated `unit-app` / `unit-ext` preset surface, derives the real source and staged artifact paths from the current build wrapper logic, and rejects invalid build-dir input instead of silently producing an unsafe plan. Focused Core CLI regressions passed for canonical `neuro_unit_app`, custom app-id path derivation, and invalid build-dir rejection. - Copilot
+
+#### EXEC-275 Release 1.2.4 App Build Plan Slice
+
+- Status: completed for the first read-only Core build orchestration contract slice
+- Owner: GitHub Copilot continuing the release-1.2.4 Core orchestrator track
+- Scope:
+  - add a structured `app-build-plan` Core CLI entrypoint
+  - add a workflow helper that resolves canonical external-app build paths from the existing wrapper logic
+  - keep the first slice read-only and deterministic so artifact admission and deploy-plan work can build on a stable planning surface
+  - add focused Core CLI regressions for canonical, custom-app, and invalid-input paths
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - Core now exposes `app-build-plan` as the first executable release-1.2.4 orchestration command
+  - the command emits canonical `unit-app` build metadata including app source dir, Unit host build dir, app build dir, source artifact path, staged artifact path, and the expected wrapper command
+  - custom app-id plans now derive the same `build_neurolink.sh` app-build-dir and artifact naming shape used by the current shell implementation
+  - invalid build-dir input now fails closed with a structured `app_build_plan_invalid` result
+- Validation evidence:
+  - `PYTHONPATH=/home/emb/project/zephyrproject/applocation/NeuroLink /home/emb/project/zephyrproject/.venv/bin/python -m pytest applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py -q -k 'app_build_plan'` -> `3 passed, 57 deselected`
+
+2026-05-07: Started release-1.2.4 implementation planning after formally closing release-1.2.3. The next HLD-critical gap is no longer bounded perception or guarded recovery evidence; it is turning the existing script and Neuro CLI app lifecycle paths into a Core-owned build-plan, artifact-admission, deploy-plan, activation-approval, guarded-recovery, and production live event service workflow. Added the formal release-1.2.4 plan, assigned the remaining HLD burn-down across 1.2.4, 1.2.5, 1.2.6, 1.2.7, and release-2.0.0 acceptance, and set the initial target for release-1.2.4 to move total HLD completion from about 64% to about 74%. - Copilot
+
+#### EXEC-274 Release 1.2.4 Core Orchestrator Plan
+
+- Status: in progress for release-1.2.4 kickoff and planning baseline
+- Owner: GitHub Copilot continuing the HLD completion track toward release-2.0.0
+- Scope:
+  - create the formal release-1.2.4 plan around Core-owned Unit App build and deploy orchestration
+  - promote bounded live-ingest evidence into a production-shaped live event service plan
+  - assign the remaining HLD gaps across release-1.2.4, 1.2.5, 1.2.6, 1.2.7, and release-2.0.0 acceptance
+  - align release-facing documentation with the new active release plan
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
+- Result so far:
+  - release-1.2.4 is now defined as the Core App Build and Deploy Orchestrator plus production live event service slice
+  - the four-minor-release burn-down to release-2.0.0 is now explicit
+  - release-1.2.4 starts from about 64% total HLD completion and targets about 74% at closure
+- Starting progress estimate:
+  - release-1.2.4 implementation progress: 0%
+  - release-1.2.4 closure progress: 0%
+  - overall HLD completion: about 64%, target about 74% after release-1.2.4 closure
+
 2026-05-07: Closed release-1.2.3 after accepting the current real update-plane proof as sufficient release evidence and converting the plan from “remaining closure decision” into an explicit exit state. The release now has deterministic replay/daemon coverage, approval-bounded recovery evidence, explicit live-ingest provenance, real hardware callback/lease/state/update-plane proofs through the generic Unit listener, and the final adjacent Neuro CLI/Core regression surface still green after the last parser hardening (`221 passed`). Updated the release plan to record that optional extra hardware captures such as `unit.lifecycle.activate_failed`, degraded, offline, or endpoint-drift remain follow-up evidence rather than blocking requirements for 1.2.3 closure. - Copilot
 
 #### EXEC-273 Release 1.2.3 Final Closure Decision

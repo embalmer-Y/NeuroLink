@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -16,6 +17,7 @@ from neurolink_core.tools import (
     SideEffectLevel,
     StateSyncSnapshot,
     StateSyncSurface,
+    TOOL_MANIFEST_SCHEMA_VERSION,
     ToolContract,
     ToolExecutionResult,
 )
@@ -3308,6 +3310,2427 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             "neuro_cli_events_live",
         )
         self.assertEqual(payload["agent_run_evidence"]["event_source"], "neuro_cli_events_live")
+
+    def test_cli_event_service_persists_bounded_lifecycle_and_checkpoint(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "keyexpr": "neuro/unit-01/event/app/neuro_demo_app/callback/value",
+                                    "payload": {
+                                        "semantic_topic": "unit.callback",
+                                        "event_id": "evt-live-app-001",
+                                        "source_kind": "unit_app",
+                                        "source_node": "unit-01",
+                                        "source_app": "neuro_demo_app",
+                                        "event_type": "callback",
+                                        "timestamp_wall": "2026-05-09T00:00:00Z",
+                                        "priority": 20,
+                                    },
+                                    "payload_encoding": "json",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": ["python", "wrapper.py", "system", "state-sync"],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "state": {
+                                "device": {"status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {"status": "ok", "payload": {"apps": []}},
+                                "leases": {"status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "event-service.db")
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "event-service",
+                            "--db",
+                            db_path,
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["command"], "event-service")
+            self.assertEqual(payload["event_source"], "neuro_cli_app_events_live")
+            self.assertTrue(payload["event_service"]["bounded_runtime"])
+            self.assertEqual(
+                payload["event_service"]["checkpoint"]["last_event_id"],
+                "liveevt-unit-01-neuro-demo-app-callback-evt-live-app-001",
+            )
+            service_execution_span_id = payload["event_service"]["execution_span_id"]
+
+            data_store = CoreDataStore(db_path)
+            try:
+                lifecycle_facts = data_store.get_facts(
+                    service_execution_span_id,
+                    fact_type="event_service_lifecycle",
+                )
+                checkpoint_facts = data_store.get_facts(
+                    service_execution_span_id,
+                    fact_type="event_service_checkpoint",
+                )
+            finally:
+                data_store.close()
+
+        self.assertEqual(
+            [fact["payload"]["lifecycle_state"] for fact in lifecycle_facts],
+            ["start", "ready", "events_persisted", "clean_shutdown"],
+        )
+        self.assertEqual(len(checkpoint_facts), 1)
+        self.assertEqual(
+            checkpoint_facts[0]["payload"]["last_event_id"],
+            "liveevt-unit-01-neuro-demo-app-callback-evt-live-app-001",
+        )
+        self.assertEqual(checkpoint_facts[0]["payload"]["persisted_event_count"], 1)
+
+    def test_cli_event_service_persists_no_events_shutdown_evidence(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [],
+                        }
+                    ),
+                )
+            raise AssertionError("workflow execution should not start when no service events are collected")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "event-service-no-events.db")
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "event-service",
+                            "--db",
+                            db_path,
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+
+            self.assertEqual(code, 2)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["status"], "event_service_ingest_empty")
+            self.assertEqual(payload["failure_status"], "no_events_collected")
+            service_execution_span_id = payload["event_service"]["execution_span_id"]
+
+            data_store = CoreDataStore(db_path)
+            try:
+                lifecycle_facts = data_store.get_facts(
+                    service_execution_span_id,
+                    fact_type="event_service_lifecycle",
+                )
+            finally:
+                data_store.close()
+
+        self.assertEqual(
+            [fact["payload"]["lifecycle_state"] for fact in lifecycle_facts],
+            ["start", "ready", "no_events", "clean_shutdown"],
+        )
+
+    def test_cli_event_service_persists_no_reply_monitor_failure(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": False,
+                            "status": "no_reply",
+                        }
+                    ),
+                )
+            raise AssertionError("workflow execution should not start when monitor setup fails")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "event-service-no-reply.db")
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "event-service",
+                            "--db",
+                            db_path,
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+
+            self.assertEqual(code, 2)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["status"], "event_service_monitor_failed")
+            self.assertEqual(payload["failure_status"], "no_reply")
+            self.assertEqual(payload["failure_class"], "event_service_monitor_unreachable")
+            service_execution_span_id = payload["event_service"]["execution_span_id"]
+
+            data_store = CoreDataStore(db_path)
+            try:
+                lifecycle_facts = data_store.get_facts(
+                    service_execution_span_id,
+                    fact_type="event_service_lifecycle",
+                )
+            finally:
+                data_store.close()
+
+        self.assertEqual(
+            [fact["payload"]["lifecycle_state"] for fact in lifecycle_facts],
+            ["start", "no_reply", "clean_shutdown"],
+        )
+
+    def test_cli_event_service_records_heartbeat_and_stale_endpoint_across_cycles(self) -> None:
+        cycle_counter = {"count": 0}
+
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "events" in argv and "monitor" in argv:
+                cycle_counter["count"] += 1
+                if cycle_counter["count"] == 1:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "subscription": "neuro/unit-01/event/**",
+                                "listener_mode": "callback",
+                                "handler_audit": {"enabled": False, "executed": 0},
+                                "events": [
+                                    {
+                                        "keyexpr": "neuro/unit-01/event/state",
+                                        "payload": {
+                                            "semantic_topic": "unit.network.endpoint_drift",
+                                            "event_id": "evt-unit-drift-001",
+                                            "source_kind": "unit",
+                                            "source_node": "unit-01",
+                                            "event_type": "state_event",
+                                            "timestamp_wall": "2026-05-09T00:00:00Z",
+                                            "priority": 40,
+                                            "expected_endpoint": "tcp/192.168.2.95:7447",
+                                            "observed_endpoint": "tcp/192.168.2.94:7447",
+                                        },
+                                        "payload_encoding": "json",
+                                    }
+                                ],
+                            }
+                        ),
+                    )
+                if cycle_counter["count"] == 2:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "subscription": "neuro/unit-01/event/**",
+                                "listener_mode": "callback",
+                                "handler_audit": {"enabled": False, "executed": 0},
+                                "events": [
+                                    {
+                                        "keyexpr": "neuro/unit-01/event/health",
+                                        "payload": {
+                                            "semantic_topic": "unit.health.degraded",
+                                            "event_id": "evt-unit-health-002",
+                                            "source_kind": "unit",
+                                            "source_node": "unit-01",
+                                            "event_type": "health",
+                                            "timestamp_wall": "2026-05-09T00:00:01Z",
+                                            "priority": 30,
+                                        },
+                                        "payload_encoding": "json",
+                                    }
+                                ],
+                            }
+                        ),
+                    )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": ["python", "wrapper.py", "system", "state-sync"],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "state": {
+                                "device": {"status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {"status": "ok", "payload": {"apps": []}},
+                                "leases": {"status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "event-service-cycles.db")
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "event-service",
+                            "--db",
+                            db_path,
+                            "--event-source",
+                            "unit",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                            "--cycles",
+                            "2",
+                        ]
+                    )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["events_persisted"], 2)
+            self.assertEqual(payload["event_service"]["cycle_count"], 2)
+            self.assertEqual(payload["event_service"]["duplicate_event_count"], 0)
+            self.assertEqual(payload["event_service"]["normalized_event_count"], 2)
+            service_execution_span_id = payload["event_service"]["execution_span_id"]
+
+            data_store = CoreDataStore(db_path)
+            try:
+                lifecycle_facts = data_store.get_facts(
+                    service_execution_span_id,
+                    fact_type="event_service_lifecycle",
+                )
+            finally:
+                data_store.close()
+
+        self.assertEqual(
+            [fact["payload"]["lifecycle_state"] for fact in lifecycle_facts],
+            [
+                "start",
+                "ready",
+                "stale_endpoint",
+                "events_persisted",
+                "heartbeat",
+                "ready",
+                "events_persisted",
+                "clean_shutdown",
+            ],
+        )
+
+    def test_cli_event_service_restart_uses_seeded_dedupe_without_retrigger(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "keyexpr": "neuro/unit-01/event/app/neuro_demo_app/callback/value",
+                                    "payload": {
+                                        "semantic_topic": "unit.callback",
+                                        "event_id": "evt-live-app-restart-001",
+                                        "source_kind": "unit_app",
+                                        "source_node": "unit-01",
+                                        "source_app": "neuro_demo_app",
+                                        "event_type": "callback",
+                                        "timestamp_wall": "2026-05-09T00:00:00Z",
+                                        "priority": 20,
+                                    },
+                                    "payload_encoding": "json",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": ["python", "wrapper.py", "system", "state-sync"],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "state": {
+                                "device": {"status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {"status": "ok", "payload": {"apps": []}},
+                                "leases": {"status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "event-service-restart.db")
+
+            out_first = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out_first):
+                    first_code = core_cli_main(
+                        [
+                            "event-service",
+                            "--db",
+                            db_path,
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--session-id",
+                            "event-service-restart-session",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+
+            self.assertEqual(first_code, 0)
+
+            out_second = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out_second):
+                    second_code = core_cli_main(
+                        [
+                            "event-service",
+                            "--db",
+                            db_path,
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--session-id",
+                            "event-service-restart-session",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+
+            self.assertEqual(second_code, 0)
+            second_payload = json.loads(out_second.getvalue())
+            self.assertEqual(second_payload["events_persisted"], 0)
+            self.assertEqual(second_payload["event_service"]["seeded_dedupe_key_count"], 1)
+            service_execution_span_id = second_payload["event_service"]["execution_span_id"]
+
+            data_store = CoreDataStore(db_path)
+            try:
+                lifecycle_facts = data_store.get_facts(
+                    service_execution_span_id,
+                    fact_type="event_service_lifecycle",
+                )
+                perception_event_count = data_store.count("perception_events")
+            finally:
+                data_store.close()
+
+        self.assertEqual(perception_event_count, 1)
+        self.assertEqual(
+            [fact["payload"]["lifecycle_state"] for fact in lifecycle_facts],
+            ["start", "restart", "ready", "heartbeat", "clean_shutdown"],
+        )
+
+    def test_cli_app_build_plan_reports_canonical_neuro_unit_app_paths(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            code = core_cli_main(["app-build-plan"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-build-plan")
+        self.assertEqual(payload["build_plan"]["preset"], "unit-app")
+        self.assertEqual(payload["build_plan"]["app_id"], "neuro_unit_app")
+        self.assertEqual(
+            payload["build_plan"]["app_source_dir"],
+            "applocation/NeuroLink/subprojects/neuro_unit_app",
+        )
+        self.assertEqual(payload["build_plan"]["unit_build_dir"], "build/neurolink_unit")
+        self.assertEqual(payload["build_plan"]["app_build_dir"], "build/neurolink_unit_app")
+        self.assertEqual(
+            payload["build_plan"]["source_artifact_file"],
+            "build/neurolink_unit_app/neuro_unit_app.llext",
+        )
+        self.assertEqual(
+            payload["build_plan"]["staged_artifact_file"],
+            "build/neurolink_unit/llext/neuro_unit_app.llext",
+        )
+        self.assertIn(
+            "bash applocation/NeuroLink/scripts/build_neurolink.sh --preset unit-app --no-c-style-check",
+            payload["build_plan"]["build_command"],
+        )
+
+    def test_cli_app_build_plan_supports_custom_app_id(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            code = core_cli_main(["app-build-plan", "--app-id", "neuro_demo_gpio"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["build_plan"]["app_id"], "neuro_demo_gpio")
+        self.assertEqual(
+            payload["build_plan"]["app_source_dir"],
+            "applocation/NeuroLink/subprojects/neuro_demo_gpio",
+        )
+        self.assertEqual(
+            payload["build_plan"]["app_build_dir"],
+            "build/neurolink_unit_neuro_demo_gpio_app",
+        )
+        self.assertEqual(
+            payload["build_plan"]["source_artifact_file"],
+            "build/neurolink_unit_neuro_demo_gpio_app/neuro_demo_gpio.llext",
+        )
+        self.assertEqual(
+            payload["build_plan"]["staged_artifact_file"],
+            "build/neurolink_unit/llext/neuro_demo_gpio.llext",
+        )
+        self.assertIn("--app neuro_demo_gpio", payload["build_plan"]["build_command"])
+
+    def test_cli_app_build_plan_rejects_invalid_build_dir(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            code = core_cli_main(["app-build-plan", "--build-dir", "build_bad"])
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["command"], "app-build-plan")
+        self.assertEqual(payload["failure_class"], "app_build_plan_invalid")
+        self.assertEqual(payload["failure_status"], "invalid_app_build_dir")
+
+    def _write_fake_app_source(
+        self,
+        source_dir: Path,
+        *,
+        app_id: str,
+        app_version: str,
+        build_id: str,
+    ) -> None:
+        source_dir.mkdir(parents=True, exist_ok=True)
+        main_c = source_dir / "src" / "main.c"
+        main_c.parent.mkdir(parents=True, exist_ok=True)
+        major, minor, patch = app_version.split(".")
+        main_c.write_text(
+            (
+                'static const char app_id[] = "{app_id}";\n'
+                'static const char app_version[] = "{app_version}";\n'
+                'static const char app_build_id[] = "{build_id}";\n'
+                'const struct app_runtime_manifest app_runtime_manifest = {{\n'
+                '  .version = {{\n'
+                '    .major = {major},\n'
+                '    .minor = {minor},\n'
+                '    .patch = {patch},\n'
+                '  }},\n'
+                '  .app_name = "{app_id}",\n'
+                '}};\n'
+            ).format(
+                app_id=app_id,
+                app_version=app_version,
+                build_id=build_id,
+                major=major,
+                minor=minor,
+                patch=patch,
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_fake_llext(
+        self,
+        artifact_path: Path,
+        *,
+        app_id: str,
+        app_version: str,
+        build_id: str,
+    ) -> None:
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        elf_ident = b"\x7fELF\x01\x01\x01" + (b"\x00" * 9)
+        elf_header = (
+            elf_ident
+            + (1).to_bytes(2, "little")
+            + (94).to_bytes(2, "little")
+            + (1).to_bytes(4, "little")
+        )
+        payload = elf_header + b"\x00" * 32 + app_id.encode("utf-8") + b"\x00" + app_version.encode("utf-8") + b"\x00" + build_id.encode("utf-8") + b"\x00"
+        artifact_path.write_bytes(payload)
+
+    def test_cli_app_artifact_admission_reports_identity_and_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-artifact-admission",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-artifact-admission")
+        self.assertTrue(payload["artifact_admission"]["admitted"])
+        self.assertEqual(
+            payload["artifact_admission"]["elf_identity"]["machine_name"],
+            "xtensa",
+        )
+        self.assertEqual(
+            payload["artifact_admission"]["source_identity"]["manifest_version"],
+            "1.2.2",
+        )
+        self.assertTrue(payload["artifact_admission"]["artifact_contains_app_id_string"])
+        self.assertTrue(payload["artifact_admission"]["artifact_contains_build_id_string"])
+        self.assertTrue(payload["artifact_admission"]["artifact_contains_version_string"])
+        self.assertEqual(len(payload["artifact_admission"]["artifact_sha256"]), 64)
+
+    def test_cli_app_artifact_admission_rejects_invalid_elf_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text("fake llext", encoding="utf-8")
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-artifact-admission",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["command"], "app-artifact-admission")
+        self.assertEqual(payload["failure_class"], "app_artifact_admission_failed")
+        self.assertEqual(payload["failure_status"], "artifact_invalid_elf_header")
+
+    def test_cli_app_artifact_admission_rejects_missing_build_id_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_demo_gpio.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="wrong-build-id",
+            )
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-artifact-admission",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["command"], "app-artifact-admission")
+        self.assertEqual(payload["failure_class"], "app_artifact_admission_failed")
+        self.assertEqual(payload["failure_status"], "artifact_build_id_missing")
+
+    def test_cli_app_deploy_plan_reports_canonical_release_gate_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-plan",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                        "--start-args",
+                        "mode=demo,profile=release",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-plan")
+        self.assertTrue(payload["deploy_plan"]["activation_approval_required"])
+        self.assertEqual(
+            payload["deploy_plan"]["activation_resource"],
+            "update/app/neuro_unit_app/activate",
+        )
+        self.assertEqual(
+            payload["deploy_plan"]["suggested_activate_lease_id"],
+            "l-neuro-unit-app-act",
+        )
+        step_names = [step["name"] for step in payload["deploy_plan"]["steps"]]
+        self.assertEqual(
+            step_names,
+            [
+                "preflight",
+                "artifact_admission",
+                "lease_acquire_activate",
+                "deploy_prepare",
+                "deploy_verify",
+                "activation_approval_gate",
+                "deploy_activate",
+                "activation_health_guard",
+                "query_apps",
+                "lease_release_activate",
+                "query_leases",
+            ],
+        )
+        self.assertIn(
+            "preflight_neurolink_linux.sh --node unit-01",
+            payload["deploy_plan"]["steps"][0]["command"],
+        )
+        self.assertIn(
+            "--resource update/app/neuro_unit_app/activate --lease-id l-neuro-unit-app-act",
+            payload["deploy_plan"]["steps"][2]["command"],
+        )
+        self.assertIn(
+            "deploy activate --app-id neuro_unit_app --lease-id l-neuro-unit-app-act --start-args mode=demo,profile=release",
+            payload["deploy_plan"]["steps"][6]["command"],
+        )
+        self.assertIn(
+            f"{sys.executable} -m neurolink_core.cli activation-health-guard --app-id neuro_unit_app --tool-adapter neuro-cli --output json",
+            payload["deploy_plan"]["steps"][7]["command"],
+        )
+
+    def test_cli_app_deploy_plan_supports_custom_app_and_source_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_demo_gpio.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-plan",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                        "--node",
+                        "unit-02",
+                        "--source-agent",
+                        "skills",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["deploy_plan"]["node_id"], "unit-02")
+        self.assertEqual(payload["deploy_plan"]["source_agent"], "skills")
+        self.assertEqual(
+            payload["deploy_plan"]["activation_resource"],
+            "update/app/neuro_demo_gpio/activate",
+        )
+        self.assertEqual(
+            payload["deploy_plan"]["suggested_activate_lease_id"],
+            "l-neuro-demo-gpio-act",
+        )
+        self.assertIn(
+            "--node unit-02 --source-agent skills lease acquire --resource update/app/neuro_demo_gpio/activate",
+            payload["deploy_plan"]["steps"][2]["command"],
+        )
+
+    def test_cli_app_deploy_plan_rejects_invalid_source_agent(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            code = core_cli_main(["app-deploy-plan", "--source-agent", "bad agent"])
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["command"], "app-deploy-plan")
+        self.assertEqual(payload["failure_class"], "app_deploy_plan_invalid")
+        self.assertEqual(payload["failure_status"], "invalid_deploy_source_agent")
+
+    def test_cli_app_deploy_prepare_verify_executes_prepare_verify_and_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            seen_argv: list[list[str]] = []
+
+            def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                del timeout_seconds
+                seen_argv.append(list(argv))
+                if "preflight_neurolink_linux.sh" in " ".join(argv):
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps({"status": "ready", "query": {"status": "ok"}}),
+                    )
+                if "lease" in argv and "acquire" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {"payload": {"status": "ok", "lease_id": "l-neuro-unit-app-act"}}
+                                ],
+                            }
+                        ),
+                    )
+                if "deploy" in argv and "prepare" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {"payload": {"status": "ok", "app_id": "neuro_unit_app", "path": "/SD:/apps/neuro_unit_app.llext"}}
+                                ],
+                            }
+                        ),
+                    )
+                if "deploy" in argv and "verify" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {"payload": {"status": "ok", "app_id": "neuro_unit_app", "size": 21520}}
+                                ],
+                            }
+                        ),
+                    )
+                if "lease" in argv and "release" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok"}}],
+                            }
+                        ),
+                    )
+                if "query" in argv and "leases" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok", "leases": []}}],
+                            }
+                        ),
+                    )
+                raise AssertionError(f"unexpected argv: {argv}")
+
+            adapter = NeuroCliToolAdapter(runner=runner, source_agent="rational", node="unit-01")
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-prepare-verify",
+                            "--app-id",
+                            "neuro_unit_app",
+                            "--app-source-dir",
+                            str(source_dir),
+                            "--artifact-file",
+                            str(artifact_path),
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-prepare-verify")
+        self.assertEqual(payload["deploy_execution"]["completed_through"], "deploy_verify")
+        self.assertTrue(payload["deploy_execution"]["cleanup_attempted"])
+        self.assertEqual(payload["deploy_execution"]["query_leases"]["result"]["replies"][0]["payload"]["leases"], [])
+        observed_commands = [" ".join(argv) for argv in seen_argv]
+        self.assertTrue(any("preflight_neurolink_linux.sh" in command for command in observed_commands))
+        self.assertTrue(any("deploy prepare --app-id neuro_unit_app" in command for command in observed_commands))
+        self.assertTrue(any("deploy verify --app-id neuro_unit_app" in command for command in observed_commands))
+        self.assertTrue(any("lease release --lease-id l-neuro-unit-app-act" in command for command in observed_commands))
+
+    def test_cli_app_deploy_prepare_verify_accepts_log_prefixed_preflight_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+
+            def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                del timeout_seconds
+                if "preflight_neurolink_linux.sh" in " ".join(argv):
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=(
+                            "Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple\n"
+                            "Requirement already satisfied: eclipse-zenoh==1.9.0\n"
+                            + json.dumps({"status": "ready", "query": {"status": "ok"}})
+                        ),
+                    )
+                if "lease" in argv and "acquire" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok", "lease_id": "l-neuro-unit-app-act"}}],
+                            }
+                        ),
+                    )
+                if "deploy" in argv and "prepare" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok", "app_id": "neuro_unit_app"}}],
+                            }
+                        ),
+                    )
+                if "deploy" in argv and "verify" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok", "app_id": "neuro_unit_app", "size": 21520}}],
+                            }
+                        ),
+                    )
+                if "lease" in argv and "release" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok"}}],
+                            }
+                        ),
+                    )
+                if "query" in argv and "leases" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok", "leases": []}}],
+                            }
+                        ),
+                    )
+                raise AssertionError(f"unexpected argv: {argv}")
+
+            adapter = NeuroCliToolAdapter(runner=runner, source_agent="rational", node="unit-01")
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-prepare-verify",
+                            "--app-id",
+                            "neuro_unit_app",
+                            "--app-source-dir",
+                            str(source_dir),
+                            "--artifact-file",
+                            str(artifact_path),
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["deploy_execution"]["preflight"]["result"]["status"], "ready")
+
+    def test_cli_app_deploy_prepare_verify_releases_lease_after_prepare_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_demo_gpio.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            seen_argv: list[list[str]] = []
+
+            def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                del timeout_seconds
+                seen_argv.append(list(argv))
+                if "preflight_neurolink_linux.sh" in " ".join(argv):
+                    return CommandExecutionResult(exit_code=0, stdout=json.dumps({"status": "ready"}))
+                if "lease" in argv and "acquire" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}),
+                    )
+                if "deploy" in argv and "prepare" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps(
+                            {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "error", "message": "prepare failed"}}],
+                            }
+                        ),
+                    )
+                if "lease" in argv and "release" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}),
+                    )
+                if "query" in argv and "leases" in argv:
+                    return CommandExecutionResult(
+                        exit_code=0,
+                        stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "leases": []}}]}),
+                    )
+                raise AssertionError(f"unexpected argv: {argv}")
+
+            adapter = NeuroCliToolAdapter(runner=runner, source_agent="rational", node="unit-01")
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-prepare-verify",
+                            "--app-id",
+                            "neuro_demo_gpio",
+                            "--app-source-dir",
+                            str(source_dir),
+                            "--artifact-file",
+                            str(artifact_path),
+                        ]
+                    )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-prepare-verify")
+        self.assertEqual(payload["failed_step"], "deploy_prepare")
+        self.assertEqual(payload["failure_class"], "app_deploy_prepare_verify_failed")
+        self.assertEqual(payload["failure_status"], "error")
+        observed_commands = [" ".join(argv) for argv in seen_argv]
+        self.assertTrue(any("lease release --lease-id l-neuro-demo-gpio-act" in command for command in observed_commands))
+        self.assertTrue(any(command.endswith("query leases") for command in observed_commands))
+
+    def test_cli_app_deploy_activate_requires_explicit_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-activate",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-activate")
+        self.assertEqual(payload["status"], "pending_approval")
+        self.assertEqual(payload["failure_class"], "activation_approval_required")
+        self.assertEqual(payload["activation_decision"]["resolved_lease_id"], "l-neuro-unit-app-act")
+        self.assertEqual(payload["activation_decision"]["resolved_app_id"], "neuro_unit_app")
+
+    def test_cli_app_deploy_activate_executes_activate_health_and_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            seen_argv: list[list[str]] = []
+            seen_tools: list[tuple[str, dict[str, Any]]] = []
+
+            class ActivateAdapter:
+                def runner(self, argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                    del timeout_seconds
+                    seen_argv.append(list(argv))
+                    if "preflight_neurolink_linux.sh" in " ".join(argv):
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"status": "ready"}))
+                    if "lease" in argv and "acquire" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}),
+                        )
+                    if "deploy" in argv and "prepare" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}),
+                        )
+                    if "deploy" in argv and "verify" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "size": 21520}}]}),
+                        )
+                    if "deploy" in argv and "activate" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "app_id": "neuro_unit_app"}}]}),
+                        )
+                    if "query" in argv and "apps" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps(
+                                {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "replies": [
+                                        {
+                                            "payload": {
+                                                "status": "ok",
+                                                "apps": [
+                                                    {"app_id": "neuro_unit_app", "state": "RUNNING"}
+                                                ],
+                                            }
+                                        }
+                                    ],
+                                }
+                            ),
+                        )
+                    if "lease" in argv and "release" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "lease_not_found"}}]}),
+                        )
+                    if "query" in argv and "leases" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "leases": []}}]}),
+                        )
+                    raise AssertionError(f"unexpected argv: {argv}")
+
+                def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                    seen_tools.append((tool_name, dict(args)))
+                    self.assert_tool_name(tool_name)
+                    return ToolExecutionResult(
+                        tool_result_id="tool-activate-health-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "activation_health": {
+                                "classification": "healthy",
+                                "reason": "target_app_running_after_activate",
+                                "app_id": "neuro_unit_app",
+                            },
+                            "state_sync": {"status": "ok"},
+                        },
+                    )
+
+                @staticmethod
+                def assert_tool_name(tool_name: str) -> None:
+                    if tool_name != "system_activation_health_guard":
+                        raise AssertionError(f"unexpected tool {tool_name}")
+
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=ActivateAdapter()):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-activate",
+                            "--app-id",
+                            "neuro_unit_app",
+                            "--app-source-dir",
+                            str(source_dir),
+                            "--artifact-file",
+                            str(artifact_path),
+                            "--approval-decision",
+                            "approve",
+                            "--approval-note",
+                            "release gate accepted",
+                            "--start-args",
+                            "mode=demo",
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-activate")
+        self.assertEqual(payload["activation_decision"]["status"], "approved")
+        self.assertEqual(payload["deploy_execution"]["completed_through"], "query_apps")
+        self.assertTrue(payload["deploy_execution"]["cleanup_attempted"])
+        self.assertEqual(len(seen_tools), 1)
+        self.assertEqual(seen_tools[0][0], "system_activation_health_guard")
+        observed_commands = [" ".join(argv) for argv in seen_argv]
+        self.assertTrue(any("deploy activate --app-id neuro_unit_app --lease-id l-neuro-unit-app-act --start-args mode=demo" in command for command in observed_commands))
+        self.assertTrue(any(command.endswith("query apps") for command in observed_commands))
+        self.assertTrue(any(command.endswith("query leases") for command in observed_commands))
+
+    def test_cli_app_deploy_activate_surfaces_rollback_candidate_after_health_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_demo_gpio.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            seen_argv: list[list[str]] = []
+            seen_tools: list[str] = []
+
+            class RollbackRequiredAdapter:
+                def runner(self, argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                    del timeout_seconds
+                    seen_argv.append(list(argv))
+                    if "preflight_neurolink_linux.sh" in " ".join(argv):
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"status": "ready"}))
+                    if "lease" in argv and "acquire" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "prepare" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "verify" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "activate" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "app_id": "neuro_demo_gpio"}}]}))
+                    if "lease" in argv and "release" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "query" in argv and "leases" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "leases": []}}]}))
+                    raise AssertionError(f"unexpected argv: {argv}")
+
+                def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                    seen_tools.append(tool_name)
+                    if tool_name == "system_activation_health_guard":
+                        return ToolExecutionResult(
+                            tool_result_id="tool-activate-health-rb-001",
+                            tool_name=tool_name,
+                            status="ok",
+                            payload={
+                                "activation_health": {
+                                    "classification": "rollback_required",
+                                    "reason": "target_app_missing_after_activate",
+                                    "ready_for_rollback_consideration": True,
+                                    "app_id": "neuro_demo_gpio",
+                                    "observed_app_state": "missing",
+                                },
+                                "state_sync": {"status": "ok"},
+                            },
+                        )
+                    if tool_name == "system_query_leases":
+                        return ToolExecutionResult(
+                            tool_result_id="tool-rollback-lease-observe-001",
+                            tool_name=tool_name,
+                            status="ok",
+                            payload={
+                                "result": {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "replies": [
+                                        {
+                                            "payload": {
+                                                "status": "ok",
+                                                "leases": [
+                                                    {
+                                                        "resource": "update/app/neuro_demo_gpio/rollback",
+                                                        "lease_id": "lease-gpio-rollback-act-001",
+                                                    }
+                                                ],
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        )
+                    raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+                def describe_tool(self, tool_name: str) -> ToolContract | None:
+                    if tool_name == "system_rollback_app":
+                        return ToolContract(
+                            tool_name="system_rollback_app",
+                            description="Rollback staged app after explicit approval.",
+                            side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+                            required_resources=("update_rollback_lease",),
+                            approval_required=True,
+                            cleanup_hint="confirm rollback evidence, lease ownership, and target app identity before resume",
+                        )
+                    return None
+
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=RollbackRequiredAdapter()):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-activate",
+                            "--app-id",
+                            "neuro_demo_gpio",
+                            "--app-source-dir",
+                            str(source_dir),
+                            "--artifact-file",
+                            str(artifact_path),
+                            "--approval-decision",
+                            "approve",
+                        ]
+                    )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-activate")
+        self.assertEqual(payload["failed_step"], "activation_health_guard")
+        self.assertEqual(payload["failure_status"], "rollback_required")
+        self.assertEqual(
+            payload["recovery_candidate_summary"]["rollback_decision"],
+            "operator_review_required",
+        )
+        self.assertEqual(
+            payload["recovery_candidate_summary"]["matching_lease_ids"],
+            ["lease-gpio-rollback-act-001"],
+        )
+        self.assertEqual(payload["rollback_approval"]["status"], "pending_approval")
+        self.assertEqual(
+            payload["rollback_approval"]["requested_args"]["lease_id"],
+            "lease-gpio-rollback-act-001",
+        )
+        self.assertEqual(
+            payload["deploy_execution"]["rollback_candidate_lease_observation"]["tool_name"],
+            "system_query_leases",
+        )
+        self.assertEqual(
+            seen_tools,
+            ["system_activation_health_guard", "system_query_leases"],
+        )
+        observed_commands = [" ".join(argv) for argv in seen_argv]
+        self.assertTrue(any("lease release --lease-id l-neuro-demo-gpio-act" in command for command in observed_commands))
+        self.assertTrue(any(command.endswith("query leases") for command in observed_commands))
+
+    def test_cli_app_deploy_activate_releases_lease_after_activate_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_demo_gpio.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_demo_gpio",
+                app_version="1.1.10",
+                build_id="neuro_demo_gpio-1.1.10-cbor-v1",
+            )
+            seen_argv: list[list[str]] = []
+
+            class FailingActivateAdapter:
+                def runner(self, argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                    del timeout_seconds
+                    seen_argv.append(list(argv))
+                    if "preflight_neurolink_linux.sh" in " ".join(argv):
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"status": "ready"}))
+                    if "lease" in argv and "acquire" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "prepare" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "verify" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "activate" in argv:
+                        return CommandExecutionResult(
+                            exit_code=0,
+                            stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "error", "message": "activate failed"}}]}),
+                        )
+                    if "lease" in argv and "release" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "query" in argv and "leases" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "leases": []}}]}))
+                    raise AssertionError(f"unexpected argv: {argv}")
+
+                def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                    del tool_name, args
+                    raise AssertionError("health guard should not run after activate failure")
+
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=FailingActivateAdapter()):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-activate",
+                            "--app-id",
+                            "neuro_demo_gpio",
+                            "--app-source-dir",
+                            str(source_dir),
+                            "--artifact-file",
+                            str(artifact_path),
+                            "--approval-decision",
+                            "approve",
+                        ]
+                    )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-activate")
+        self.assertEqual(payload["failed_step"], "deploy_activate")
+        self.assertEqual(payload["failure_class"], "app_deploy_activate_failed")
+        self.assertEqual(payload["failure_status"], "error")
+        observed_commands = [" ".join(argv) for argv in seen_argv]
+        self.assertTrue(any("lease release --lease-id l-neuro-demo-gpio-act" in command for command in observed_commands))
+        self.assertTrue(any(command.endswith("query leases") for command in observed_commands))
+
+    def test_cli_app_deploy_rollback_requires_explicit_approval(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "app-deploy-rollback",
+                    "--app-id",
+                    "neuro_demo_gpio",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["status"], "pending_approval")
+        self.assertEqual(payload["failure_class"], "rollback_approval_required")
+        self.assertEqual(payload["rollback_decision"]["resolved_app_id"], "neuro_demo_gpio")
+
+    def test_cli_app_deploy_rollback_reports_denied_approval_state(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "app-deploy-rollback",
+                    "--app-id",
+                    "neuro_demo_gpio",
+                    "--approval-decision",
+                    "deny",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["status"], "denied")
+        self.assertEqual(payload["failure_class"], "rollback_approval_denied")
+        self.assertEqual(payload["failure_status"], "denied")
+        self.assertEqual(payload["rollback_decision"]["decision"], "denied")
+
+    def test_cli_app_deploy_rollback_reports_expired_approval_state(self) -> None:
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "app-deploy-rollback",
+                    "--app-id",
+                    "neuro_demo_gpio",
+                    "--approval-decision",
+                    "expire",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["status"], "expired")
+        self.assertEqual(payload["failure_class"], "rollback_approval_expired")
+        self.assertEqual(payload["failure_status"], "expired")
+        self.assertEqual(payload["rollback_decision"]["decision"], "expired")
+
+    def test_cli_app_deploy_rollback_executes_resume_and_observes_state(self) -> None:
+        seen_tools: list[tuple[str, dict[str, Any]]] = []
+
+        class RollbackAdapter:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                seen_tools.append((tool_name, dict(args)))
+                if tool_name == "system_rollback_app":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "resolved_args": {
+                                "app_id": "neuro_demo_gpio",
+                                "app": "neuro_demo_gpio",
+                                "lease_id": "lease-rb-001",
+                                "reason": "guarded_rollback_after_activation_health_failure",
+                            },
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {"payload": {"status": "ok", "app_id": "neuro_demo_gpio", "action": "rollback"}}
+                                ],
+                            },
+                        },
+                    )
+                if tool_name == "system_query_apps":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-query-apps-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {"payload": {"status": "ok", "apps": []}}
+                                ],
+                            },
+                        },
+                    )
+                if tool_name == "system_query_leases":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-query-leases-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {"payload": {"status": "ok", "leases": []}}
+                                ],
+                            },
+                        },
+                    )
+                raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                del tool_name
+                return None
+
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=RollbackAdapter()):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-rollback",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--approval-decision",
+                        "approve",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["rollback_decision"]["status"], "approved")
+        self.assertEqual(payload["rollback_execution"]["completed_through"], "query_leases")
+        observed_tool_names = [tool_name for tool_name, _args in seen_tools]
+        self.assertEqual(
+            observed_tool_names,
+            ["system_rollback_app", "system_query_apps", "system_query_leases"],
+        )
+        self.assertEqual(
+            payload["rollback_execution"]["rollback"]["result"]["resolved_args"]["lease_id"],
+            "lease-rb-001",
+        )
+
+    def test_cli_app_deploy_rollback_reports_unresolved_rollback_args(self) -> None:
+        class RollbackArgsUnresolvedAdapter:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                if tool_name == "system_rollback_app":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-fail-001",
+                        tool_name=tool_name,
+                        status="error",
+                        payload={
+                            "failure_status": "rollback_args_unresolved",
+                            "failure_class": "dynamic_argument_resolution_failed",
+                            "requested_args": dict(args),
+                        },
+                    )
+                raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                del tool_name
+                return None
+
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=RollbackArgsUnresolvedAdapter()):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-rollback",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--approval-decision",
+                        "approve",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["failed_step"], "rollback")
+        self.assertEqual(payload["failure_class"], "app_deploy_rollback_failed")
+        self.assertEqual(payload["failure_status"], "rollback_args_unresolved")
+        self.assertEqual(
+            payload["rollback_failure_summary"]["failure_category"],
+            "argument_resolution",
+        )
+
+    def test_cli_app_deploy_rollback_reports_missing_rollback_lease(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_query_leases",
+                                    "description": "query leases",
+                                    "argv_template": ["python", "wrapper.py", "query", "leases"],
+                                    "resource": "lease inventory",
+                                    "required_arguments": [],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_query_apps",
+                                    "description": "query apps",
+                                    "argv_template": ["python", "wrapper.py", "query", "apps"],
+                                    "resource": "app inventory",
+                                    "required_arguments": [],
+                                    "side_effect_level": "read_only",
+                                },
+                                {
+                                    "name": "system_rollback_app",
+                                    "description": "rollback app",
+                                    "argv_template": ["python", "wrapper.py", "deploy", "rollback"],
+                                    "resource": "update rollback lease",
+                                    "required_arguments": ["--app-id", "--lease-id"],
+                                    "side_effect_level": "approval_required",
+                                },
+                            ],
+                        }
+                    ),
+                )
+            if "query" in argv and "leases" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "replies": [{"ok": True, "payload": {"status": "ok", "leases": []}}],
+                        }
+                    ),
+                )
+            raise AssertionError(f"rollback command should not run when rollback lease is missing: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-rollback",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--approval-decision",
+                        "approve",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["failure_status"], "lease_not_found")
+        self.assertEqual(payload["failed_step"], "rollback")
+        self.assertEqual(
+            payload["rollback_failure_summary"]["failure_category"],
+            "lease_resolution",
+        )
+        self.assertEqual(
+            payload["rollback_failure_summary"]["recommended_next_actions"],
+            ["query rollback leases and confirm update/app/<app_id>/rollback is held before retry"],
+        )
+
+    def test_cli_app_deploy_rollback_surfaces_lease_holder_mismatch_summary(self) -> None:
+        class RollbackLeaseHolderMismatchAdapter:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                if tool_name == "system_rollback_app":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-holder-mismatch-001",
+                        tool_name=tool_name,
+                        status="error",
+                        payload={
+                            "failure_status": "lease_holder_mismatch",
+                            "failure_class": "rollback_failed",
+                            "resolved_args": {
+                                "app_id": "neuro_demo_gpio",
+                                "app": "neuro_demo_gpio",
+                                "lease_id": str(args.get("lease_id") or "lease-rb-003"),
+                                "reason": str(args.get("reason") or ""),
+                            },
+                        },
+                    )
+                raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                del tool_name
+                return None
+
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=RollbackLeaseHolderMismatchAdapter()):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-rollback",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--approval-decision",
+                        "approve",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["failure_status"], "lease_holder_mismatch")
+        self.assertEqual(payload["failed_step"], "rollback")
+        self.assertEqual(
+            payload["rollback_failure_summary"]["failure_category"],
+            "lease_ownership",
+        )
+        self.assertEqual(
+            payload["rollback_failure_summary"]["resolved_lease_id"],
+            "lease-rb-003",
+        )
+
+    def test_cli_app_deploy_rollback_surfaces_no_reply_summary(self) -> None:
+        class RollbackNoReplyAdapter:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                if tool_name == "system_rollback_app":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-no-reply-001",
+                        tool_name=tool_name,
+                        status="error",
+                        payload={
+                            "failure_status": "no_reply",
+                            "failure_class": "rollback_cli_failed",
+                            "resolved_args": {
+                                "app_id": "neuro_demo_gpio",
+                                "app": "neuro_demo_gpio",
+                                "lease_id": str(args.get("lease_id") or "lease-rb-004"),
+                                "reason": str(args.get("reason") or ""),
+                            },
+                            "stderr": "neuro_cli wrapper failure: no_reply",
+                        },
+                    )
+                raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                del tool_name
+                return None
+
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=RollbackNoReplyAdapter()):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-rollback",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--approval-decision",
+                        "approve",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["failure_status"], "no_reply")
+        self.assertEqual(payload["failed_step"], "rollback")
+        self.assertEqual(
+            payload["rollback_failure_summary"]["failure_category"],
+            "transport",
+        )
+        self.assertEqual(
+            payload["rollback_failure_summary"]["tool_failure_class"],
+            "rollback_cli_failed",
+        )
+
+    def test_cli_app_deploy_rollback_fails_when_app_still_running_after_rollback(self) -> None:
+        class RollbackAppStillRunningAdapter:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                if tool_name == "system_rollback_app":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-running-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok"}}],
+                            },
+                        },
+                    )
+                if tool_name == "system_query_apps":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-query-apps-running-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {
+                                        "payload": {
+                                            "status": "ok",
+                                            "apps": [
+                                                {
+                                                    "app_id": "neuro_demo_gpio",
+                                                    "state": "RUNNING_ACTIVE",
+                                                }
+                                            ],
+                                        }
+                                    }
+                                ],
+                            },
+                        },
+                    )
+                if tool_name == "system_query_leases":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-query-leases-running-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok", "leases": []}}],
+                            },
+                        },
+                    )
+                raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                del tool_name
+                return None
+
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=RollbackAppStillRunningAdapter()):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-rollback",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--approval-decision",
+                        "approve",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["failed_step"], "query_apps")
+        self.assertEqual(payload["failure_status"], "app_still_running_after_rollback")
+        self.assertEqual(
+            payload["rollback_execution"]["query_apps"]["observed_app_state"],
+            "RUNNING_ACTIVE",
+        )
+
+    def test_cli_app_deploy_rollback_fails_when_rollback_lease_still_held(self) -> None:
+        class RollbackLeaseStillHeldAdapter:
+            def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                if tool_name == "system_rollback_app":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-rollback-lease-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok"}}],
+                            },
+                        },
+                    )
+                if tool_name == "system_query_apps":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-query-apps-lease-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [{"payload": {"status": "ok", "apps": []}}],
+                            },
+                        },
+                    )
+                if tool_name == "system_query_leases":
+                    return ToolExecutionResult(
+                        tool_result_id="tool-query-leases-lease-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "result": {
+                                "ok": True,
+                                "status": "ok",
+                                "replies": [
+                                    {
+                                        "payload": {
+                                            "status": "ok",
+                                            "leases": [
+                                                {
+                                                    "lease_id": "lease-rb-002",
+                                                    "resource": "update/app/neuro_demo_gpio/rollback",
+                                                }
+                                            ],
+                                        }
+                                    }
+                                ],
+                            },
+                        },
+                    )
+                raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+            def describe_tool(self, tool_name: str) -> ToolContract | None:
+                del tool_name
+                return None
+
+        out = io.StringIO()
+        with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=RollbackLeaseStillHeldAdapter()):
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "app-deploy-rollback",
+                        "--app-id",
+                        "neuro_demo_gpio",
+                        "--approval-decision",
+                        "approve",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "app-deploy-rollback")
+        self.assertEqual(payload["failed_step"], "query_leases")
+        self.assertEqual(payload["failure_status"], "rollback_lease_still_held_after_rollback")
+        self.assertEqual(
+            payload["rollback_execution"]["query_leases"]["matching_lease_ids"],
+            ["lease-rb-002"],
+        )
+
+    def test_cli_app_deploy_activate_persists_release_gate_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.2",
+                build_id="neuro_unit_app-1.2.2-cbor-v2",
+            )
+
+            class PersistentActivateAdapter:
+                def runner(self, argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+                    del timeout_seconds
+                    if "preflight_neurolink_linux.sh" in " ".join(argv):
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"status": "ready"}))
+                    if "lease" in argv and "acquire" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "prepare" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "verify" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "deploy" in argv and "activate" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "app_id": "neuro_unit_app"}}]}))
+                    if "query" in argv and "apps" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "apps": [{"app_id": "neuro_unit_app", "state": "RUNNING"}]}}]}))
+                    if "lease" in argv and "release" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok"}}]}))
+                    if "query" in argv and "leases" in argv:
+                        return CommandExecutionResult(exit_code=0, stdout=json.dumps({"ok": True, "status": "ok", "replies": [{"payload": {"status": "ok", "leases": []}}]}))
+                    raise AssertionError(f"unexpected argv: {argv}")
+
+                def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                    del args
+                    if tool_name != "system_activation_health_guard":
+                        raise AssertionError(f"unexpected tool {tool_name}")
+                    return ToolExecutionResult(
+                        tool_result_id="tool-activate-health-persist-001",
+                        tool_name=tool_name,
+                        status="ok",
+                        payload={
+                            "activation_health": {
+                                "classification": "healthy",
+                                "reason": "target_app_running_after_activate",
+                                "app_id": "neuro_unit_app",
+                                "observed_app_state": "RUNNING",
+                            },
+                        },
+                    )
+
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=PersistentActivateAdapter()):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-activate",
+                            "--app-id",
+                            "neuro_unit_app",
+                            "--app-source-dir",
+                            str(source_dir),
+                            "--artifact-file",
+                            str(artifact_path),
+                            "--approval-decision",
+                            "approve",
+                            "--db",
+                            db_path,
+                        ]
+                    )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            evidence = payload["release_gate_evidence"]
+            data_store = CoreDataStore(db_path)
+            try:
+                execution_span = data_store.get_execution_span(evidence["execution_span_id"])
+                audit_record = data_store.get_audit_record(evidence["audit_id"])
+                activation_decisions = data_store.get_facts(
+                    evidence["execution_span_id"],
+                    fact_type="activation_decision",
+                )
+                activation_health = data_store.get_facts(
+                    evidence["execution_span_id"],
+                    fact_type="activation_health_observation",
+                )
+            finally:
+                data_store.close()
+
+        self.assertIsNotNone(execution_span)
+        self.assertIsNotNone(audit_record)
+        self.assertEqual(execution_span["payload"]["command"], "app-deploy-activate")
+        self.assertEqual(audit_record["payload"]["command"], "app-deploy-activate")
+        self.assertEqual(len(activation_decisions), 1)
+        self.assertEqual(activation_decisions[0]["payload"]["status"], "approved")
+        self.assertEqual(len(activation_health), 1)
+        self.assertEqual(activation_health[0]["payload"]["classification"], "healthy")
+
+    def test_cli_app_deploy_rollback_persists_release_gate_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+
+            class PersistentRollbackAdapter:
+                def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                    if tool_name == "system_rollback_app":
+                        return ToolExecutionResult(
+                            tool_result_id="tool-rollback-persist-001",
+                            tool_name=tool_name,
+                            status="ok",
+                            payload={
+                                "resolved_args": {
+                                    "app_id": "neuro_demo_gpio",
+                                    "app": "neuro_demo_gpio",
+                                    "lease_id": str(args.get("lease_id") or "lease-rb-001"),
+                                    "reason": str(args.get("reason") or ""),
+                                },
+                                "result": {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "replies": [{"payload": {"status": "ok", "app_id": "neuro_demo_gpio"}}],
+                                },
+                            },
+                        )
+                    if tool_name == "system_query_apps":
+                        return ToolExecutionResult(
+                            tool_result_id="tool-query-apps-persist-001",
+                            tool_name=tool_name,
+                            status="ok",
+                            payload={
+                                "result": {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "replies": [{"payload": {"status": "ok", "apps": []}}],
+                                },
+                            },
+                        )
+                    if tool_name == "system_query_leases":
+                        return ToolExecutionResult(
+                            tool_result_id="tool-query-leases-persist-001",
+                            tool_name=tool_name,
+                            status="ok",
+                            payload={
+                                "result": {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "replies": [{"payload": {"status": "ok", "leases": []}}],
+                                },
+                            },
+                        )
+                    raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+                def describe_tool(self, tool_name: str) -> ToolContract | None:
+                    del tool_name
+                    return None
+
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=PersistentRollbackAdapter()):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-rollback",
+                            "--app-id",
+                            "neuro_demo_gpio",
+                            "--approval-decision",
+                            "approve",
+                            "--db",
+                            db_path,
+                        ]
+                    )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            evidence = payload["release_gate_evidence"]
+            data_store = CoreDataStore(db_path)
+            try:
+                audit_record = data_store.get_audit_record(evidence["audit_id"])
+                rollback_decisions = data_store.get_facts(
+                    evidence["execution_span_id"],
+                    fact_type="rollback_decision",
+                )
+                rollback_results = data_store.get_facts(
+                    evidence["execution_span_id"],
+                    fact_type="rollback_result",
+                )
+            finally:
+                data_store.close()
+
+        self.assertIsNotNone(audit_record)
+        self.assertEqual(audit_record["payload"]["command"], "app-deploy-rollback")
+        self.assertEqual(len(rollback_decisions), 1)
+        self.assertEqual(rollback_decisions[0]["payload"]["status"], "approved")
+        self.assertEqual(len(rollback_results), 1)
+        self.assertEqual(
+            rollback_results[0]["payload"]["resolved_args"]["app_id"],
+            "neuro_demo_gpio",
+        )
+
+    def test_cli_app_deploy_rollback_persists_failure_summary_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+
+            class PersistentRollbackFailureAdapter:
+                def execute(self, tool_name: str, args: dict[str, Any]) -> ToolExecutionResult:
+                    if tool_name == "system_rollback_app":
+                        return ToolExecutionResult(
+                            tool_result_id="tool-rollback-persist-failure-001",
+                            tool_name=tool_name,
+                            status="error",
+                            payload={
+                                "failure_status": "no_reply",
+                                "failure_class": "rollback_cli_failed",
+                                "resolved_args": {
+                                    "app_id": "neuro_demo_gpio",
+                                    "app": "neuro_demo_gpio",
+                                    "lease_id": str(args.get("lease_id") or "lease-rb-005"),
+                                    "reason": str(args.get("reason") or ""),
+                                },
+                            },
+                        )
+                    raise AssertionError(f"unexpected tool {tool_name} with args {args}")
+
+                def describe_tool(self, tool_name: str) -> ToolContract | None:
+                    del tool_name
+                    return None
+
+            out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=PersistentRollbackFailureAdapter()):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "app-deploy-rollback",
+                            "--app-id",
+                            "neuro_demo_gpio",
+                            "--approval-decision",
+                            "approve",
+                            "--db",
+                            db_path,
+                        ]
+                    )
+
+            self.assertEqual(code, 2)
+            payload = json.loads(out.getvalue())
+            evidence = payload["release_gate_evidence"]
+            data_store = CoreDataStore(db_path)
+            try:
+                failure_summaries = data_store.get_facts(
+                    evidence["execution_span_id"],
+                    fact_type="rollback_failure_summary",
+                )
+            finally:
+                data_store.close()
+
+        self.assertEqual(len(failure_summaries), 1)
+        self.assertEqual(failure_summaries[0]["payload"]["failure_status"], "no_reply")
+        self.assertEqual(failure_summaries[0]["payload"]["failure_category"], "transport")
 
     def test_cli_live_event_smoke_maps_raw_state_event_to_operational_wake_topic(self) -> None:
         def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:

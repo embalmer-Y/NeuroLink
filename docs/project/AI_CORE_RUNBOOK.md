@@ -1,9 +1,10 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` for the
-release-1.2.2 real LLM Core line. It is written for operators and developers who
-need to run Core locally, check provider and memory readiness, or execute the
-release gates.
+active release-1.2.4 Core orchestrator and live-event-service line. It is
+written for operators and developers who need to run Core locally, check
+provider and memory readiness, execute the Core-owned build/deploy gates, or
+close the bounded live service and hardware release evidence.
 
 ## 1. Runtime Shape
 
@@ -230,9 +231,9 @@ Expected evidence:
 8. `real_tool_adapter_present=true`
 9. `real_tool_execution_succeeded=true`
 
-## 5. Release-1.2.3 Event And Approval Commands
+## 5. Release-1.2.4 Orchestrator And Live Service Commands
 
-### 5.1 Deterministic Event Replay
+### 5.1 Event Replay And Live-Ingest Baselines
 
 Replay one ordered event fixture through the standard workflow path:
 
@@ -294,7 +295,98 @@ bash applocation/NeuroLink/scripts/run_unit_live_event_probe.sh \
 
 Swap `--mode state-online` for `callback` or `update-activate` as needed.
 
-### 5.2 Activation Health Guard
+### 5.2 Core App Build And Deploy Orchestrator
+
+Generate the canonical build plan for the default Unit app target:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-build-plan \
+  --app-id neuro_unit_app
+```
+
+Admit the produced artifact before any deploy action:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-artifact-admission \
+  --app-id neuro_unit_app
+```
+
+Inspect the protected prepare/verify/activate sequence without executing it:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-deploy-plan \
+  --app-id neuro_unit_app \
+  --node unit-01
+```
+
+Execute the bounded hardware-safe prepare/verify slice through the real Neuro
+CLI adapter boundary:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-deploy-prepare-verify \
+  --app-id neuro_unit_app \
+  --node unit-01 \
+  --db /tmp/neurolink-release-124.db
+```
+
+Use the activation gate only when the operator explicitly intends to cross the
+approval boundary:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli app-deploy-activate \
+  --app-id neuro_unit_app \
+  --node unit-01 \
+  --approval-decision pending \
+  --db /tmp/neurolink-release-124.db
+```
+
+Resume with `--approval-decision approve` only after reviewing the pending
+approval payload, final artifact path, and release-gate evidence. If activation
+health reports `rollback_required`, review the emitted rollback candidate and
+use `app-deploy-rollback` with explicit `pending`, `approve`, `deny`, or
+`expire` outcomes rather than issuing an ad hoc rollback command.
+
+For the real hardware gate, the minimum successful closure path is one complete
+Core-owned `app-build-plan -> app-artifact-admission -> app-deploy-prepare-verify`
+sequence with final clean leases.
+
+### 5.3 Event Service Supervision And Restart Continuity
+
+Run the new bounded event service against an app subscription:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-service \
+  --db /tmp/neurolink-event-service.db \
+  --app-id neuro_unit_app \
+  --duration 5 \
+  --max-events 1 \
+  --cycles 2
+```
+
+Run the same supervised service against the generic Unit event stream:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli event-service \
+  --event-source unit \
+  --db /tmp/neurolink-event-service.db \
+  --duration 45 \
+  --max-events 4 \
+  --cycles 2 \
+  --ready-file /tmp/neurolink-unit-ready.flag
+```
+
+Inspect `event_service.lifecycle`, `event_service.cycle_summaries`,
+`event_service.checkpoint`, `event_service.seeded_dedupe_key_count`, and
+`event_service.duplicate_event_count` in the JSON output. A healthy bounded
+service run now records `start`, `ready`, `events_persisted`, optional
+`heartbeat`, optional `restart`, optional `stale_endpoint`, and
+`clean_shutdown`.
+
+Use the same `--db` and `--session-id` when validating restart continuity. The
+service seeds dedupe state from persisted events, so duplicate callbacks or Unit
+events should not retrigger new persisted event rows after restart.
+
+### 5.4 Activation Health Guard
 
 Inspect post-activation health for a target app through the read-only state-sync
 surface:
@@ -318,7 +410,7 @@ For generic Unit-mode runs, also inspect the persisted topics in the final
 response to confirm raw framework payloads were promoted into operational
 topics such as `unit.state.online` or `unit.lifecycle.activate_failed`.
 
-### 5.3 Session And Approval Inspection
+### 5.5 Session And Approval Inspection
 
 Inspect a Core session:
 
@@ -377,16 +469,33 @@ visible in Linux. Run the WSL attach helper and check `/dev/ttyACM*` or
 router endpoint drift. Use `serial zenoh show` and `serial zenoh set` to align
 the Unit endpoint with the current host IP.
 
-## 7. Release-1.2.2 Closure Checklist
+`artifact_header_invalid`, `artifact_identity_missing`, or other
+artifact-admission failures usually mean the build output is stale or malformed.
+Rebuild through `scripts/build_neurolink.sh --pristine-always` before retrying
+the Core admission or deploy path.
+
+`lease_holder_mismatch` on activation or rollback means the lease exists but is
+owned by a different `source_agent`. Inspect `query leases` and release the
+lease with the matching holder before retrying the Core gate.
+
+For `event-service`, treat these states distinctly:
+
+1. `no_events_collected`: the bounded listener never saw raw events; check your
+  trigger path and ready-file coordination.
+2. `no_reply`: the monitor path itself is unreachable; run preflight before
+  blaming the Core service.
+3. `stale_endpoint`: the service observed `unit.network.endpoint_drift`; fix
+  the Unit endpoint before expecting stable live service behavior.
+
+## 7. Release-1.2.4 Closure Checklist
 
 Before promoting release identity, verify:
 
-1. `maf-provider-smoke --allow-model-call --execute-model-call` succeeds.
-2. `no-model-dry-run --memory-backend mem0` succeeds with `fallback_active=false`.
-3. hardware preflight returns `status=ready`.
-4. real Neuro CLI adapter gate returns `real_tool_execution_succeeded=true`.
-5. combined real runtime gate returns `agent_run_evidence.ok=true`.
-6. `neurolink_core/tests` pass.
-7. `neuro_cli/tests/test_neuro_cli.py` passes.
-8. release notes record provider model, Mem0 config shape, hardware endpoint,
-   and remaining next-release follow-ups.
+1. `app-build-plan` and `app-artifact-admission` succeed for the target app.
+2. one real hardware `app-deploy-prepare-verify` run completes with clean final leases.
+3. activation and rollback gates remain approval-bounded and evidence-backed.
+4. `event-service` records checkpoint, restart-safe dedupe evidence, and bounded shutdown facts.
+5. hardware preflight returns `status=ready`, or a bounded simulated recovery is explicitly documented when unsafe to induce live rollback.
+6. `neurolink_core/tests` pass for the touched release slices.
+7. `neuro_cli/tests/test_neuro_cli.py` and touched script checks pass.
+8. English and Chinese runbooks plus the release plan/README all reflect release-1.2.4 as the active orchestrator/live-service track.

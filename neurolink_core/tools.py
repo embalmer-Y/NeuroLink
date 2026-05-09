@@ -1179,7 +1179,10 @@ class NeuroCliToolAdapter:
             },
         )
 
-    def _resolve_rollback_args(self, args: dict[str, Any]) -> dict[str, Any] | None:
+    def _resolve_rollback_args(
+        self,
+        args: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, str]:
         resolved_args = dict(args)
         app_id = str(args.get("app_id") or args.get("app") or "")
         if not app_id:
@@ -1200,7 +1203,7 @@ class NeuroCliToolAdapter:
                             or ""
                         )
         if not app_id:
-            return None
+            return None, "rollback_args_unresolved"
 
         lease_id = str(args.get("lease_id") or "")
         if not lease_id:
@@ -1220,27 +1223,31 @@ class NeuroCliToolAdapter:
                         if lease_id:
                             break
         if not lease_id:
-            return None
+            return None, "lease_not_found"
 
         resolved_args.setdefault("app_id", app_id)
         resolved_args.setdefault("app", app_id)
         resolved_args.setdefault("lease_id", lease_id)
-        return resolved_args
+        return resolved_args, ""
 
     def _execute_rollback_app(
         self,
         contract: ToolContract,
         args: dict[str, Any],
     ) -> ToolExecutionResult:
-        resolved_args = self._resolve_rollback_args(args)
+        resolved_args, resolution_failure = self._resolve_rollback_args(args)
         if resolved_args is None:
             return ToolExecutionResult(
                 tool_result_id=new_id("tool"),
                 tool_name=contract.tool_name,
                 status="error",
                 payload={
-                    "failure_status": "rollback_args_unresolved",
-                    "failure_class": "dynamic_argument_resolution_failed",
+                    "failure_status": resolution_failure,
+                    "failure_class": (
+                        "rollback_lease_resolution_failed"
+                        if resolution_failure == "lease_not_found"
+                        else "dynamic_argument_resolution_failed"
+                    ),
                     "contract": contract.to_dict(),
                     "requested_args": dict(args),
                 },
