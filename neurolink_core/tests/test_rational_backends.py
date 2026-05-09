@@ -41,6 +41,17 @@ class TestRationalBackends(unittest.TestCase):
                 {"tool_name": "system_query_device", "args": {}, "reason": ""}
             )
 
+    def test_validate_rational_plan_rejects_tool_outside_available_tools(self) -> None:
+        with self.assertRaisesRegex(ValueError, "rational_plan_tool_not_in_available_tools"):
+            validate_rational_plan_payload(
+                {
+                    "tool_name": "system_query_apps",
+                    "args": {"source": "provider"},
+                    "reason": "tool_not_exposed_to_planner",
+                },
+                available_tools=[{"name": "system_query_device"}],
+            )
+
     def test_deterministic_backend_preserves_existing_fake_planning(self) -> None:
         backend = DeterministicRationalBackend(FakeRationalAgent())
         decision = AffectiveDecision(
@@ -162,6 +173,81 @@ class TestRationalBackends(unittest.TestCase):
                 ),
             )
 
+    def test_provider_backend_rejects_tool_outside_available_tools(self) -> None:
+        class InvalidProviderClient:
+            def plan(
+                self,
+                decision: AffectiveDecision,
+                frame: PerceptionFrame,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any]:
+                del decision, frame, profile, available_tools, session_context
+                return {
+                    "tool_name": "system_unknown_write",
+                    "args": {"source": "provider"},
+                    "reason": "hallucinated_tool",
+                }
+
+        backend = ProviderRationalBackend(
+            provider_client=InvalidProviderClient(),
+            profile={"provider_mode": "real_provider"},
+            provider_client_kind="invalid_provider",
+        )
+
+        with self.assertRaisesRegex(ValueError, "rational_plan_tool_not_in_available_tools"):
+            backend.plan(
+                AffectiveDecision(
+                    delegated=True,
+                    reason="needs_rational_plan",
+                    salience=80,
+                ),
+                PerceptionFrame(
+                    frame_id="frame-invalid-tool",
+                    event_ids=("evt-invalid-tool",),
+                    highest_priority=80,
+                    topics=("user.input.query.apps",),
+                ),
+                available_tools=[{"name": "system_query_apps"}],
+            )
+
+    def test_provider_backend_accepts_null_plan(self) -> None:
+        class NullProviderClient:
+            def plan(
+                self,
+                decision: AffectiveDecision,
+                frame: PerceptionFrame,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> None:
+                del decision, frame, profile, available_tools, session_context
+                return None
+
+        backend = ProviderRationalBackend(
+            provider_client=NullProviderClient(),
+            profile={"provider_mode": "real_provider"},
+            provider_client_kind="null_provider",
+        )
+
+        plan = backend.plan(
+            AffectiveDecision(
+                delegated=True,
+                reason="needs_rational_plan",
+                salience=80,
+            ),
+            PerceptionFrame(
+                frame_id="frame-null-provider",
+                event_ids=("evt-null-provider",),
+                highest_priority=80,
+                topics=("user.input.query.apps",),
+            ),
+            available_tools=[{"name": "system_query_apps"}],
+        )
+
+        self.assertIsNone(plan)
+
     def test_copilot_backend_requires_explicit_model_call_gate(self) -> None:
         backend = CopilotSdkRationalBackend(allow_model_call=False)
 
@@ -278,6 +364,83 @@ class TestRationalBackends(unittest.TestCase):
                     topics=("user.input.query.device",),
                 ),
             )
+
+    def test_copilot_backend_rejects_tool_outside_available_tools(self) -> None:
+        class InvalidCopilotAgent:
+            def __init__(self, default_options: dict[str, Any]) -> None:
+                del default_options
+
+            async def __aenter__(self) -> "InvalidCopilotAgent":
+                return self
+
+            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+                del exc_type, exc, tb
+
+            async def run(self, prompt: str) -> str:
+                del prompt
+                return (
+                    '{"tool_name":"system_unknown_write",'
+                    '"args":{"source":"copilot"},'
+                    '"reason":"hallucinated_tool"}'
+                )
+
+        backend = CopilotSdkRationalBackend(
+            allow_model_call=True,
+            agent_factory=lambda default_options: InvalidCopilotAgent(default_options),
+        )
+
+        with self.assertRaisesRegex(ValueError, "rational_plan_tool_not_in_available_tools"):
+            backend.plan(
+                AffectiveDecision(
+                    delegated=True,
+                    reason="needs_rational_plan",
+                    salience=80,
+                ),
+                PerceptionFrame(
+                    frame_id="frame-copilot-invalid-tool",
+                    event_ids=("evt-copilot-invalid-tool",),
+                    highest_priority=80,
+                    topics=("user.input.query.device",),
+                ),
+                available_tools=[{"name": "system_query_device"}],
+            )
+
+    def test_copilot_backend_accepts_null_plan(self) -> None:
+        class NullCopilotAgent:
+            def __init__(self, default_options: dict[str, Any]) -> None:
+                del default_options
+
+            async def __aenter__(self) -> "NullCopilotAgent":
+                return self
+
+            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+                del exc_type, exc, tb
+
+            async def run(self, prompt: str) -> str:
+                del prompt
+                return "null"
+
+        backend = CopilotSdkRationalBackend(
+            allow_model_call=True,
+            agent_factory=lambda default_options: NullCopilotAgent(default_options),
+        )
+
+        plan = backend.plan(
+            AffectiveDecision(
+                delegated=True,
+                reason="needs_rational_plan",
+                salience=80,
+            ),
+            PerceptionFrame(
+                frame_id="frame-copilot-null",
+                event_ids=("evt-copilot-null",),
+                highest_priority=80,
+                topics=("user.input.query.device",),
+            ),
+            available_tools=[{"name": "system_query_device"}],
+        )
+
+        self.assertIsNone(plan)
 
 
 if __name__ == "__main__":

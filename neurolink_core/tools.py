@@ -13,6 +13,8 @@ from .policy import SideEffectLevel
 
 
 TOOL_MANIFEST_SCHEMA_VERSION = "1.2.0-tool-manifest-v1"
+SKILL_DESCRIPTOR_SCHEMA_VERSION = "1.2.5-skill-descriptor-v1"
+MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION = "1.2.5-mcp-bridge-descriptor-v1"
 STATE_SYNC_SCHEMA_VERSION = "1.2.0-state-sync-v1"
 ACTIVATION_HEALTH_SCHEMA_VERSION = "1.2.3-activation-health-v1"
 APP_CONTROL_TOOL_ACTIONS = {
@@ -20,6 +22,232 @@ APP_CONTROL_TOOL_ACTIONS = {
     "system_stop_app": "stop",
     "system_unload_app": "unload",
 }
+
+
+@dataclass(frozen=True)
+class McpBridgeDescriptor:
+    bridge_name: str
+    bridge_mode: str
+    server_id: str
+    server_label: str
+    transport: str
+    read_only_tools: tuple[dict[str, Any], ...]
+    blocked_tools: tuple[dict[str, Any], ...]
+    allowed_operations: tuple[str, ...]
+    safety_boundaries: dict[str, Any]
+    schema_version: str = MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "status": "ok",
+            "schema_version": self.schema_version,
+            "bridge_name": self.bridge_name,
+            "bridge_mode": self.bridge_mode,
+            "server_id": self.server_id,
+            "server_label": self.server_label,
+            "transport": self.transport,
+            "read_only_tools": [dict(item) for item in self.read_only_tools],
+            "blocked_tools": [dict(item) for item in self.blocked_tools],
+            "allowed_operations": list(self.allowed_operations),
+            "safety_boundaries": dict(self.safety_boundaries),
+        }
+
+
+@dataclass(frozen=True)
+class SkillDescriptor:
+    name: str
+    description: str
+    argument_hint: str
+    skill_path: str
+    workflow_plan_required: bool
+    json_output_required: bool
+    release_target_promotion_blocked: bool
+    callback_audit_required: bool
+    ground_rules: tuple[str, ...]
+    first_check_commands: tuple[str, ...]
+    references: tuple[dict[str, str], ...]
+    schema_version: str = SKILL_DESCRIPTOR_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "status": "ok",
+            "schema_version": self.schema_version,
+            "name": self.name,
+            "description": self.description,
+            "argument_hint": self.argument_hint,
+            "skill_path": self.skill_path,
+            "workflow_plan_required": self.workflow_plan_required,
+            "json_output_required": self.json_output_required,
+            "release_target_promotion_blocked": self.release_target_promotion_blocked,
+            "callback_audit_required": self.callback_audit_required,
+            "ground_rules": list(self.ground_rules),
+            "first_check_commands": list(self.first_check_commands),
+            "references": [dict(item) for item in self.references],
+        }
+
+
+def _default_skill_contract_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "neuro_cli" / "skill" / "SKILL.md"
+
+
+def _split_markdown_frontmatter(content: str) -> tuple[dict[str, str], str]:
+    if not content.startswith("---\n"):
+        return {}, content
+    closing_index = content.find("\n---\n", 4)
+    if closing_index == -1:
+        return {}, content
+    frontmatter_block = content[4:closing_index]
+    body = content[closing_index + 5 :]
+    payload: dict[str, str] = {}
+    for line in frontmatter_block.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        payload[key.strip()] = value.strip().strip('"')
+    return payload, body
+
+
+def _markdown_section(body: str, heading: str) -> str:
+    pattern = re.compile(
+        rf"^##\s+{re.escape(heading)}\s*$\n(?P<section>.*?)(?=^##\s+|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    match = pattern.search(body)
+    if match is None:
+        return ""
+    return match.group("section").strip()
+
+
+def _extract_numbered_items(section: str) -> tuple[str, ...]:
+    items: list[str] = []
+    for line in section.splitlines():
+        match = re.match(r"^\d+\.\s+(.*)$", line.strip())
+        if match:
+            items.append(match.group(1).strip())
+    return tuple(items)
+
+
+def _extract_fenced_commands(section: str) -> tuple[str, ...]:
+    commands = [
+        match.group(1).strip()
+        for match in re.finditer(r"```(?:bash)?\n(.*?)```", section, re.DOTALL)
+    ]
+    return tuple(command for command in commands if command)
+
+
+def _extract_references(section: str) -> tuple[dict[str, str], ...]:
+    references: list[dict[str, str]] = []
+    for line in section.splitlines():
+        match = re.match(r"^-\s+\[(?P<title>[^\]]+)\]\((?P<path>[^)]+)\)\s*$", line.strip())
+        if match is None:
+            continue
+        references.append(
+            {
+                "title": match.group("title"),
+                "path": match.group("path"),
+            }
+        )
+    return tuple(references)
+
+
+def load_neuro_cli_skill_descriptor(
+    skill_path: str | Path | None = None,
+) -> SkillDescriptor:
+    resolved_path = Path(skill_path) if skill_path else _default_skill_contract_path()
+    content = resolved_path.read_text(encoding="utf-8")
+    frontmatter, body = _split_markdown_frontmatter(content)
+    ground_rules_section = _markdown_section(body, "Ground Rules")
+    first_checks_section = _markdown_section(body, "First Checks")
+    references_section = _markdown_section(body, "References")
+    ground_rules = _extract_numbered_items(ground_rules_section)
+    first_check_commands = _extract_fenced_commands(first_checks_section)
+    workflow_plan_required = any(
+        "workflow plan" in item.lower() for item in ground_rules + first_check_commands
+    )
+    json_output_required = any(
+        "json" in item.lower() and "output" in item.lower() for item in ground_rules
+    )
+    release_target_promotion_blocked = any(
+        "release_target" in item.lower() and "do not promote" in item.lower()
+        for item in ground_rules
+    )
+    callback_audit_required = any(
+        "callback" in item.lower() and "audit" in item.lower() for item in ground_rules
+    )
+    return SkillDescriptor(
+        name=str(frontmatter.get("name") or "unknown-skill"),
+        description=str(frontmatter.get("description") or ""),
+        argument_hint=str(frontmatter.get("argument-hint") or ""),
+        skill_path=str(resolved_path),
+        workflow_plan_required=workflow_plan_required,
+        json_output_required=json_output_required,
+        release_target_promotion_blocked=release_target_promotion_blocked,
+        callback_audit_required=callback_audit_required,
+        ground_rules=ground_rules,
+        first_check_commands=first_check_commands,
+        references=_extract_references(references_section),
+    )
+
+
+def load_neuro_cli_skill_descriptor_payload(
+    skill_path: str | Path | None = None,
+) -> dict[str, Any]:
+    return load_neuro_cli_skill_descriptor(skill_path).to_dict()
+
+
+def _summarize_mcp_tool(contract: "ToolContract") -> dict[str, Any]:
+    return {
+        "name": contract.tool_name,
+        "description": contract.description,
+        "side_effect_level": contract.side_effect_level.value,
+        "required_arguments": list(contract.required_arguments),
+        "required_resources": list(contract.required_resources),
+        "approval_required": contract.approval_required,
+        "retryable": contract.retryable,
+    }
+
+
+def load_mcp_bridge_descriptor(
+    tool_adapter: Any | None = None,
+) -> McpBridgeDescriptor:
+    adapter = tool_adapter or FakeUnitToolAdapter()
+    tool_manifest = getattr(adapter, "tool_manifest", None)
+    manifest = cast(tuple[ToolContract, ...], tool_manifest()) if callable(tool_manifest) else ()
+    read_only_tools = tuple(
+        _summarize_mcp_tool(contract)
+        for contract in manifest
+        if contract.side_effect_level == SideEffectLevel.READ_ONLY
+    )
+    blocked_tools = tuple(
+        _summarize_mcp_tool(contract)
+        for contract in manifest
+        if contract.side_effect_level != SideEffectLevel.READ_ONLY or contract.approval_required
+    )
+    return McpBridgeDescriptor(
+        bridge_name="neurolink-core-mcp-readonly-bridge",
+        bridge_mode="read_only_descriptor_only",
+        server_id="neurolink.core.readonly",
+        server_label="NeuroLink Core Read-Only MCP Bridge",
+        transport="in_process_descriptor_only",
+        read_only_tools=read_only_tools,
+        blocked_tools=blocked_tools,
+        allowed_operations=("describe_server", "list_read_only_tools"),
+        safety_boundaries={
+            "descriptor_only": True,
+            "tool_execution_via_mcp_forbidden": True,
+            "side_effecting_tools_excluded": True,
+            "approval_and_core_policy_required": True,
+            "external_mcp_connection_enabled": False,
+        },
+    )
+
+
+def load_mcp_bridge_descriptor_payload(
+    tool_adapter: Any | None = None,
+) -> dict[str, Any]:
+    return load_mcp_bridge_descriptor(tool_adapter).to_dict()
 
 
 @dataclass(frozen=True)

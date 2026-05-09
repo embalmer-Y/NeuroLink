@@ -20,6 +20,13 @@ from neurolink_core.maf import (
     build_maf_runtime_profile,
     maf_provider_smoke_status,
 )
+from neurolink_core.inference import (
+    INFERENCE_ROUTE_SCHEMA_VERSION,
+    MULTIMODAL_INPUT_SCHEMA_VERSION,
+    build_inference_route,
+    multimodal_profile_smoke,
+    normalize_multimodal_input,
+)
 from neurolink_core.cli import main as core_cli_main
 from neurolink_core.workflow import run_no_model_dry_run
 
@@ -112,7 +119,13 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         rational = MafRationalAgentAdapter()
 
         decision = affective.decide(frame, [])
-        plan = rational.plan(decision, frame)
+        plan = rational.plan(
+            decision,
+            frame,
+            available_tools=[
+                {"name": "system_query_device", "side_effect_level": "read_only"}
+            ],
+        )
 
         self.assertTrue(decision.delegated)
         self.assertIsNotNone(plan)
@@ -174,7 +187,9 @@ class TestMafRuntimeBoundary(unittest.TestCase):
                 frame: PerceptionFrame,
                 memory_items: list[dict[str, Any]],
                 profile: Any,
+                affective_context: dict[str, Any] | None = None,
             ) -> dict[str, Any]:
+                del affective_context
                 self.last_decide = (frame, memory_items, profile)
                 return {
                     "delegated": True,
@@ -223,7 +238,13 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         rational = build_rational_agent_adapter(profile, provider_client=client)
 
         decision = affective.decide(frame, [{"memory_id": "mem-1"}])
-        plan = rational.plan(decision, frame)
+        plan = rational.plan(
+            decision,
+            frame,
+            available_tools=[
+                {"name": "system_query_device", "side_effect_level": "read_only"}
+            ],
+        )
 
         self.assertIsInstance(affective, RealMafAffectiveAgentAdapter)
         self.assertIsInstance(rational, RealMafRationalAgentAdapter)
@@ -253,8 +274,9 @@ class TestMafRuntimeBoundary(unittest.TestCase):
                 frame: PerceptionFrame,
                 memory_items: list[dict[str, Any]],
                 profile: Any,
+                affective_context: dict[str, Any] | None = None,
             ) -> dict[str, Any]:
-                del frame, memory_items, profile
+                del frame, memory_items, profile, affective_context
                 return {
                     "delegated": True,
                     "reason": "real_provider_affective_decision",
@@ -311,6 +333,79 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertIsNone(plan)
         self.assertEqual(client.last_plan["available_tools"][0]["name"], "system_query_device")
         self.assertEqual(client.last_plan["session_context"]["session_id"], "session-test-001")
+
+    def test_real_provider_affective_adapter_passes_prompt_safe_runtime_context(self) -> None:
+        class FakeProviderClient:
+            last_decide: dict[str, Any]
+
+            def decide(
+                self,
+                frame: PerceptionFrame,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+                affective_context: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
+                self.last_decide = {
+                    "frame": frame,
+                    "memory_items": memory_items,
+                    "profile": profile,
+                    "affective_context": affective_context,
+                }
+                return {
+                    "delegated": True,
+                    "reason": "real_provider_affective_decision",
+                    "salience": 84,
+                }
+
+            def plan(
+                self,
+                decision: AffectiveDecision,
+                frame: PerceptionFrame,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any] | None:
+                del decision, frame, profile, available_tools, session_context
+                return None
+
+        frame = PerceptionFrame(
+            frame_id="frame-affective-context",
+            event_ids=("evt-aff-1",),
+            highest_priority=84,
+            topics=("user.input.query.device",),
+        )
+        client = FakeProviderClient()
+        with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+            profile = build_maf_runtime_profile(
+                provider_mode=MafProviderMode.REAL_PROVIDER.value,
+                env={
+                    "OPENAI_API_KEY": "secret",
+                    "OPENAI_MODEL": "gpt-4.1-mini",
+                },
+            )
+
+        affective = build_affective_agent_adapter(profile, provider_client=client)
+        decision = affective.decide(
+            frame,
+            [{"memory_id": "mem-ctx-1"}],
+            affective_context={
+                "schema_version": "1.2.5-affective-runtime-context-v1",
+                "multimodal_summary": {"input_modes": ["text"]},
+                "profile_route": {"selected_profile": "remote_openai_compatible"},
+                "presentation_policy": {"prompt_safe_multimodal_summary_only": True},
+            },
+        )
+
+        self.assertTrue(decision.delegated)
+        self.assertEqual(decision.salience, 84)
+        self.assertEqual(
+            client.last_decide["affective_context"]["multimodal_summary"]["input_modes"],
+            ["text"],
+        )
+        self.assertEqual(
+            client.last_decide["affective_context"]["profile_route"]["selected_profile"],
+            "remote_openai_compatible",
+        )
 
     def test_default_provider_client_factory_builds_agent_framework_client(self) -> None:
         class FakeChatClient:
@@ -436,8 +531,9 @@ class TestMafRuntimeBoundary(unittest.TestCase):
                 frame: PerceptionFrame,
                 memory_items: list[dict[str, Any]],
                 profile: Any,
+                affective_context: dict[str, Any] | None = None,
             ) -> dict[str, Any]:
-                del memory_items, profile
+                del memory_items, profile, affective_context
                 self.last_frame = frame
                 return {
                     "delegated": True,
@@ -477,6 +573,10 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertTrue(payload["model_call_requested"])
         self.assertTrue(payload["executes_model_call"])
         self.assertEqual(payload["call_status"], "model_call_succeeded")
+        self.assertTrue(payload["closure_gates"]["real_provider_call_opt_in_respected"])
+        self.assertTrue(payload["closure_gates"]["provider_requirements_ready"])
+        self.assertTrue(payload["closure_gates"]["model_call_evidence_present"])
+        self.assertTrue(payload["closure_gates"]["closure_smoke_outcome_recorded"])
         self.assertEqual(
             payload["affective_decision"],
             {
@@ -500,8 +600,9 @@ class TestMafRuntimeBoundary(unittest.TestCase):
                 frame: PerceptionFrame,
                 memory_items: list[dict[str, Any]],
                 profile: Any,
+                affective_context: dict[str, Any] | None = None,
             ) -> dict[str, Any]:
-                del frame, memory_items, profile
+                del frame, memory_items, profile, affective_context
                 return {"delegated": "yes", "reason": "bad", "salience": 80}
 
             def plan(
@@ -531,6 +632,10 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertEqual(payload["reason"], "model_call_failed")
         self.assertEqual(payload["call_status"], "model_call_failed")
         self.assertEqual(payload["failure_class"], "ValueError")
+        self.assertTrue(payload["closure_gates"]["real_provider_call_opt_in_respected"])
+        self.assertTrue(payload["closure_gates"]["provider_requirements_ready"])
+        self.assertFalse(payload["closure_gates"]["model_call_evidence_present"])
+        self.assertTrue(payload["closure_gates"]["closure_smoke_outcome_recorded"])
         self.assertEqual(
             payload["failure_status"],
             "provider_affective_decision_delegated_must_be_bool",
@@ -547,6 +652,8 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         self.assertIn(payload["status"], ("ready", "skipped"))
         self.assertTrue(payload["model_call_allowed"])
         self.assertFalse(payload["executes_model_call"])
+        self.assertTrue(payload["closure_gates"]["real_provider_call_opt_in_respected"])
+        self.assertTrue(payload["closure_gates"]["closure_smoke_outcome_recorded"])
         self.assertEqual(
             {item["agent_role"] for item in payload["maf_runtime"]["agent_adapters"]},
             {"affective", "rational"},
@@ -564,6 +671,157 @@ class TestMafRuntimeBoundary(unittest.TestCase):
             payload["reason"],
             "execute_model_call_requires_allow_model_call",
         )
+        self.assertFalse(payload["closure_gates"]["real_provider_call_opt_in_respected"])
+        self.assertTrue(payload["closure_gates"]["closure_smoke_outcome_recorded"])
+
+
+class TestMultimodalProfileRouting(unittest.TestCase):
+    def test_normalize_multimodal_input_records_modes_and_references(self) -> None:
+        normalized = normalize_multimodal_input(
+            request_id="mm-001",
+            text=[" inspect the board "],
+            image_refs=["images/board.jpg"],
+            audio_refs=["mic-sample-001"],
+            video_refs=["https://example.test/clip.mp4"],
+            response_modes=["text"],
+            profile_hint="local_16g",
+            provenance="test",
+        )
+        payload = normalized.to_dict()
+
+        self.assertEqual(payload["schema_version"], MULTIMODAL_INPUT_SCHEMA_VERSION)
+        self.assertEqual(payload["request_id"], "mm-001")
+        self.assertEqual(payload["profile_hint"], "local_16g")
+        self.assertEqual(payload["input_modes"], ["text", "image", "audio", "video"])
+        self.assertEqual(payload["inputs"]["text"], ["inspect the board"])
+        self.assertEqual(payload["inputs"]["images"][0]["ref_kind"], "path")
+        self.assertEqual(payload["inputs"]["audio"][0]["ref_kind"], "opaque_id")
+        self.assertEqual(payload["inputs"]["video"][0]["ref_kind"], "uri")
+
+    def test_normalize_multimodal_input_rejects_unsupported_response_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported_response_modes"):
+            normalize_multimodal_input(
+                text=["hello"],
+                response_modes=["binary"],
+            )
+
+    def test_inference_route_defaults_to_local_16g_without_live_backend(self) -> None:
+        normalized = normalize_multimodal_input(text=["hello"], image_refs=["frame-1"])
+
+        route = build_inference_route(normalized)
+
+        self.assertTrue(route["ok"])
+        self.assertEqual(route["schema_version"], INFERENCE_ROUTE_SCHEMA_VERSION)
+        self.assertEqual(route["selected_profile"]["name"], "local_16g")
+        self.assertEqual(route["profile_readiness"]["status"], "deterministic_ready")
+        self.assertFalse(route["fallback_used"])
+
+    def test_inference_route_rejects_profile_without_requested_response_mode(self) -> None:
+        normalized = normalize_multimodal_input(
+            text=["speak back"],
+            response_modes=["audio"],
+        )
+
+        route = build_inference_route(normalized, profile_override="local_16g")
+
+        self.assertFalse(route["ok"])
+        self.assertEqual(route["status"], "no_compatible_profile")
+        self.assertEqual(
+            route["candidate_rejections"][0]["missing_response_modes"],
+            ["audio"],
+        )
+
+    def test_inference_route_requires_live_backend_when_requested(self) -> None:
+        normalized = normalize_multimodal_input(text=["hello"])
+
+        route = build_inference_route(
+            normalized,
+            require_live_backend=True,
+            env={},
+        )
+
+        self.assertFalse(route["ok"])
+        self.assertEqual(route["status"], "no_compatible_profile")
+        self.assertEqual(
+            route["candidate_rejections"][0]["readiness"]["reason"],
+            "model_credentials_not_configured",
+        )
+
+    def test_multimodal_profile_smoke_is_read_only_and_reports_catalog(self) -> None:
+        payload = multimodal_profile_smoke(
+            text=["what changed"],
+            image_refs=["frame-001"],
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ready")
+        self.assertFalse(payload["executes_model_call"])
+        self.assertEqual(payload["inference_route"]["selected_profile"]["name"], "local_16g")
+        self.assertEqual(payload["evidence_summary"]["input_modes"], ["text", "image"])
+        self.assertEqual(payload["evidence_summary"]["selected_profile"], "local_16g")
+        self.assertTrue(payload["closure_gates"]["multimodal_input_recorded"])
+        self.assertTrue(payload["closure_gates"]["route_decision_recorded"])
+        self.assertTrue(payload["closure_gates"]["profile_readiness_recorded"])
+        self.assertTrue(payload["closure_gates"]["route_ready"])
+        self.assertTrue(payload["closure_gates"]["no_model_call_executed"])
+        self.assertIn("profile_catalog", payload)
+
+    def test_multimodal_profile_smoke_records_unroutable_fail_closed_evidence(self) -> None:
+        payload = multimodal_profile_smoke(
+            text=["speak back"],
+            response_modes=["audio"],
+            profile_override="local_16g",
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["evidence_summary"]["failure_status"], "no_profile_supports_requested_modes_and_readiness")
+        self.assertEqual(payload["evidence_summary"]["candidate_rejection_count"], 1)
+        self.assertTrue(payload["closure_gates"]["multimodal_input_recorded"])
+        self.assertTrue(payload["closure_gates"]["route_decision_recorded"])
+        self.assertTrue(payload["closure_gates"]["profile_readiness_recorded"])
+        self.assertFalse(payload["closure_gates"]["route_ready"])
+        self.assertTrue(payload["closure_gates"]["fail_closed_when_unroutable"])
+
+    def test_cli_multimodal_profile_smoke_outputs_json(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "multimodal-profile-smoke",
+                    "--text",
+                    "inspect",
+                    "--image-ref",
+                    "frame-001",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["command"], "multimodal-profile-smoke")
+        self.assertEqual(payload["multimodal_input"]["input_modes"], ["text", "image"])
+        self.assertFalse(payload["executes_model_call"])
+        self.assertTrue(payload["closure_gates"]["route_ready"])
+
+    def test_cli_multimodal_profile_smoke_rejects_invalid_response_mode(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "multimodal-profile-smoke",
+                    "--text",
+                    "inspect",
+                    "--response-mode",
+                    "binary",
+                ]
+            )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["failure_class"], "multimodal_profile_request_invalid")
+        self.assertIn("unsupported_response_modes", payload["failure_status"])
 
 
 if __name__ == "__main__":

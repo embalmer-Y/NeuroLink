@@ -13,6 +13,7 @@ from .agents import AffectiveDecision
 from .common import PerceptionEvent, PerceptionFrame, WorkflowResult, new_id, utc_now_iso
 from .data import CoreDataStore
 from .events import PerceptionEventRouter
+from .inference import build_inference_route, normalize_multimodal_input
 from .maf import (
     MafProviderMode,
     MafRuntimeProfile,
@@ -30,6 +31,8 @@ from .tools import (
     NeuroCliToolAdapter,
     ToolContract,
     ToolExecutionResult,
+    load_mcp_bridge_descriptor_payload,
+    load_neuro_cli_skill_descriptor_payload,
 )
 
 
@@ -41,6 +44,9 @@ APP_DEPLOY_PREPARE_VERIFY_SCHEMA_VERSION = "1.2.4-app-deploy-prepare-verify-v1"
 APP_DEPLOY_ACTIVATE_SCHEMA_VERSION = "1.2.4-app-deploy-activate-v1"
 APP_DEPLOY_ROLLBACK_SCHEMA_VERSION = "1.2.4-app-deploy-rollback-v1"
 EVENT_SERVICE_SCHEMA_VERSION = "1.2.4-event-service-v1"
+RATIONAL_PLAN_QUALITY_SCHEMA_VERSION = "1.2.5-rational-plan-quality-v1"
+RATIONAL_PLAN_EVIDENCE_SCHEMA_VERSION = "1.2.5-rational-plan-evidence-v1"
+AFFECTIVE_RUNTIME_CONTEXT_SCHEMA_VERSION = "1.2.5-affective-runtime-context-v1"
 
 
 ELF_MACHINE_NAMES = {
@@ -1950,6 +1956,15 @@ def _build_operator_requirements(
             str(item) for item in cast(list[Any] | tuple[Any, ...], raw_required_resources)
         ]
     contract_payload = cast(dict[str, Any], request_payload.get("contract") or {})
+    plan_quality = cast(dict[str, Any], request_payload.get("plan_quality") or {})
+    skill_requirements = cast(
+        dict[str, Any],
+        plan_quality.get("skill_requirements") or request_payload.get("skill_requirements") or {},
+    )
+    mcp_requirements = cast(
+        dict[str, Any],
+        plan_quality.get("mcp_requirements") or request_payload.get("mcp_requirements") or {},
+    )
 
     lease_observation = adapter.execute(
         "system_query_leases",
@@ -2021,6 +2036,12 @@ def _build_operator_requirements(
         if resource not in observed_resources
     ]
     missing_required_resources.extend(unresolved_required_resources)
+    missing_operational_prerequisites: list[str] = []
+    if (
+        bool(skill_requirements.get("workflow_plan_required"))
+        and not bool(skill_requirements.get("workflow_plan_evidence_present"))
+    ):
+        missing_operational_prerequisites.append("workflow_plan_evidence")
 
     return {
         "resource": str(contract_payload.get("resource") or request_payload.get("tool_name") or ""),
@@ -2030,6 +2051,14 @@ def _build_operator_requirements(
         "observed_resources": observed_resources,
         "missing_required_resources": missing_required_resources,
         "resource_requirements_satisfied": not missing_required_resources,
+        "plan_quality": plan_quality or None,
+        "skill_requirements": skill_requirements or None,
+        "mcp_requirements": mcp_requirements or None,
+        "workflow_plan_required": bool(skill_requirements.get("workflow_plan_required")),
+        "workflow_plan_evidence_present": bool(
+            skill_requirements.get("workflow_plan_evidence_present")
+        ),
+        "missing_operational_prerequisites": missing_operational_prerequisites,
         "cleanup_hint": request_payload.get("cleanup_hint"),
         "target_app_id": target_app_id,
         "matching_lease_ids": matching_lease_ids,
@@ -2053,6 +2082,14 @@ def build_approval_context(
     source_audit_id = None
     if source_execution_span is not None:
         source_audit_id = source_execution_span["payload"].get("audit_id")
+    source_execution_evidence = (
+        data_store.build_execution_evidence(
+            source_execution_span_id,
+            str(source_audit_id),
+        )
+        if source_audit_id is not None
+        else None
+    )
 
     resumed_execution_evidence: dict[str, Any] | None = None
     if resumed_execution is not None:
@@ -2084,17 +2121,26 @@ def build_approval_context(
             tool_adapter=tool_adapter,
         )
     )
+    if isinstance(source_execution_evidence, dict):
+        audit_record = cast(
+            dict[str, Any],
+            source_execution_evidence.get("audit_record") or {},
+        )
+        audit_payload = cast(dict[str, Any], audit_record.get("payload") or {})
+        rational_plan_evidence = cast(
+            dict[str, Any],
+            audit_payload.get("rational_plan_evidence") or {},
+        )
+        if rational_plan_evidence:
+            merged_operator_requirements: dict[str, Any] = {
+                **effective_operator_requirements,
+                "rational_plan_evidence": rational_plan_evidence,
+            }
+            effective_operator_requirements = merged_operator_requirements
 
     return {
         "source_execution_span": source_execution_span,
-        "source_execution_evidence": (
-            data_store.build_execution_evidence(
-                source_execution_span_id,
-                str(source_audit_id),
-            )
-            if source_audit_id is not None
-            else None
-        ),
+        "source_execution_evidence": source_execution_evidence,
         "resumed_execution_evidence": resumed_execution_evidence,
         "operator_requirements": effective_operator_requirements,
         "recovery_candidate_summary": effective_operator_requirements.get(
@@ -2302,7 +2348,7 @@ class NoModelCoreWorkflow:
                 frame_data = self.data_store.build_frame(db_events)
                 frame = PerceptionFrame(**frame_data)
 
-        self._persist_frame_facts(execution_span_id, frame, events)
+        source_fact_refs = self._persist_frame_facts(execution_span_id, frame, events)
         activate_failed_payload = _extract_activate_failed_event_payload(events)
 
         steps.append("session_context_load")
@@ -2314,21 +2360,60 @@ class NoModelCoreWorkflow:
             "memory_runtime": self.memory_runtime_metadata(),
             **({"target_app_id": target_app_id} if target_app_id else {}),
         }
+        session_context["skill_descriptors"] = [self._skill_descriptor_summary()]
+        session_context["mcp_descriptors"] = [self._mcp_descriptor_summary()]
 
         steps.append("long_term_memory_lookup_stub")
         memory_items = self.memory.lookup(frame)
         session_context["memory_lookup_count"] = len(memory_items)
         session_context["memory_runtime"] = self.memory_runtime_metadata()
         candidate_payloads: list[dict[str, Any]] = []
+        screened_candidate_payloads: list[dict[str, Any]] = []
         if hasattr(self.memory, "propose_candidates"):
             for candidate in self.memory.propose_candidates(frame):
                 candidate_payload = dict(candidate)
+                candidate_payload["source_fact_refs"] = list(source_fact_refs)
+                governance = dict(candidate_payload.get("memory_governance") or {})
+                governance["source_fact_refs"] = list(source_fact_refs)
+                governance["source_fact_ref_count"] = len(source_fact_refs)
+                candidate_payload["memory_governance"] = governance
                 candidate_payloads.append(candidate_payload)
+            screen_candidates = getattr(self.memory, "screen_candidates", None)
+            if callable(screen_candidates):
+                screen_candidates_fn = cast(
+                    Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
+                    screen_candidates,
+                )
+                screened_candidate_payloads = screen_candidates_fn(candidate_payloads)
+            else:
+                screened_candidate_payloads = candidate_payloads
+            for candidate_payload in screened_candidate_payloads:
                 self.data_store.persist_memory_candidate(
                     execution_span_id,
-                    str(candidate.get("semantic_topic") or "unknown"),
+                    str(candidate_payload.get("semantic_topic") or "unknown"),
                     candidate_payload,
                 )
+            session_context["memory_candidate_count"] = len(screened_candidate_payloads)
+            session_context["accepted_memory_candidate_count"] = sum(
+                1
+                for candidate_payload in screened_candidate_payloads
+                if str(
+                    dict(candidate_payload.get("memory_governance") or {}).get(
+                        "lifecycle_state"
+                    )
+                )
+                == "accepted"
+            )
+            session_context["rejected_memory_candidate_count"] = sum(
+                1
+                for candidate_payload in screened_candidate_payloads
+                if str(
+                    dict(candidate_payload.get("memory_governance") or {}).get(
+                        "lifecycle_state"
+                    )
+                )
+                == "rejected"
+            )
         commit_candidates = getattr(self.memory, "commit_candidates", None)
         if callable(commit_candidates):
             commit_candidates_fn = cast(
@@ -2337,14 +2422,41 @@ class NoModelCoreWorkflow:
             )
             committed_memory_ids = commit_candidates_fn(
                 execution_span_id,
-                candidate_payloads,
+                screened_candidate_payloads or candidate_payloads,
             )
             session_context["committed_memory_count"] = len(committed_memory_ids)
             session_context["committed_memory_ids"] = committed_memory_ids
             session_context["memory_runtime"] = self.memory_runtime_metadata()
+        self.data_store.persist_fact(
+            execution_span_id,
+            "memory_governance_summary",
+            frame.frame_id,
+            {
+                "candidate_count": len(screened_candidate_payloads or candidate_payloads),
+                "accepted_candidate_count": int(
+                    session_context.get("accepted_memory_candidate_count") or 0
+                ),
+                "rejected_candidate_count": int(
+                    session_context.get("rejected_memory_candidate_count") or 0
+                ),
+                "committed_memory_count": int(
+                    session_context.get("committed_memory_count") or 0
+                ),
+                "source_fact_ref_count": len(source_fact_refs),
+                "memory_runtime": self.memory_runtime_metadata(),
+            },
+        )
 
         available_tools = self._available_tool_context()
         session_context["available_tools"] = available_tools
+        affective_runtime_context = self._build_affective_runtime_context(frame, events)
+        session_context["affective_runtime_context"] = affective_runtime_context
+        self.data_store.persist_fact(
+            execution_span_id,
+            "affective_runtime_context",
+            frame.frame_id,
+            affective_runtime_context,
+        )
         prompt_safe_context = build_prompt_safe_context(
             session_context,
             frame=frame,
@@ -2352,6 +2464,21 @@ class NoModelCoreWorkflow:
             available_tools=available_tools,
         )
         session_context["prompt_safe_context"] = prompt_safe_context
+        memory_prompt_context = cast(
+            dict[str, Any],
+            prompt_safe_context.get("memory") or {},
+        )
+        memory_recall_policy = cast(
+            dict[str, Any],
+            memory_prompt_context.get("recall_policy") or {},
+        )
+        session_context["memory_recall_policy"] = memory_recall_policy
+        self.data_store.persist_fact(
+            execution_span_id,
+            "memory_recall_policy",
+            frame.frame_id,
+            memory_recall_policy,
+        )
 
         affective_step = (
             "affective_model_call"
@@ -2361,27 +2488,70 @@ class NoModelCoreWorkflow:
         steps.append(affective_step)
         safe_memory_items = cast(
             list[dict[str, Any]],
-            prompt_safe_context["memory"]["items"],
+            memory_prompt_context.get("affective_items") or [],
         )
-        decision = self.affective_agent.decide(frame, safe_memory_items)
+        prompt_safe_affective_context = cast(
+            dict[str, Any],
+            prompt_safe_context.get("affective_runtime") or {},
+        )
+        profile_route_summary = cast(
+            dict[str, Any],
+            prompt_safe_affective_context.get("profile_route") or {},
+        )
+        if (
+            self.maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value
+            and not bool(profile_route_summary.get("route_ready", False))
+        ):
+            route_failure_status = str(
+                profile_route_summary.get("failure_status")
+                or profile_route_summary.get("route_status")
+                or "unavailable"
+            )
+            raise ValueError(
+                f"affective_provider_inference_route_unavailable:{route_failure_status}"
+            )
+        decision = self.affective_agent.decide(
+            frame,
+            safe_memory_items,
+            affective_context=prompt_safe_affective_context,
+        )
         model_call_evidence = self._build_model_call_evidence(
             frame,
             decision,
             self.maf_runtime_metadata(),
+            prompt_safe_affective_context,
         )
         session_context["model_call_evidence"] = model_call_evidence
 
         steps.append("rational_delegate_optional")
-        plan = self.rational_agent.plan(
-            decision,
-            frame,
-            available_tools=available_tools,
-            session_context=prompt_safe_context,
-        )
+        rational_plan_failure_status = ""
+        plan = None
+        try:
+            plan = self.rational_agent.plan(
+                decision,
+                frame,
+                available_tools=available_tools,
+                session_context=prompt_safe_context,
+            )
+        except ValueError as exc:
+            rational_plan_failure_status = str(exc)
 
         steps.append("tool_and_unit_execution")
         tool_results: list[ToolExecutionResult] = []
-        if plan is not None:
+        if rational_plan_failure_status:
+            tool_results.append(
+                ToolExecutionResult(
+                    tool_result_id=new_id("tool"),
+                    tool_name="rational_plan_validation",
+                    status="error",
+                    payload={
+                        "failure_status": rational_plan_failure_status,
+                        "failure_class": "rational_plan_payload_invalid",
+                        "available_tools": available_tools,
+                    },
+                )
+            )
+        elif plan is not None:
             contract = self.tool_adapter.describe_tool(plan.tool_name)
             if contract is None:
                 result = ToolExecutionResult(
@@ -2396,73 +2566,97 @@ class NoModelCoreWorkflow:
                     },
                 )
             else:
-                policy_decision = self.tool_policy.evaluate_contract(contract)
-                policy_payload = policy_decision.to_dict()
-                self.data_store.persist_policy_decision(
-                    execution_span_id,
-                    plan.tool_name,
-                    policy_payload,
+                plan_quality = self._build_rational_plan_quality(
+                    plan,
+                    contract,
+                    available_tools,
                 )
-                if policy_decision.allowed:
-                    result = self.tool_adapter.execute(plan.tool_name, plan.args)
-                    result.payload["policy_decision"] = policy_payload
-                else:
-                    if policy_decision.approval_required:
-                        approval_request_id = new_id("approval")
-                        approval_request_payload: dict[str, Any] = {
-                            "approval_request_id": approval_request_id,
-                            "tool_name": plan.tool_name,
-                            "reason": "operator_approval_required_before_execution",
-                            "requested_args": dict(plan.args),
-                            "required_resources": list(contract.required_resources),
-                            "cleanup_hint": contract.cleanup_hint,
-                            "side_effect_level": contract.side_effect_level.value,
-                            "policy_decision": policy_payload,
+                if not bool(plan_quality.get("valid", False)):
+                    result = ToolExecutionResult(
+                        tool_result_id=new_id("tool"),
+                        tool_name=plan.tool_name,
+                        status="error",
+                        payload={
+                            "failure_status": "missing_required_arguments",
+                            "failure_class": "rational_plan_contract_invalid",
+                            "requested_plan": plan.to_dict(),
                             "contract": contract.to_dict(),
-                            "status": "pending",
-                        }
-                        self.data_store.persist_approval_request(
-                            resolved_session_id,
-                            execution_span_id,
-                            plan.tool_name,
-                            "pending",
-                            approval_request_payload,
-                            approval_request_id=approval_request_id,
-                        )
-                        result = ToolExecutionResult(
-                            tool_result_id=new_id("tool"),
-                            tool_name=plan.tool_name,
-                            status="pending_approval",
-                            payload={
-                                "failure_status": "approval_required",
-                                "failure_class": "approval_gate_pending",
-                                "policy_decision": policy_payload,
-                                "approval_request": approval_request_payload,
-                            },
-                        )
-                        session_context["pending_approval_request_ids"] = list(
-                            {
-                                *cast(
-                                    list[str],
-                                    session_context.get(
-                                        "pending_approval_request_ids",
-                                        [],
-                                    ),
-                                ),
-                                approval_request_id,
-                            }
-                        )
+                            "plan_quality": plan_quality,
+                        },
+                    )
+                else:
+                    policy_decision = self.tool_policy.evaluate_contract(contract)
+                    policy_payload = policy_decision.to_dict()
+                    self.data_store.persist_policy_decision(
+                        execution_span_id,
+                        plan.tool_name,
+                        policy_payload,
+                    )
+                    if policy_decision.allowed:
+                        result = self.tool_adapter.execute(plan.tool_name, plan.args)
+                        result.payload["policy_decision"] = policy_payload
+                        result.payload["plan_quality"] = plan_quality
                     else:
-                        result = ToolExecutionResult(
-                            tool_result_id=new_id("tool"),
-                            tool_name=plan.tool_name,
-                            status="blocked",
-                            payload={
-                                "failure_status": "policy_blocked",
-                                "failure_class": "tool_policy_denied",
+                        if policy_decision.approval_required:
+                            approval_request_id = new_id("approval")
+                            approval_request_payload: dict[str, Any] = {
+                                "approval_request_id": approval_request_id,
+                                "tool_name": plan.tool_name,
+                                "reason": "operator_approval_required_before_execution",
+                                "requested_args": dict(plan.args),
+                                "required_resources": list(contract.required_resources),
+                                "cleanup_hint": contract.cleanup_hint,
+                                "side_effect_level": contract.side_effect_level.value,
                                 "policy_decision": policy_payload,
-                            },
-                        )
+                                "contract": contract.to_dict(),
+                                "plan_quality": plan_quality,
+                                "skill_requirements": plan_quality.get("skill_requirements"),
+                                "status": "pending",
+                            }
+                            self.data_store.persist_approval_request(
+                                resolved_session_id,
+                                execution_span_id,
+                                plan.tool_name,
+                                "pending",
+                                approval_request_payload,
+                                approval_request_id=approval_request_id,
+                            )
+                            result = ToolExecutionResult(
+                                tool_result_id=new_id("tool"),
+                                tool_name=plan.tool_name,
+                                status="pending_approval",
+                                payload={
+                                    "failure_status": "approval_required",
+                                    "failure_class": "approval_gate_pending",
+                                    "policy_decision": policy_payload,
+                                    "plan_quality": plan_quality,
+                                    "approval_request": approval_request_payload,
+                                },
+                            )
+                            session_context["pending_approval_request_ids"] = list(
+                                {
+                                    *cast(
+                                        list[str],
+                                        session_context.get(
+                                            "pending_approval_request_ids",
+                                            [],
+                                        ),
+                                    ),
+                                    approval_request_id,
+                                }
+                            )
+                        else:
+                            result = ToolExecutionResult(
+                                tool_result_id=new_id("tool"),
+                                tool_name=plan.tool_name,
+                                status="blocked",
+                                payload={
+                                    "failure_status": "policy_blocked",
+                                    "failure_class": "tool_policy_denied",
+                                    "policy_decision": policy_payload,
+                                    "plan_quality": plan_quality,
+                                },
+                            )
             self.data_store.persist_tool_result(
                 result.tool_result_id,
                 execution_span_id,
@@ -2612,6 +2806,13 @@ class NoModelCoreWorkflow:
             else:
                 tool_results.append(result)
 
+        session_context["rational_plan_evidence"] = self._build_rational_plan_evidence(
+            plan=plan,
+            failure_status=rational_plan_failure_status,
+            available_tools=available_tools,
+            tool_results=tool_results,
+        )
+
         steps.append("audit_record")
         final_response = self._build_final_response(frame, decision, tool_results)
         notification_summary = self._build_notification_summary(
@@ -2714,6 +2915,298 @@ class NoModelCoreWorkflow:
             "can_execute_tools_directly": False,
         }
 
+    def _build_affective_runtime_context(
+        self,
+        frame: PerceptionFrame,
+        events: list[PerceptionEvent],
+    ) -> dict[str, Any]:
+        text_inputs: list[str] = []
+        image_refs: list[str] = []
+        audio_refs: list[str] = []
+        video_refs: list[str] = []
+        response_modes: list[str] = []
+        profile_hint = "auto"
+        profile_override = ""
+        for event in events:
+            payload = event.payload
+            text_value = payload.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                text_inputs.append(text_value.strip())
+            for singular_key, plural_key, target in (
+                ("image_ref", "image_refs", image_refs),
+                ("audio_ref", "audio_refs", audio_refs),
+                ("video_ref", "video_refs", video_refs),
+            ):
+                singular_value = payload.get(singular_key)
+                if isinstance(singular_value, str) and singular_value.strip():
+                    target.append(singular_value.strip())
+                plural_value = payload.get(plural_key)
+                if isinstance(plural_value, list):
+                    plural_items = cast(list[Any], plural_value)
+                    target.extend(
+                        item.strip()
+                        for item in plural_items
+                        if isinstance(item, str) and item.strip()
+                    )
+            response_mode = payload.get("response_mode")
+            if isinstance(response_mode, str) and response_mode.strip():
+                response_modes.append(response_mode.strip())
+            response_mode_values = payload.get("response_modes")
+            if isinstance(response_mode_values, list):
+                response_mode_items = cast(list[Any], response_mode_values)
+                response_modes.extend(
+                    item.strip()
+                    for item in response_mode_items
+                    if isinstance(item, str) and item.strip()
+                )
+            payload_profile_hint = payload.get("profile_hint")
+            if isinstance(payload_profile_hint, str) and payload_profile_hint.strip():
+                profile_hint = payload_profile_hint.strip()
+            payload_profile_override = payload.get("profile_override")
+            if isinstance(payload_profile_override, str) and payload_profile_override.strip():
+                profile_override = payload_profile_override.strip()
+
+        provenance = "workflow_event_payload"
+        if not (text_inputs or image_refs or audio_refs or video_refs):
+            provenance = "workflow_frame_summary"
+            text_inputs = [
+                f"Perception topics: {', '.join(frame.topics) if frame.topics else 'unknown'}"
+            ]
+
+        require_live_backend = (
+            self.maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value
+        )
+        effective_profile_override = profile_override
+        if require_live_backend and not effective_profile_override:
+            effective_profile_override = "remote_openai_compatible"
+        normalized = normalize_multimodal_input(
+            request_id=frame.frame_id,
+            text=text_inputs,
+            image_refs=image_refs,
+            audio_refs=audio_refs,
+            video_refs=video_refs,
+            response_modes=response_modes or None,
+            profile_hint=profile_hint,
+            provenance=provenance,
+        )
+        route = build_inference_route(
+            normalized,
+            profile_override=effective_profile_override,
+            require_live_backend=require_live_backend,
+        )
+        selected_profile = cast(dict[str, Any], route.get("selected_profile") or {})
+        presentation_policy = {
+            "prompt_safe_multimodal_summary_only": True,
+            "internal_facts_remain_core_owned": True,
+            "model_may_not_execute_tools_directly": True,
+            "user_visible_output_separated_from_internal_facts": True,
+        }
+        return {
+            "schema_version": AFFECTIVE_RUNTIME_CONTEXT_SCHEMA_VERSION,
+            "multimodal_summary": {
+                "request_id": normalized.request_id,
+                "input_modes": list(normalized.input_modes),
+                "response_modes": list(normalized.response_modes),
+                "profile_hint": normalized.profile_hint,
+                "latency_class": normalized.latency_class,
+                "text_count": len(normalized.text),
+                "text_preview": [text[:160] for text in list(normalized.text)[:2]],
+                "image_ref_count": len(normalized.images),
+                "audio_ref_count": len(normalized.audio),
+                "video_ref_count": len(normalized.video),
+                "provenance": normalized.provenance,
+            },
+            "profile_route": {
+                "requested_profile": str(route.get("requested_profile") or "auto"),
+                "selected_profile": str(selected_profile.get("name") or ""),
+                "route_status": str(route.get("status") or "unknown"),
+                "route_reason": str(route.get("route_reason") or ""),
+                "failure_status": str(route.get("failure_status") or ""),
+                "fallback_used": bool(route.get("fallback_used", False)),
+                "candidate_rejection_count": len(
+                    cast(list[Any], route.get("candidate_rejections") or [])
+                ),
+                "requires_live_backend": require_live_backend,
+                "route_ready": bool(route.get("ok")),
+            },
+            "presentation_policy": presentation_policy,
+        }
+
+    def _skill_descriptor_summary(self) -> dict[str, Any]:
+        payload = load_neuro_cli_skill_descriptor_payload()
+        return {
+            "schema_version": str(payload.get("schema_version") or ""),
+            "name": str(payload.get("name") or ""),
+            "workflow_plan_required": bool(payload.get("workflow_plan_required", False)),
+            "json_output_required": bool(payload.get("json_output_required", False)),
+            "release_target_promotion_blocked": bool(
+                payload.get("release_target_promotion_blocked", False)
+            ),
+            "callback_audit_required": bool(payload.get("callback_audit_required", False)),
+            "first_check_commands": list(payload.get("first_check_commands") or [])[:3],
+        }
+
+    def _mcp_descriptor_summary(self) -> dict[str, Any]:
+        payload = load_mcp_bridge_descriptor_payload(self.tool_adapter)
+        safety_boundaries = cast(dict[str, Any], payload.get("safety_boundaries") or {})
+        return {
+            "schema_version": str(payload.get("schema_version") or ""),
+            "bridge_name": str(payload.get("bridge_name") or ""),
+            "bridge_mode": str(payload.get("bridge_mode") or ""),
+            "transport": str(payload.get("transport") or ""),
+            "allowed_operations": list(payload.get("allowed_operations") or []),
+            "read_only_tool_count": len(payload.get("read_only_tools") or []),
+            "blocked_tool_count": len(payload.get("blocked_tools") or []),
+            "tool_execution_via_mcp_forbidden": bool(
+                safety_boundaries.get("tool_execution_via_mcp_forbidden", False)
+            ),
+            "external_mcp_connection_enabled": bool(
+                safety_boundaries.get("external_mcp_connection_enabled", False)
+            ),
+        }
+
+    @staticmethod
+    def _required_argument_aliases(argument_name: str) -> tuple[str, ...]:
+        normalized_key = argument_name.lstrip("-").replace("-", "_")
+        aliases = [normalized_key]
+        if argument_name == "--app-id":
+            aliases.append("app")
+        if argument_name == "--lease-id":
+            aliases.append("lease")
+        return tuple(aliases)
+
+    def _build_rational_plan_quality(
+        self,
+        plan: Any,
+        contract: ToolContract,
+        available_tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        available_tool_index = {
+            str(tool.get("name") or tool.get("tool_name") or ""): tool
+            for tool in available_tools
+        }
+        available_tool_names = set(available_tool_index)
+        required_argument_coverage: dict[str, bool] = {}
+        missing_required_arguments: list[str] = []
+        for argument_name in contract.required_arguments:
+            if argument_name == "--node":
+                required_argument_coverage[argument_name] = True
+                continue
+            aliases = self._required_argument_aliases(argument_name)
+            present = any(
+                plan.args.get(alias) not in (None, "", [])
+                for alias in aliases
+            )
+            required_argument_coverage[argument_name] = present
+            if not present:
+                missing_required_arguments.append(argument_name)
+
+        skill_descriptor = self._skill_descriptor_summary()
+        workflow_plan_required = bool(skill_descriptor.get("workflow_plan_required")) and (
+            contract.approval_required or bool(contract.required_resources)
+        )
+        skill_requirements: dict[str, Any] = {
+            "skill_name": skill_descriptor.get("name"),
+            "workflow_plan_required": workflow_plan_required,
+            "workflow_plan_evidence_present": False,
+            "json_output_required": bool(skill_descriptor.get("json_output_required", False)),
+            "release_target_promotion_blocked": bool(
+                skill_descriptor.get("release_target_promotion_blocked", False)
+            ),
+            "callback_audit_required": bool(skill_descriptor.get("callback_audit_required", False)),
+            "suggested_first_check_commands": list(skill_descriptor.get("first_check_commands") or []),
+        }
+        mcp_descriptor = self._mcp_descriptor_summary()
+        mcp_requirements: dict[str, Any] = {
+            "bridge_name": mcp_descriptor.get("bridge_name"),
+            "bridge_mode": mcp_descriptor.get("bridge_mode"),
+            "allowed_operations": list(mcp_descriptor.get("allowed_operations") or []),
+            "read_only_tool_count": int(mcp_descriptor.get("read_only_tool_count") or 0),
+            "blocked_tool_count": int(mcp_descriptor.get("blocked_tool_count") or 0),
+            "tool_execution_via_mcp_forbidden": bool(
+                mcp_descriptor.get("tool_execution_via_mcp_forbidden", False)
+            ),
+            "external_mcp_connection_enabled": bool(
+                mcp_descriptor.get("external_mcp_connection_enabled", False)
+            ),
+        }
+        matched_available_tool = available_tool_index.get(plan.tool_name) or {}
+        matched_required_resources = list(
+            matched_available_tool.get("required_resources")
+            or matched_available_tool.get("lease_requirements")
+            or []
+        )
+        available_tool_contract_match = bool(matched_available_tool) and all(
+            (
+                matched_required_resources == list(contract.required_resources),
+                bool(matched_available_tool.get("approval_required", False))
+                == bool(contract.approval_required),
+                bool(matched_available_tool.get("retryable", False))
+                == bool(contract.retryable),
+                str(matched_available_tool.get("side_effect_level") or "")
+                == contract.side_effect_level.value,
+            )
+        )
+        resource_fit: dict[str, Any] = {
+            "required_resources": list(contract.required_resources),
+            "approval_required_for_required_resources": (
+                not bool(contract.required_resources) or bool(contract.approval_required)
+            ),
+            "valid": not bool(contract.required_resources) or bool(contract.approval_required),
+        }
+        cleanup_awareness: dict[str, Any] = {
+            "cleanup_hint_present": bool(contract.cleanup_hint),
+            "cleanup_review_required": bool(contract.approval_required or contract.required_resources),
+            "valid": (
+                not bool(contract.approval_required or contract.required_resources)
+                or bool(contract.cleanup_hint)
+            ),
+        }
+        retryability: dict[str, Any] = {
+            "retryable": bool(contract.retryable),
+            "operator_retry_guidance_required": bool(
+                not contract.retryable and (contract.approval_required or contract.required_resources)
+            ),
+            "valid": True,
+        }
+        operator_resolvable_missing_arguments = [
+            argument_name
+            for argument_name in missing_required_arguments
+            if contract.approval_required and argument_name in {"--app", "--app-id", "--lease-id"}
+        ]
+        blocking_missing_arguments = [
+            argument_name
+            for argument_name in missing_required_arguments
+            if argument_name not in operator_resolvable_missing_arguments
+        ]
+        return {
+            "schema_version": RATIONAL_PLAN_QUALITY_SCHEMA_VERSION,
+            "tool_name": plan.tool_name,
+            "available_tool_match": plan.tool_name in available_tool_names,
+            "available_tool_contract_match": available_tool_contract_match,
+            "required_argument_coverage": required_argument_coverage,
+            "missing_required_arguments": missing_required_arguments,
+            "operator_resolvable_missing_arguments": operator_resolvable_missing_arguments,
+            "blocking_missing_arguments": blocking_missing_arguments,
+            "required_resources": list(contract.required_resources),
+            "approval_required": contract.approval_required,
+            "resource_fit": resource_fit,
+            "retryability": retryability,
+            "retryable": contract.retryable,
+            "cleanup_awareness": cleanup_awareness,
+            "cleanup_hint_present": bool(contract.cleanup_hint),
+            "valid": (
+                not blocking_missing_arguments
+                and plan.tool_name in available_tool_names
+                and available_tool_contract_match
+                and bool(resource_fit.get("valid", False))
+                and bool(cleanup_awareness.get("valid", False))
+                and bool(retryability.get("valid", False))
+            ),
+            "skill_requirements": skill_requirements,
+            "mcp_requirements": mcp_requirements,
+        }
+
     def _available_tool_context(self) -> list[dict[str, Any]]:
         tool_manifest = getattr(self.tool_adapter, "tool_manifest", None)
         if not callable(tool_manifest):
@@ -2729,15 +3222,19 @@ class NoModelCoreWorkflow:
         execution_span_id: str,
         frame: PerceptionFrame,
         events: list[PerceptionEvent],
-    ) -> None:
-        self.data_store.persist_fact(
+    ) -> list[str]:
+        fact_ids: list[str] = []
+        fact_ids.append(
+            self.data_store.persist_fact(
             execution_span_id,
             "perception_frame",
             frame.frame_id,
             frame.to_dict(),
         )
+        )
         for event in events:
-            self.data_store.persist_fact(
+            fact_ids.append(
+                self.data_store.persist_fact(
                 execution_span_id,
                 "perception_event_topic",
                 event.semantic_topic or event.event_type,
@@ -2749,6 +3246,8 @@ class NoModelCoreWorkflow:
                     "priority": event.priority,
                 },
             )
+            )
+        return fact_ids
 
     @staticmethod
     def _build_audit_payload(
@@ -2770,6 +3269,10 @@ class NoModelCoreWorkflow:
         recovery_candidate_summary = cast(
             dict[str, Any] | None,
             session_context.get("recovery_candidate_summary"),
+        )
+        rational_plan_evidence = cast(
+            dict[str, Any] | None,
+            session_context.get("rational_plan_evidence"),
         )
         for result in tool_results:
             if result.tool_name != "system_state_sync":
@@ -2832,12 +3335,47 @@ class NoModelCoreWorkflow:
             "adapter_runtime": adapter_runtime,
             "state_sync_summary": state_sync_summary,
             "activation_health_summary": activation_health_summary,
+            "rational_plan_evidence": dict(rational_plan_evidence)
+            if isinstance(rational_plan_evidence, dict)
+            else None,
             "recovery_candidate_summary": dict(recovery_candidate_summary)
             if isinstance(recovery_candidate_summary, dict)
             else None,
             "notification_summary": dict(notification_summary),
             "final_response": dict(final_response),
             "tool_results": [result.to_dict() for result in tool_results],
+        }
+
+    @staticmethod
+    def _build_rational_plan_evidence(
+        *,
+        plan: Any,
+        failure_status: str,
+        available_tools: list[dict[str, Any]],
+        tool_results: list[ToolExecutionResult],
+    ) -> dict[str, Any]:
+        available_tool_names = [
+            str(tool.get("name") or tool.get("tool_name") or "")
+            for tool in available_tools
+        ]
+        selected_tool_name = str(getattr(plan, "tool_name", "") or "")
+        tool_result_status = tool_results[0].status if tool_results else None
+        if failure_status:
+            status = "invalid_payload"
+        elif plan is None:
+            status = "no_tool_selected"
+        else:
+            status = "tool_selected"
+        return {
+            "schema_version": RATIONAL_PLAN_EVIDENCE_SCHEMA_VERSION,
+            "status": status,
+            "failure_status": failure_status,
+            "selected_tool_name": selected_tool_name,
+            "selected_tool_in_available_tools": (
+                selected_tool_name in available_tool_names if selected_tool_name else False
+            ),
+            "available_tool_count": len(available_tool_names),
+            "tool_result_status": tool_result_status,
         }
 
     @staticmethod
@@ -2873,6 +3411,7 @@ class NoModelCoreWorkflow:
         frame: PerceptionFrame,
         decision: AffectiveDecision,
         maf_runtime: dict[str, Any],
+        affective_runtime_context: dict[str, Any],
     ) -> dict[str, Any]:
         provider_config = cast(dict[str, Any], maf_runtime.get("provider_config") or {})
         agent_adapters = cast(list[Any], maf_runtime.get("agent_adapters") or [])
@@ -2887,6 +3426,18 @@ class NoModelCoreWorkflow:
         real_provider_enabled = bool(maf_runtime.get("real_provider_enabled", False))
         provider_call_supported = bool(
             affective_adapter.get("provider_call_supported", False)
+        )
+        multimodal_summary = cast(
+            dict[str, Any],
+            affective_runtime_context.get("multimodal_summary") or {},
+        )
+        profile_route = cast(
+            dict[str, Any],
+            affective_runtime_context.get("profile_route") or {},
+        )
+        presentation_policy = cast(
+            dict[str, Any],
+            affective_runtime_context.get("presentation_policy") or {},
         )
         return {
             "agent_role": "affective",
@@ -2904,6 +3455,10 @@ class NoModelCoreWorkflow:
             ),
             "response_schema": "AffectiveDecision",
             "decision": decision.to_dict(),
+            "multimodal_summary": multimodal_summary,
+            "profile_route": profile_route,
+            "presentation_policy": presentation_policy,
+            "provider_failure_mode": "fail_closed",
         }
 
     @staticmethod
@@ -3711,7 +4266,15 @@ def _build_agent_run_evidence(payload: dict[str, Any]) -> dict[str, Any]:
     audit_payload = cast(dict[str, Any], (audit_record or {}).get("payload") or {})
     tool_adapter_runtime = cast(dict[str, Any], audit_payload.get("adapter_runtime") or {})
     session_context = cast(dict[str, Any], audit_payload.get("session_context") or {})
+    rational_plan_evidence = cast(
+        dict[str, Any] | None,
+        audit_payload.get("rational_plan_evidence")
+        or session_context.get("rational_plan_evidence"),
+    )
     prompt_safe_context = cast(dict[str, Any], session_context.get("prompt_safe_context") or {})
+    affective_runtime = cast(dict[str, Any], prompt_safe_context.get("affective_runtime") or {})
+    prompt_memory = cast(dict[str, Any], prompt_safe_context.get("memory") or {})
+    recall_policy = cast(dict[str, Any], prompt_memory.get("recall_policy") or {})
     db_counts = cast(dict[str, Any], payload.get("db_counts") or {})
     tool_results = cast(list[Any], payload.get("tool_results") or [])
     policy_decisions = cast(list[Any], execution_evidence.get("policy_decisions") or [])
@@ -3721,7 +4284,18 @@ def _build_agent_run_evidence(payload: dict[str, Any]) -> dict[str, Any]:
         dict[str, Any],
         prompt_safe_context.get("safety_boundaries") or {},
     )
-    prompt_memory = cast(dict[str, Any], prompt_safe_context.get("memory") or {})
+    affective_multimodal = cast(
+        dict[str, Any],
+        affective_runtime.get("multimodal_summary") or {},
+    )
+    affective_profile_route = cast(
+        dict[str, Any],
+        affective_runtime.get("profile_route") or {},
+    )
+    affective_presentation_policy = cast(
+        dict[str, Any],
+        affective_runtime.get("presentation_policy") or {},
+    )
     real_tool_adapter_required = bool(payload.get("release_gate_require_real_tool_adapter", False))
     real_tool_adapter_present = tool_adapter_runtime.get("adapter_kind") == "neuro-cli"
     real_tool_execution_succeeded = False
@@ -3735,9 +4309,15 @@ def _build_agent_run_evidence(payload: dict[str, Any]) -> dict[str, Any]:
     closure_gates: dict[str, bool] = {
         "provider_runtime_metadata_present": bool(maf_runtime),
         "rational_backend_metadata_present": bool(rational_backend),
+        "rational_plan_evidence_present": bool(rational_plan_evidence),
+        "rational_plan_outcome_recorded": str(
+            (rational_plan_evidence or {}).get("status") or ""
+        )
+        in {"tool_selected", "no_tool_selected", "invalid_payload"},
         "memory_runtime_metadata_present": bool(memory_runtime),
         "model_call_evidence_present": model_call_evidence is not None,
         "prompt_safe_context_present": bool(prompt_safe_context),
+        "affective_runtime_context_present": bool(affective_runtime),
         "db_counts_present": bool(db_counts),
         "execution_evidence_present": bool(execution_evidence),
         "policy_or_pending_evidence_present": bool(policy_decisions or approval_requests),
@@ -3745,8 +4325,14 @@ def _build_agent_run_evidence(payload: dict[str, Any]) -> dict[str, Any]:
         "audit_record_present": audit_record is not None,
         "final_response_present": bool(payload.get("final_response")),
         "provider_context_is_prompt_safe": (
-            prompt_safe_context.get("schema_version") == "1.2.2-prompt-safe-context-v1"
+            prompt_safe_context.get("schema_version") == "1.2.5-prompt-safe-context-v2"
         ),
+        "multimodal_summary_present": bool(affective_multimodal),
+        "profile_route_recorded": bool(affective_profile_route),
+        "presentation_policy_recorded": bool(affective_presentation_policy),
+        "memory_recall_policy_present": bool(recall_policy),
+        "affective_memory_recall_recorded": bool(recall_policy.get("affective_recall")),
+        "rational_memory_recall_recorded": bool(recall_policy.get("rational_recall")),
         "direct_tool_execution_by_model_disabled": bool(
             prompt_safety_boundaries.get("can_execute_tools_directly") is False
         ),
@@ -3774,12 +4360,28 @@ def _build_agent_run_evidence(payload: dict[str, Any]) -> dict[str, Any]:
         "real_tool_adapter_present": real_tool_adapter_present,
         "real_tool_execution_succeeded": real_tool_execution_succeeded,
         "model_call_evidence": model_call_evidence,
+        "rational_plan_evidence": rational_plan_evidence,
         "prompt_safe_context": {
             "schema_version": prompt_safe_context.get("schema_version"),
             "memory_lookup_count": prompt_memory.get("lookup_count"),
+            "affective_memory_count": cast(
+                dict[str, Any], recall_policy.get("affective_recall") or {}
+            ).get("selected_count"),
+            "rational_memory_count": cast(
+                dict[str, Any], recall_policy.get("rational_recall") or {}
+            ).get("selected_count"),
             "available_tool_count": len(prompt_safe_context.get("available_tools") or []),
             "pending_approval_count": len(prompt_safe_context.get("pending_approvals") or []),
             "safety_boundaries": prompt_safety_boundaries,
+        },
+        "memory_recall_policy": recall_policy,
+        "affective_runtime": {
+            "schema_version": affective_runtime.get("schema_version"),
+            "input_modes": list(affective_multimodal.get("input_modes") or []),
+            "selected_profile": affective_profile_route.get("selected_profile"),
+            "route_status": affective_profile_route.get("route_status"),
+            "route_ready": affective_profile_route.get("route_ready"),
+            "presentation_policy": affective_presentation_policy,
         },
         "db_counts": db_counts,
         "evidence_counts": {

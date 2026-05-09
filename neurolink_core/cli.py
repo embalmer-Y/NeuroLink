@@ -11,8 +11,11 @@ from .maf import (
     build_maf_runtime_profile,
     maf_provider_smoke_status,
 )
+from .inference import multimodal_profile_smoke
 from .session import CoreSessionManager
 from .tools import FakeUnitToolAdapter, NeuroCliToolAdapter
+from .tools import load_mcp_bridge_descriptor_payload
+from .tools import load_neuro_cli_skill_descriptor_payload
 from .tools import observe_activation_health
 from .data import CoreDataStore
 from .workflow import (
@@ -32,6 +35,854 @@ from .workflow import (
     run_live_event_service,
     run_no_model_dry_run,
 )
+
+
+CLOSURE_SUMMARY_SCHEMA_VERSION = "1.2.5-closure-summary-v7"
+DOCUMENTATION_CLOSURE_SCHEMA_VERSION = "1.2.5-documentation-closure-v1"
+REGRESSION_CLOSURE_SCHEMA_VERSION = "1.2.5-regression-closure-v1"
+
+
+def _build_closure_checklist_entry(
+    item_id: str,
+    *,
+    passed: bool,
+    title: str,
+    detail: str,
+) -> dict[str, Any]:
+    return {
+        "item_id": item_id,
+        "title": title,
+        "status": "pass" if passed else "fail",
+        "passed": passed,
+        "detail": detail,
+    }
+
+
+def _build_provider_smoke_closure_summary(
+    provider_smoke_payload: dict[str, Any] | None,
+    *,
+    required: bool,
+) -> dict[str, Any]:
+    if provider_smoke_payload is None:
+        gates = {
+            "provider_smoke_supplied": False,
+            "provider_smoke_contract_supported": False,
+            "provider_smoke_outcome_recorded": False,
+            "provider_smoke_opt_in_respected": False,
+            "provider_smoke_live_call_evidence_consistent": False,
+            "provider_smoke_readiness_or_missing_requirements_recorded": False,
+        }
+        return {
+            "required": required,
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "provider_smoke_file_not_supplied",
+            "call_status": "not_supplied",
+            "executes_model_call": False,
+            "closure_gates": gates,
+            "ok": not required,
+        }
+
+    smoke_closure_gates = cast(
+        dict[str, Any],
+        provider_smoke_payload.get("closure_gates") or {},
+    )
+    executes_model_call = bool(provider_smoke_payload.get("executes_model_call"))
+    gates = {
+        "provider_smoke_supplied": True,
+        "provider_smoke_contract_supported": str(
+            provider_smoke_payload.get("schema_version") or ""
+        )
+        == "1.2.5-maf-provider-smoke-v2",
+        "provider_smoke_outcome_recorded": bool(
+            smoke_closure_gates.get("closure_smoke_outcome_recorded")
+        ),
+        "provider_smoke_opt_in_respected": bool(
+            smoke_closure_gates.get("real_provider_call_opt_in_respected")
+        ),
+        "provider_smoke_live_call_evidence_consistent": (
+            not executes_model_call
+            or bool(smoke_closure_gates.get("model_call_evidence_present"))
+        ),
+        "provider_smoke_readiness_or_missing_requirements_recorded": bool(
+            smoke_closure_gates.get("provider_requirements_ready")
+            or smoke_closure_gates.get("missing_requirements_cleanly_reported")
+        ),
+    }
+    return {
+        "required": required,
+        "supplied": True,
+        "schema_version": str(provider_smoke_payload.get("schema_version") or ""),
+        "status": str(provider_smoke_payload.get("status") or "unknown"),
+        "reason": str(provider_smoke_payload.get("reason") or ""),
+        "call_status": str(provider_smoke_payload.get("call_status") or ""),
+        "executes_model_call": executes_model_call,
+        "closure_gates": gates,
+        "ok": all(gates.values()),
+    }
+
+
+def _build_multimodal_profile_closure_summary(
+    multimodal_profile_payload: dict[str, Any] | None,
+    *,
+    required: bool,
+) -> dict[str, Any]:
+    if multimodal_profile_payload is None:
+        gates = {
+            "multimodal_profile_smoke_supplied": False,
+            "multimodal_profile_contract_supported": False,
+            "multimodal_input_recorded": False,
+            "route_decision_recorded": False,
+            "profile_readiness_recorded": False,
+            "route_ready": False,
+            "no_model_call_executed": False,
+        }
+        return {
+            "required": required,
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "multimodal_profile_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": not required,
+        }
+
+    smoke_closure_gates = cast(
+        dict[str, Any],
+        multimodal_profile_payload.get("closure_gates") or {},
+    )
+    evidence_summary = cast(
+        dict[str, Any],
+        multimodal_profile_payload.get("evidence_summary") or {},
+    )
+    gates = {
+        "multimodal_profile_smoke_supplied": True,
+        "multimodal_profile_contract_supported": str(
+            multimodal_profile_payload.get("schema_version") or ""
+        )
+        == "1.2.5-inference-route-v1",
+        "multimodal_input_recorded": bool(
+            smoke_closure_gates.get("multimodal_input_recorded")
+        ),
+        "route_decision_recorded": bool(
+            smoke_closure_gates.get("route_decision_recorded")
+        ),
+        "profile_readiness_recorded": bool(
+            smoke_closure_gates.get("profile_readiness_recorded")
+        ),
+        "route_ready": bool(smoke_closure_gates.get("route_ready")),
+        "no_model_call_executed": bool(
+            smoke_closure_gates.get("no_model_call_executed")
+        )
+        and not bool(multimodal_profile_payload.get("executes_model_call")),
+    }
+    return {
+        "required": required,
+        "supplied": True,
+        "schema_version": str(multimodal_profile_payload.get("schema_version") or ""),
+        "status": str(multimodal_profile_payload.get("status") or "unknown"),
+        "reason": str(multimodal_profile_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": evidence_summary,
+        "ok": all(gates.values()),
+    }
+
+
+def _build_documentation_closure_summary(
+    documentation_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if documentation_payload is None:
+        gates = {
+            "documentation_evidence_supplied": False,
+            "documentation_contract_supported": False,
+            "release_plan_aligned": False,
+            "readme_aligned": False,
+            "progress_recorded": False,
+            "runbooks_aligned": False,
+            "release_identity_unpromoted": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "documentation_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    documentation_gates = cast(
+        dict[str, Any],
+        documentation_payload.get("closure_gates") or {},
+    )
+    evidence_summary = cast(
+        dict[str, Any],
+        documentation_payload.get("evidence_summary") or {},
+    )
+    gates = {
+        "documentation_evidence_supplied": True,
+        "documentation_contract_supported": str(
+            documentation_payload.get("schema_version") or ""
+        )
+        == DOCUMENTATION_CLOSURE_SCHEMA_VERSION,
+        "release_plan_aligned": bool(documentation_gates.get("release_plan_aligned")),
+        "readme_aligned": bool(documentation_gates.get("readme_aligned")),
+        "progress_recorded": bool(documentation_gates.get("progress_recorded")),
+        "runbooks_aligned": bool(documentation_gates.get("runbooks_aligned")),
+        "release_identity_unpromoted": bool(
+            documentation_gates.get("release_identity_unpromoted")
+        ),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(documentation_payload.get("schema_version") or ""),
+        "status": str(documentation_payload.get("status") or "unknown"),
+        "reason": str(documentation_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": evidence_summary,
+        "ok": all(gates.values()),
+    }
+
+
+def _build_regression_closure_summary(
+    regression_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if regression_payload is None:
+        gates = {
+            "regression_evidence_supplied": False,
+            "regression_contract_supported": False,
+            "core_tests_passed": False,
+            "app_lifecycle_regression_passed": False,
+            "event_service_regression_passed": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "regression_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    regression_gates = cast(
+        dict[str, Any],
+        regression_payload.get("closure_gates") or {},
+    )
+    evidence_summary = cast(
+        dict[str, Any],
+        regression_payload.get("evidence_summary") or {},
+    )
+    gates = {
+        "regression_evidence_supplied": True,
+        "regression_contract_supported": str(
+            regression_payload.get("schema_version") or ""
+        )
+        == REGRESSION_CLOSURE_SCHEMA_VERSION,
+        "core_tests_passed": bool(regression_gates.get("core_tests_passed")),
+        "app_lifecycle_regression_passed": bool(
+            regression_gates.get("app_lifecycle_regression_passed")
+        ),
+        "event_service_regression_passed": bool(
+            regression_gates.get("event_service_regression_passed")
+        ),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(regression_payload.get("schema_version") or ""),
+        "status": str(regression_payload.get("status") or "unknown"),
+        "reason": str(regression_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": evidence_summary,
+        "ok": all(gates.values()),
+    }
+
+
+def _build_validation_gate_checklist(
+    validation_gates: dict[str, bool],
+) -> list[dict[str, Any]]:
+    return [
+        _build_closure_checklist_entry(
+            "documentation_gate",
+            passed=bool(validation_gates.get("documentation_gate")),
+            title="Documentation Gate",
+            detail=(
+                "Release plan, README, progress ledger, and runbooks are aligned and release identity remains unpromoted."
+                if validation_gates.get("documentation_gate")
+                else "Documentation alignment evidence is missing or incomplete for the release gate."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "multimodal_normalization_gate",
+            passed=bool(validation_gates.get("multimodal_normalization_gate")),
+            title="Multimodal Normalization Gate",
+            detail=(
+                "Deterministic multimodal normalization evidence is recorded without executing a model call."
+                if validation_gates.get("multimodal_normalization_gate")
+                else "Multimodal normalization evidence is missing, incomplete, or not deterministic."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "profile_routing_gate",
+            passed=bool(validation_gates.get("profile_routing_gate")),
+            title="Profile Routing Gate",
+            detail=(
+                "Inference route decisions and profile readiness were recorded and reached a route-ready outcome."
+                if validation_gates.get("profile_routing_gate")
+                else "Profile routing evidence is missing, not route-ready, or does not include readiness details."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "provider_runtime_gate",
+            passed=bool(validation_gates.get("provider_runtime_gate")),
+            title="Provider Runtime Gate",
+            detail=(
+                "Provider smoke evidence records bounded opt-in behavior and consistent readiness/model-call outcomes."
+                if validation_gates.get("provider_runtime_gate")
+                else "Provider runtime smoke evidence is missing or incomplete for the release gate."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "memory_governance_gate",
+            passed=bool(validation_gates.get("memory_governance_gate")),
+            title="Memory Governance Gate",
+            detail=(
+                "Memory lifecycle and recall-governance evidence are both present for the release gate."
+                if validation_gates.get("memory_governance_gate")
+                else "Memory lifecycle or recall-governance evidence is missing for the release gate."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "tool_skill_mcp_gate",
+            passed=bool(validation_gates.get("tool_skill_mcp_gate")),
+            title="Tool Skill MCP Gate",
+            detail=(
+                "Tool, Skill, and MCP governance stayed within available-tool, approval, and read-only descriptor boundaries."
+                if validation_gates.get("tool_skill_mcp_gate")
+                else "Tool, Skill, or MCP governance evidence is missing or violated a release boundary."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "regression_gate",
+            passed=bool(validation_gates.get("regression_gate")),
+            title="Regression Gate",
+            detail=(
+                "Core and release-1.2.4 regression evidence was recorded as green."
+                if validation_gates.get("regression_gate")
+                else "Regression evidence is missing or incomplete for the release gate."
+            ),
+        ),
+    ]
+
+
+def _build_memory_governance_closure_summary(
+    evidence: dict[str, Any],
+    session_context: dict[str, Any],
+) -> dict[str, Any]:
+    memory_candidates = cast(list[dict[str, Any]], evidence.get("memory_candidates") or [])
+    long_term_memories = cast(list[dict[str, Any]], evidence.get("long_term_memories") or [])
+    facts = cast(list[dict[str, Any]], evidence.get("facts") or [])
+
+    def _payloads(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for item in items:
+            payload = item.get("payload")
+            if isinstance(payload, dict):
+                payloads.append(cast(dict[str, Any], payload))
+        return payloads
+
+    candidate_payloads = _payloads(memory_candidates)
+    committed_payloads = _payloads(long_term_memories)
+
+    def _candidate_is_governed(payload: dict[str, Any]) -> bool:
+        governance = cast(dict[str, Any], payload.get("memory_governance") or {})
+        lifecycle_state = str(governance.get("lifecycle_state") or "")
+        source_event_refs = list(governance.get("source_event_refs") or payload.get("event_ids") or [])
+        source_fact_refs = list(governance.get("source_fact_refs") or [])
+        return (
+            str(governance.get("schema_version") or "")
+            == "1.2.5-memory-governance-v1"
+            and lifecycle_state in {"accepted", "rejected"}
+            and bool(source_event_refs)
+            and (not facts or bool(source_fact_refs))
+        )
+
+    def _commit_is_governed(payload: dict[str, Any]) -> bool:
+        governance = cast(dict[str, Any], payload.get("memory_governance") or {})
+        lifecycle_state = str(governance.get("lifecycle_state") or "")
+        return (
+            str(governance.get("schema_version") or "")
+            == "1.2.5-memory-governance-v1"
+            and lifecycle_state in {"committed", "retired"}
+            and bool(governance.get("commit_backend"))
+            and bool(governance.get("retention_class"))
+        )
+
+    closure_gates = {
+        "memory_runtime_recorded": isinstance(session_context.get("memory_runtime"), dict),
+        "memory_candidates_governed": all(
+            _candidate_is_governed(payload) for payload in candidate_payloads
+        ),
+        "memory_commit_outcomes_governed": all(
+            _commit_is_governed(payload) for payload in committed_payloads
+        ),
+    }
+    return {
+        "candidate_count": len(candidate_payloads),
+        "committed_memory_count": sum(
+            1
+            for payload in committed_payloads
+            if str(dict(payload.get("memory_governance") or {}).get("lifecycle_state") or "")
+            == "committed"
+        ),
+        "rejected_candidate_count": sum(
+            1
+            for payload in candidate_payloads
+            if str(dict(payload.get("memory_governance") or {}).get("lifecycle_state") or "")
+            == "rejected"
+        ),
+        "commit_backends": sorted(
+            {
+                str(dict(payload.get("memory_governance") or {}).get("commit_backend") or "")
+                for payload in committed_payloads
+            }
+            - {""}
+        ),
+        "rejection_reasons": sorted(
+            {
+                str(dict(payload.get("memory_governance") or {}).get("decision_reason") or "")
+                for payload in candidate_payloads
+                if str(dict(payload.get("memory_governance") or {}).get("lifecycle_state") or "")
+                == "rejected"
+            }
+            - {""}
+        ),
+        "closure_gates": closure_gates,
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_memory_recall_closure_summary(session_context: dict[str, Any]) -> dict[str, Any]:
+    prompt_safe_context = cast(dict[str, Any], session_context.get("prompt_safe_context") or {})
+    prompt_memory = cast(dict[str, Any], prompt_safe_context.get("memory") or {})
+    recall_policy = cast(dict[str, Any], prompt_memory.get("recall_policy") or {})
+    affective_recall = cast(dict[str, Any], recall_policy.get("affective_recall") or {})
+    rational_recall = cast(dict[str, Any], recall_policy.get("rational_recall") or {})
+    closure_gates = {
+        "recall_policy_present": str(recall_policy.get("schema_version") or "")
+        == "1.2.5-memory-recall-policy-v1",
+        "affective_recall_recorded": isinstance(affective_recall.get("items") or [], list),
+        "rational_recall_recorded": isinstance(rational_recall.get("items") or [], list),
+        "fallback_backend_recorded": bool(recall_policy.get("backend_kind"))
+        and "fallback_active" in recall_policy,
+    }
+    return {
+        "schema_version": str(recall_policy.get("schema_version") or ""),
+        "lookup_count": int(recall_policy.get("lookup_count") or 0),
+        "backend_kind": str(recall_policy.get("backend_kind") or ""),
+        "fallback_backend": str(recall_policy.get("fallback_backend") or ""),
+        "fallback_active": bool(recall_policy.get("fallback_active", False)),
+        "affective_selected_count": int(affective_recall.get("selected_count") or 0),
+        "rational_selected_count": int(rational_recall.get("selected_count") or 0),
+        "filtered_out_categories": cast(
+            dict[str, Any], recall_policy.get("filtered_out_categories") or {}
+        ),
+        "closure_gates": closure_gates,
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_tool_skill_mcp_closure_summary(
+    session_context: dict[str, Any],
+    *,
+    rational_plan_evidence: dict[str, Any] | None,
+    tool_results: list[Any],
+) -> dict[str, Any]:
+    prompt_safe_context = cast(dict[str, Any], session_context.get("prompt_safe_context") or {})
+    prompt_safety_boundaries = cast(
+        dict[str, Any],
+        prompt_safe_context.get("safety_boundaries") or {},
+    )
+    available_tools = cast(
+        list[dict[str, Any]],
+        session_context.get("available_tools")
+        or prompt_safe_context.get("available_tools")
+        or [],
+    )
+    skill_descriptors = cast(list[dict[str, Any]], session_context.get("skill_descriptors") or [])
+    mcp_descriptors = cast(list[dict[str, Any]], session_context.get("mcp_descriptors") or [])
+    skill_descriptor = skill_descriptors[0] if skill_descriptors else {}
+    mcp_descriptor = mcp_descriptors[0] if mcp_descriptors else {}
+    rational_evidence = rational_plan_evidence or {}
+    rational_status = str(rational_evidence.get("status") or "")
+    selected_tool_name = str(rational_evidence.get("selected_tool_name") or "")
+    failure_statuses: set[str] = set()
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        result = cast(dict[str, Any], item)
+        payload_obj = result.get("payload")
+        if not isinstance(payload_obj, dict):
+            continue
+        payload = cast(dict[str, Any], payload_obj)
+        failure_status = str(payload.get("failure_status") or "")
+        if failure_status:
+            failure_statuses.add(failure_status)
+    invalid_tool_rejected = bool(
+        {"unknown_tool", "rational_plan_tool_not_in_available_tools"} & failure_statuses
+    )
+    side_effect_tools = [
+        tool
+        for tool in available_tools
+        if str(tool.get("side_effect_level") or "") in {"approval_required", "destructive"}
+    ]
+    approval_required_tool_count = sum(
+        1 for tool in side_effect_tools if bool(tool.get("approval_required", False))
+    )
+    closure_gates = {
+        "available_tools_recorded": bool(available_tools),
+        "available_tools_only_enforced": (
+            rational_status == "no_tool_selected"
+            or bool(rational_evidence.get("selected_tool_in_available_tools"))
+            or invalid_tool_rejected
+        ),
+        "side_effect_tools_require_approval": all(
+            bool(tool.get("approval_required", False))
+            or str(tool.get("side_effect_level") or "") == "destructive"
+            for tool in side_effect_tools
+        ),
+        "skill_descriptor_present": bool(skill_descriptor),
+        "workflow_plan_required_for_governed_tools": (
+            not side_effect_tools
+            or bool(skill_descriptor.get("workflow_plan_required", False))
+        ),
+        "mcp_descriptor_read_only": str(mcp_descriptor.get("bridge_mode") or "")
+        == "read_only_descriptor_only",
+        "tool_execution_via_mcp_forbidden": bool(
+            mcp_descriptor.get("tool_execution_via_mcp_forbidden", False)
+        ),
+        "external_mcp_disabled": not bool(
+            mcp_descriptor.get("external_mcp_connection_enabled", False)
+        ),
+        "direct_model_tool_execution_forbidden": not bool(
+            prompt_safety_boundaries.get("can_execute_tools_directly", False)
+        ),
+    }
+    return {
+        "available_tool_count": len(available_tools),
+        "side_effect_tool_count": len(side_effect_tools),
+        "approval_required_tool_count": approval_required_tool_count,
+        "selected_tool_name": selected_tool_name,
+        "rational_status": rational_status,
+        "invalid_tool_rejected": invalid_tool_rejected,
+        "skill_name": str(skill_descriptor.get("name") or ""),
+        "workflow_plan_required": bool(skill_descriptor.get("workflow_plan_required", False)),
+        "mcp_bridge_mode": str(mcp_descriptor.get("bridge_mode") or ""),
+        "mcp_blocked_tool_count": int(mcp_descriptor.get("blocked_tool_count") or 0),
+        "closure_gates": closure_gates,
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_closure_execution_summary(evidence: dict[str, Any]) -> dict[str, Any]:
+    execution_span = cast(dict[str, Any] | None, evidence.get("execution_span"))
+    audit_record = cast(dict[str, Any] | None, evidence.get("audit_record"))
+    audit_payload = cast(
+        dict[str, Any],
+        audit_record.get("payload") if isinstance(audit_record, dict) else {},
+    )
+    session_context = cast(dict[str, Any], audit_payload.get("session_context") or {})
+    rational_plan_evidence = cast(
+        dict[str, Any] | None,
+        audit_payload.get("rational_plan_evidence")
+        or session_context.get("rational_plan_evidence"),
+    )
+    model_call_evidence = cast(
+        dict[str, Any] | None,
+        session_context.get("model_call_evidence"),
+    )
+    prompt_safe_context = cast(
+        dict[str, Any] | None,
+        session_context.get("prompt_safe_context"),
+    )
+    memory_governance_summary = _build_memory_governance_closure_summary(
+        evidence,
+        session_context,
+    )
+    memory_recall_summary = _build_memory_recall_closure_summary(session_context)
+    tool_results = cast(list[Any], audit_payload.get("tool_results") or [])
+    approval_requests = cast(list[dict[str, Any]], evidence.get("approval_requests") or [])
+    tool_skill_mcp_summary = _build_tool_skill_mcp_closure_summary(
+        session_context,
+        rational_plan_evidence=rational_plan_evidence,
+        tool_results=tool_results,
+    )
+    pending_approval_count = sum(
+        1 for approval in approval_requests if approval.get("status") == "pending"
+    )
+    rational_status = str((rational_plan_evidence or {}).get("status") or "")
+    closure_gates = {
+        "audit_record_present": isinstance(audit_record, dict),
+        "rational_plan_evidence_present": isinstance(rational_plan_evidence, dict),
+        "rational_plan_outcome_recorded": rational_status
+        in {"tool_selected", "no_tool_selected", "invalid_payload"},
+        "model_call_evidence_present": isinstance(model_call_evidence, dict),
+        "prompt_safe_context_present": isinstance(prompt_safe_context, dict),
+        "memory_governance_recorded": bool(memory_governance_summary.get("ok")),
+        "memory_recall_policy_recorded": bool(memory_recall_summary.get("ok")),
+        "tool_skill_mcp_recorded": bool(tool_skill_mcp_summary.get("ok")),
+        "tool_result_outcome_recorded": bool(tool_results)
+        or rational_status == "no_tool_selected",
+        "approval_state_recorded": bool(approval_requests) or pending_approval_count == 0,
+    }
+    return {
+        "execution_span_id": str(
+            (execution_span or {}).get("execution_span_id") or ""
+        ),
+        "audit_id": str((audit_record or {}).get("audit_id") or ""),
+        "status": str((execution_span or {}).get("status") or "unknown"),
+        "started_at": (execution_span or {}).get("started_at"),
+        "completed_at": (execution_span or {}).get("completed_at"),
+        "closure_gates": closure_gates,
+        "ok": all(closure_gates.values()),
+        "rational_plan_evidence": rational_plan_evidence,
+        "model_call_evidence": model_call_evidence,
+        "memory_governance_summary": memory_governance_summary,
+        "memory_recall_summary": memory_recall_summary,
+        "tool_skill_mcp_summary": tool_skill_mcp_summary,
+        "tool_result_count": len(tool_results),
+        "approval_request_count": len(approval_requests),
+        "pending_approval_count": pending_approval_count,
+    }
+
+
+def _build_session_closure_summary(
+    data_store: CoreDataStore,
+    session_id: str,
+    *,
+    limit: int,
+    provider_smoke_payload: dict[str, Any] | None = None,
+    require_provider_smoke: bool = False,
+    multimodal_profile_payload: dict[str, Any] | None = None,
+    require_multimodal_profile: bool = False,
+    documentation_payload: dict[str, Any] | None = None,
+    regression_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    snapshot = CoreSessionManager(data_store).load_snapshot(session_id, limit=limit)
+    execution_summaries: list[dict[str, Any]] = []
+    for span in snapshot.recent_execution_spans:
+        audit_id = str(span["payload"].get("audit_id") or "")
+        if not audit_id:
+            continue
+        execution_summaries.append(
+            _build_closure_execution_summary(
+                data_store.build_execution_evidence(
+                    str(span["execution_span_id"]),
+                    audit_id,
+                )
+            )
+        )
+    provider_smoke_summary = _build_provider_smoke_closure_summary(
+        provider_smoke_payload,
+        required=require_provider_smoke,
+    )
+    multimodal_profile_summary = _build_multimodal_profile_closure_summary(
+        multimodal_profile_payload,
+        required=require_multimodal_profile,
+    )
+    documentation_summary = _build_documentation_closure_summary(documentation_payload)
+    regression_summary = _build_regression_closure_summary(regression_payload)
+    aggregate_gates = {
+        "session_has_execution_evidence": bool(execution_summaries),
+        "latest_execution_closure_ready": bool(execution_summaries)
+        and bool(execution_summaries[0].get("ok")),
+        "no_pending_approvals": not snapshot.pending_approval_requests,
+        "memory_governance_gate_satisfied": bool(execution_summaries)
+        and bool(
+            cast(
+                dict[str, Any],
+                execution_summaries[0].get("memory_governance_summary") or {},
+            ).get("ok")
+        ),
+        "memory_recall_gate_satisfied": bool(execution_summaries)
+        and bool(
+            cast(
+                dict[str, Any],
+                execution_summaries[0].get("memory_recall_summary") or {},
+            ).get("ok")
+        ),
+        "tool_skill_mcp_gate_satisfied": bool(execution_summaries)
+        and bool(
+            cast(
+                dict[str, Any],
+                execution_summaries[0].get("tool_skill_mcp_summary") or {},
+            ).get("ok")
+        ),
+        "provider_smoke_gate_satisfied": bool(provider_smoke_summary.get("ok")),
+        "multimodal_profile_gate_satisfied": bool(
+            multimodal_profile_summary.get("ok")
+        ),
+    }
+    bundle_checklist = [
+        _build_closure_checklist_entry(
+            "session_execution_evidence",
+            passed=bool(aggregate_gates["session_has_execution_evidence"]),
+            title="Session Execution Evidence",
+            detail=(
+                "Recent execution evidence is available for closure review."
+                if aggregate_gates["session_has_execution_evidence"]
+                else "No execution evidence was found for the session."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "latest_execution_ready",
+            passed=bool(aggregate_gates["latest_execution_closure_ready"]),
+            title="Latest Execution Closure Ready",
+            detail=(
+                "The latest execution summary passed all closure gates."
+                if aggregate_gates["latest_execution_closure_ready"]
+                else "The latest execution summary still has failing closure gates."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "pending_approvals_cleared",
+            passed=bool(aggregate_gates["no_pending_approvals"]),
+            title="Pending Approvals Cleared",
+            detail=(
+                "No pending approvals remain for the session."
+                if aggregate_gates["no_pending_approvals"]
+                else "Pending approvals remain and must be resolved before closure."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "memory_governance_bundle",
+            passed=bool(aggregate_gates["memory_governance_gate_satisfied"]),
+            title="Memory Governance Bundle",
+            detail=(
+                "Memory lifecycle evidence covers candidate screening and committed-memory governance."
+                if aggregate_gates["memory_governance_gate_satisfied"]
+                else "Memory lifecycle evidence is missing governed candidate or committed-memory details."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "memory_recall_policy_bundle",
+            passed=bool(aggregate_gates["memory_recall_gate_satisfied"]),
+            title="Memory Recall Policy Bundle",
+            detail=(
+                "Affective and Rational recall policy evidence is recorded with filtered categories and backend continuity."
+                if aggregate_gates["memory_recall_gate_satisfied"]
+                else "Memory recall policy evidence is missing separated affective/rational recall or backend continuity details."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "tool_skill_mcp_bundle",
+            passed=bool(aggregate_gates["tool_skill_mcp_gate_satisfied"]),
+            title="Tool Skill MCP Bundle",
+            detail=(
+                "Tool selection stayed within the available manifest, governed tools require approval, and MCP remains descriptor-only/read-only."
+                if aggregate_gates["tool_skill_mcp_gate_satisfied"]
+                else "Tool/Skill/MCP evidence is missing available-tool enforcement, approval governance, or read-only MCP boundaries."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "provider_smoke_bundle",
+            passed=bool(aggregate_gates["provider_smoke_gate_satisfied"]),
+            title="Provider Smoke Bundle",
+            detail=(
+                "Provider smoke evidence satisfied the closure bundle requirements."
+                if aggregate_gates["provider_smoke_gate_satisfied"]
+                else "Provider smoke evidence is missing or incomplete for the required closure bundle."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "multimodal_profile_bundle",
+            passed=bool(aggregate_gates["multimodal_profile_gate_satisfied"]),
+            title="Multimodal And Profile Bundle",
+            detail=(
+                "Multimodal normalization and profile routing evidence satisfied the closure bundle requirements."
+                if aggregate_gates["multimodal_profile_gate_satisfied"]
+                else "Multimodal/profile evidence is missing, incomplete, or not route-ready."
+            ),
+        ),
+    ]
+    multimodal_gates = cast(
+        dict[str, Any],
+        multimodal_profile_summary.get("closure_gates") or {},
+    )
+    provider_gates = cast(
+        dict[str, Any],
+        provider_smoke_summary.get("closure_gates") or {},
+    )
+    validation_gates = {
+        "documentation_gate": bool(documentation_summary.get("ok")),
+        "multimodal_normalization_gate": bool(
+            multimodal_gates.get("multimodal_profile_smoke_supplied")
+            and multimodal_gates.get("multimodal_profile_contract_supported")
+            and multimodal_gates.get("multimodal_input_recorded")
+            and multimodal_gates.get("no_model_call_executed")
+        ),
+        "profile_routing_gate": bool(
+            multimodal_gates.get("multimodal_profile_smoke_supplied")
+            and multimodal_gates.get("multimodal_profile_contract_supported")
+            and multimodal_gates.get("route_decision_recorded")
+            and multimodal_gates.get("profile_readiness_recorded")
+            and multimodal_gates.get("route_ready")
+        ),
+        "provider_runtime_gate": bool(
+            provider_gates.get("provider_smoke_supplied")
+            and provider_smoke_summary.get("ok")
+        ),
+        "memory_governance_gate": bool(execution_summaries)
+        and bool(
+            cast(
+                dict[str, Any],
+                execution_summaries[0].get("memory_governance_summary") or {},
+            ).get("ok")
+        )
+        and bool(
+            cast(
+                dict[str, Any],
+                execution_summaries[0].get("memory_recall_summary") or {},
+            ).get("ok")
+        ),
+        "tool_skill_mcp_gate": bool(execution_summaries)
+        and bool(
+            cast(
+                dict[str, Any],
+                execution_summaries[0].get("tool_skill_mcp_summary") or {},
+            ).get("ok")
+        ),
+        "regression_gate": bool(regression_summary.get("ok")),
+    }
+    validation_gate_summary: dict[str, Any] = {
+        "total_count": len(validation_gates),
+        "passed_count": sum(1 for passed in validation_gates.values() if passed),
+        "failed_gate_ids": [
+            gate_id for gate_id, passed in validation_gates.items() if not passed
+        ],
+        "ok": all(validation_gates.values()),
+    }
+    checklist = _build_validation_gate_checklist(validation_gates)
+    return {
+        "schema_version": CLOSURE_SUMMARY_SCHEMA_VERSION,
+        "session_id": session_id,
+        "execution_count": len(execution_summaries),
+        "recent_audit_ids": list(snapshot.recent_audit_ids),
+        "pending_approval_requests": list(snapshot.pending_approval_requests),
+        "documentation_summary": documentation_summary,
+        "provider_smoke_summary": provider_smoke_summary,
+        "multimodal_profile_summary": multimodal_profile_summary,
+        "regression_summary": regression_summary,
+        "aggregate_gates": aggregate_gates,
+        "validation_gates": validation_gates,
+        "validation_gate_summary": validation_gate_summary,
+        "checklist": checklist,
+        "bundle_checklist": bundle_checklist,
+        "ok": all(aggregate_gates.values()),
+        "execution_summaries": execution_summaries,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -654,10 +1505,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Select the tool adapter implementation for manifest discovery",
     )
 
+    skill_descriptor = subparsers.add_parser("skill-descriptor")
+    skill_descriptor.add_argument("--output", choices=("json",), default="json")
+
+    mcp_descriptor = subparsers.add_parser("mcp-descriptor")
+    mcp_descriptor.add_argument("--output", choices=("json",), default="json")
+    mcp_descriptor.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation used to derive the bounded read-only MCP bridge descriptor",
+    )
+
     session_inspect = subparsers.add_parser("session-inspect")
     session_inspect.add_argument("--db", default=":memory:", help="SQLite database path")
     session_inspect.add_argument("--session-id", required=True, help="Session identifier to inspect")
     session_inspect.add_argument("--output", choices=("json",), default="json")
+
+    closure_summary = subparsers.add_parser("closure-summary")
+    closure_summary.add_argument("--db", default=":memory:", help="SQLite database path")
+    closure_summary.add_argument("--session-id", required=True, help="Session identifier to summarize")
+    closure_summary.add_argument("--limit", type=int, default=5, help="Maximum recent executions to include")
+    closure_summary.add_argument("--provider-smoke-file", default="", help="Optional maf-provider-smoke JSON payload to include in closure gates")
+    closure_summary.add_argument("--require-provider-smoke", action="store_true", help="Require provider smoke evidence for aggregate closure readiness")
+    closure_summary.add_argument("--multimodal-profile-file", default="", help="Optional multimodal-profile-smoke JSON payload to include in closure gates")
+    closure_summary.add_argument("--require-multimodal-profile", action="store_true", help="Require multimodal/profile smoke evidence for aggregate closure readiness")
+    closure_summary.add_argument("--documentation-file", default="", help="Optional documentation closure JSON payload to include in the release validation gate matrix")
+    closure_summary.add_argument("--regression-file", default="", help="Optional regression closure JSON payload to include in the release validation gate matrix")
+    closure_summary.add_argument("--output", choices=("json",), default="json")
 
     approval_inspect = subparsers.add_parser("approval-inspect")
     approval_inspect.add_argument("--db", default=":memory:", help="SQLite database path")
@@ -693,6 +1568,54 @@ def build_parser() -> argparse.ArgumentParser:
         "--execute-model-call",
         action="store_true",
         help="Actually execute the provider smoke model call; requires --allow-model-call",
+    )
+
+    multimodal_smoke = subparsers.add_parser("multimodal-profile-smoke")
+    multimodal_smoke.add_argument("--output", choices=("json",), default="json")
+    multimodal_smoke.add_argument(
+        "--text",
+        action="append",
+        default=[],
+        help="Text input item to include in the normalized multimodal request",
+    )
+    multimodal_smoke.add_argument(
+        "--image-ref",
+        action="append",
+        default=[],
+        help="Image reference, URI, or path to normalize without loading media",
+    )
+    multimodal_smoke.add_argument(
+        "--audio-ref",
+        action="append",
+        default=[],
+        help="Audio reference, URI, or path to normalize without loading media",
+    )
+    multimodal_smoke.add_argument(
+        "--video-ref",
+        action="append",
+        default=[],
+        help="Video reference, URI, or path to normalize without loading media",
+    )
+    multimodal_smoke.add_argument(
+        "--response-mode",
+        action="append",
+        default=[],
+        help="Requested response mode; defaults to text",
+    )
+    multimodal_smoke.add_argument(
+        "--profile-hint",
+        default="auto",
+        help="Profile hint embedded in the normalized request",
+    )
+    multimodal_smoke.add_argument(
+        "--profile-override",
+        default="",
+        help="Operator-forced inference profile for route validation",
+    )
+    multimodal_smoke.add_argument(
+        "--require-live-backend",
+        action="store_true",
+        help="Require live OpenAI-compatible/vLLM provider configuration for readiness",
     )
     return parser
 
@@ -750,6 +1673,8 @@ def main(argv: list[str] | None = None) -> int:
             "failure_class": (
                 "maf_provider_not_ready"
                 if isinstance(exc, MafProviderNotReadyError)
+                else "maf_provider_execution_failed"
+                if isinstance(exc, TimeoutError)
                 else "maf_provider_request_invalid"
             ),
             "failure_status": str(exc),
@@ -809,7 +1734,7 @@ def main(argv: list[str] | None = None) -> int:
                     else None
                 ),
             )
-        except (MafProviderNotReadyError, ValueError) as exc:
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
             return 2
         print(json.dumps(payload, sort_keys=True))
@@ -976,7 +1901,7 @@ def main(argv: list[str] | None = None) -> int:
                 require_real_tool_adapter=True,
                 event_source_label=event_source_label,
             )
-        except (MafProviderNotReadyError, ValueError) as exc:
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
             return 2
         payload["command"] = "live-event-smoke"
@@ -1006,7 +1931,7 @@ def main(argv: list[str] | None = None) -> int:
                 rational_backend=args.rational_backend,
                 tool_adapter=tool_adapter,
             )
-        except (MafProviderNotReadyError, ValueError) as exc:
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
             return 2
         print(json.dumps(payload, sort_keys=True))
@@ -1300,7 +2225,7 @@ def main(argv: list[str] | None = None) -> int:
                     else None
                 ),
             )
-        except (MafProviderNotReadyError, ValueError) as exc:
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
             print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
             return 2
         payload["command"] = "agent-run"
@@ -1315,11 +2240,60 @@ def main(argv: list[str] | None = None) -> int:
             payload = adapter.tool_manifest_payload()
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "skill-descriptor":
+        print(json.dumps(load_neuro_cli_skill_descriptor_payload(), sort_keys=True))
+        return 0
+    if args.command == "mcp-descriptor":
+        tool_adapter = NeuroCliToolAdapter() if args.tool_adapter == "neuro-cli" else FakeUnitToolAdapter()
+        print(json.dumps(load_mcp_bridge_descriptor_payload(tool_adapter), sort_keys=True))
+        return 0
     if args.command == "session-inspect":
         data_store = CoreDataStore(args.db)
         try:
             manager = CoreSessionManager(data_store)
             payload = manager.load_snapshot(args.session_id, limit=10).to_dict()
+        finally:
+            data_store.close()
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "closure-summary":
+        provider_smoke_payload = None
+        if args.provider_smoke_file:
+            provider_smoke_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.provider_smoke_file).read_text(encoding="utf-8")),
+            )
+        multimodal_profile_payload = None
+        if args.multimodal_profile_file:
+            multimodal_profile_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.multimodal_profile_file).read_text(encoding="utf-8")),
+            )
+        documentation_payload = None
+        if args.documentation_file:
+            documentation_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.documentation_file).read_text(encoding="utf-8")),
+            )
+        regression_payload = None
+        if args.regression_file:
+            regression_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.regression_file).read_text(encoding="utf-8")),
+            )
+        data_store = CoreDataStore(args.db)
+        try:
+            payload = _build_session_closure_summary(
+                data_store,
+                args.session_id,
+                limit=max(1, args.limit),
+                provider_smoke_payload=provider_smoke_payload,
+                require_provider_smoke=bool(args.require_provider_smoke),
+                multimodal_profile_payload=multimodal_profile_payload,
+                require_multimodal_profile=bool(args.require_multimodal_profile),
+                documentation_payload=documentation_payload,
+                regression_payload=regression_payload,
+            )
         finally:
             data_store.close()
         print(json.dumps(payload, sort_keys=True))
@@ -1398,6 +2372,29 @@ def main(argv: list[str] | None = None) -> int:
             allow_model_call=args.allow_model_call,
             execute_model_call=args.execute_model_call,
         )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "multimodal-profile-smoke":
+        try:
+            payload = multimodal_profile_smoke(
+                text=args.text or ["release-1.2.5 multimodal profile smoke"],
+                image_refs=args.image_ref,
+                audio_refs=args.audio_ref,
+                video_refs=args.video_ref,
+                response_modes=args.response_mode or None,
+                profile_hint=args.profile_hint,
+                profile_override=args.profile_override,
+                require_live_backend=args.require_live_backend,
+            )
+        except ValueError as exc:
+            payload = {
+                "ok": False,
+                "status": "error",
+                "command": "multimodal-profile-smoke",
+                "failure_class": "multimodal_profile_request_invalid",
+                "failure_status": str(exc),
+                "executes_model_call": False,
+            }
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
     raise AssertionError(f"unhandled command: {args.command}")

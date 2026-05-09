@@ -1,3 +1,760 @@
+2026-05-09: Promoted release identity for release-1.2.5 after the local deterministic closure bundle, broader regressions, and explicit approval all converged. The canonical Neuro CLI release marker now advances from `1.2.4` to `1.2.5`, the workflow catalog and sample Unit App source identity move with it, and the operator-facing README/runbook/plan text is aligned so the repository no longer describes release-1.2.5 as merely the next planned slice. This promotion closes release-1.2.5 at the repository identity layer while leaving the previously recorded closure evidence bundle intact as the proof set for the decision. - Copilot
+
+#### EXEC-314 Release 1.2.5 Release Identity Promotion
+
+- Status: completed; release-1.2.5 is now the canonical promoted repository release identity
+- Owner: GitHub Copilot completing release-1.2.5 promotion
+- Scope:
+  - promote the canonical Neuro CLI release identity from `1.2.4` to `1.2.5`
+  - promote the workflow catalog release marker and sample Unit App source identity to `1.2.5`
+  - align README and AI Core runbooks so release-1.2.5 is described as closed rather than next planned
+  - preserve the already-recorded deterministic closure evidence bundle as the basis for the promotion decision
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.5_MULTIMODAL_AGENT_PLAN.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+- Result:
+  - the host CLI now advertises `RELEASE_TARGET = "1.2.5"`
+  - the workflow catalog release label and sample Unit App build identity now match the promoted release marker
+  - operator-facing release text no longer presents release-1.2.5 as pending work
+  - release-1.2.5 is now closed both in evidence and in canonical repository identity
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q -k 'capabilities or workflow_commands_do_not_embed_release_target_literals or sample_app_source_identity_matches_release_target'` -> `5 passed, 122 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python neuro_cli/src/neuro_cli.py --output json system capabilities` -> `ok=true`, `release_target=1.2.5`
+  - no active-surface matches remain for pre-promotion literals such as `RELEASE_TARGET = "1.2.4"`, `neuro_unit_app-1.2.4-cbor-v2`, or README/runbook text that still described release-1.2.5 as the next planned slice
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: 100%
+  - release-1.2.5 closure progress: 100%
+  - overall HLD completion: about 88%
+
+2026-05-09: Completed EXEC-313 for release-1.2.5 by finishing the broader local regression pass and turning the earlier deterministic evidence bundle into an explicit closure decision record. The previously failing broader `neurolink_core` regressions were traced to stale test expectations after the 1.2.5 evidence surfaces hardened: fact counts now include the added affective-runtime, memory-recall, and memory-governance facts, and a custom destructive fake adapter now fails earlier at manifest/plan-quality validation rather than reaching the older policy-block assertion. After aligning those stale expectations, the full `neurolink_core/tests` suite, full `neuro_cli/tests/test_neuro_cli.py` suite, the broader release-1.2.4 app lifecycle and event-service regression subset, and the regenerated `closure-summary` bundle all passed. This means release-1.2.5 is technically closure-ready under the local deterministic gate set, but release identity remains frozen at `1.2.4` pending explicit promotion approval. - Copilot
+
+#### EXEC-313 Release 1.2.5 Final Regression And Closure Decision
+
+- Status: completed for the local deterministic closure decision; release identity remains unpromoted at `1.2.4`
+- Owner: GitHub Copilot completing the release-1.2.5 WS-7 closure track
+- Scope:
+  - rerun the broader local regression set across `neurolink_core/tests` and `neuro_cli/tests/test_neuro_cli.py`
+  - rerun the broader safe local release-1.2.4 app lifecycle and event-service regression subset
+  - resolve broader regression blockers caused by stale test expectations after 1.2.5 evidence-surface expansion
+  - regenerate regression closure evidence and final `closure-summary` for the representative release-1.2.5 session bundle
+  - record the final local closure decision without promoting the canonical release identity
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/pytest-neurolink-core-full.txt`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/pytest-neuro-cli-full.txt`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/pytest-release124-closure-broad.txt`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/regression-closure-final.json`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/closure-summary-final.json`
+- Result:
+  - broader local closure validation is now green across the full AI Core suite, full Neuro CLI suite, and the broader safe local release-1.2.4 lifecycle/event-service regression subset
+  - the remaining EXEC-313 blocker was stale regression expectations, not a runtime failure in the 1.2.5 closure path
+  - final closure evidence now exists in `closure-summary-final.json` and still reports `validation_gate_summary.ok=true`, `passed_count=7`, and no failed gate ids
+  - release-1.2.5 is technically closure-ready from the local deterministic evidence perspective, while canonical release identity intentionally remains `1.2.4` until explicit promotion approval
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'rejects_manifest_mismatched_tool_contract_before_adapter_execution or dry_run_persists_before_reasoning_and_seals_audit or file_backed_dry_run_reports_counts or dry_run_reports_execution_evidence_snapshot or low_salience_tick_does_not_delegate or cli_live_event_smoke_maps_raw_state_event_to_operational_wake_topic'` -> `6 passed, 90 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests` -> `180 passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py` -> `127 passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'event_service or live_event_smoke or event_daemon or app_deploy_plan or app_deploy_prepare_verify or app_deploy_activate or app_deploy_rollback'` -> `35 passed, 61 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db smoke-evidence/release-1.2.5-closure-20260509T134459Z/closure.db --session-id release-1.2.5-closure-001 --documentation-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/documentation-closure.json --provider-smoke-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/provider-smoke.json --require-provider-smoke --multimodal-profile-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/multimodal-profile-smoke.json --require-multimodal-profile --regression-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/regression-closure-final.json --output json` -> `validation_gate_summary.ok=true`, `passed_count=7`, `failed_gate_ids=[]`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 72%
+  - release-1.2.5 closure progress: about 92%
+  - overall HLD completion: about 88%
+
+2026-05-09: Started EXEC-312 for release-1.2.5 by collecting the first real deterministic closure evidence bundle instead of only extending aggregation logic. A representative session database was materialized with `no-model-dry-run`, provider availability was captured through `maf-provider-smoke` in `provider_available_no_call` mode, multimodal/profile routing evidence was recorded through `multimodal-profile-smoke`, focused Core/MAF/release-1.2.4 regression suites were rerun, and `closure-summary` was executed against the recorded documentation, provider, multimodal, and regression evidence files. The resulting bundle shows all seven release validation gates passing while keeping release identity frozen at `1.2.4`, which moves release-1.2.5 closure from planning-only into recorded evidence review without yet making the final closure decision. - Copilot
+
+#### EXEC-312 Release 1.2.5 Opt-In Provider Smoke And Closure Evidence Collection
+
+- Status: completed for the first deterministic closure evidence bundle; release identity remains unpromoted at `1.2.4`
+- Owner: GitHub Copilot continuing the release-1.2.5 WS-7 closure track
+- Scope:
+  - collect a representative release-1.2.5 session database for closure review
+  - record provider smoke in bounded availability-only mode without executing a live model call
+  - record multimodal normalization and profile-routing smoke evidence in the same closure bundle
+  - rerun focused Core, MAF, and release-1.2.4 app lifecycle/event-service regressions that are safe on the local host
+  - execute `closure-summary` over the recorded evidence files and preserve the resulting JSON bundle under the repo `smoke-evidence` convention
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/provider-smoke.json`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/multimodal-profile-smoke.json`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/documentation-closure.json`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/regression-closure.json`
+  - `applocation/NeuroLink/smoke-evidence/release-1.2.5-closure-20260509T134459Z/closure-summary.json`
+- Result:
+  - release-1.2.5 now has a concrete deterministic closure bundle instead of only closure-summary plumbing
+  - provider evidence recorded the expected bounded `provider_available_no_call` outcome with credentials/configuration present and no direct model call execution
+  - multimodal/profile evidence recorded a route-ready `local_16g` decision with normalized text input and no model call execution
+  - the representative `closure-summary` bundle reported `validation_gate_summary.ok=true` with `passed_count=7`, `failed_gate_ids=[]`, and all bundle/aggregate gates satisfied
+  - release identity remains `1.2.4`; this slice records evidence only and does not promote closure or change canonical release markers
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli no-model-dry-run --db smoke-evidence/release-1.2.5-closure-20260509T134459Z/closure.db --session-id release-1.2.5-closure-001 --memory-backend local --output json` -> session evidence recorded in `smoke-evidence/release-1.2.5-closure-20260509T134459Z/no-model-dry-run.json`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli maf-provider-smoke --output json` -> `status=ready`, `smoke_mode=availability_only`, `provider_mode=provider_available_no_call`, `executes_model_call=false`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli multimodal-profile-smoke --text 'release gate check' --output json` -> `status=ready`, `route_status=routed`, `selected_profile=local_16g`, `executes_model_call=false`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python neuro_cli/src/neuro_cli.py --output json system capabilities` -> `ok=true`, `release_target=1.2.4`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_reads_session_evidence or closure_summary_includes_memory_governance_bundle_for_local_memory or closure_summary_records_invalid_provider_tool_rejection_in_tool_skill_mcp_bundle or closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or prompt_safe_context_summarizes_history_and_memory or real_provider_receives_prompt_safe_context_only or mem0_prompt_safe_recall_excludes_ungoverned_sidecar_results or cli_agent_run_can_use_real_provider_with_injected_default_factory or workflow_rejects_real_provider_plan_for_unknown_manifest_tool'` -> `9 passed, 87 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -k 'provider_smoke or multimodal_profile_smoke or inference_route or normalize_multimodal_input'` -> `16 passed, 11 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'event_replay_reports_duplicate_summary or event_daemon_replay_dedupes_across_batches or event_daemon_replay_seeds_dedupe_keys_from_existing_database or cli_live_event_smoke_ingests_app_events_with_real_adapter_evidence or cli_live_event_smoke_fails_closed_when_no_events_are_collected or cli_live_event_smoke_can_ingest_unit_events_with_explicit_provenance or cli_app_deploy_prepare_verify_executes_prepare_verify_and_cleanup or cli_app_deploy_activate_requires_explicit_approval or cli_app_deploy_activate_executes_activate_health_and_cleanup or cli_app_deploy_rollback_requires_explicit_approval or cli_app_deploy_rollback_executes_resume_and_observes_state'` -> `11 passed, 85 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db smoke-evidence/release-1.2.5-closure-20260509T134459Z/closure.db --session-id release-1.2.5-closure-001 --documentation-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/documentation-closure.json --provider-smoke-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/provider-smoke.json --require-provider-smoke --multimodal-profile-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/multimodal-profile-smoke.json --require-multimodal-profile --regression-file smoke-evidence/release-1.2.5-closure-20260509T134459Z/regression-closure.json --output json` -> `validation_gate_summary.ok=true`, `passed_count=7`, `failed_gate_ids=[]`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 72%
+  - release-1.2.5 closure progress: about 18%
+  - overall HLD completion: about 88%
+
+2026-05-09: Started EXEC-311 for release-1.2.5 by turning `closure-summary` from a set of separate bundle checks into an integrated release validation gate matrix. The command now advances to `1.2.5-closure-summary-v7`, accepts documentation and regression evidence files in addition to provider and multimodal/profile evidence, exposes seven explicit release gates through `validation_gates` and `checklist`, and keeps the prior bundle-level results available through `bundle_checklist`. This gives operator closure review a deterministic pass/fail matrix for documentation, multimodal normalization, profile routing, provider runtime, memory governance, Tool/Skill/MCP governance, and regression without yet requiring live closure collection. - Copilot
+
+#### EXEC-311 Release 1.2.5 Integrated Validation Gate Bundle
+
+- Status: completed for the integrated release validation gate matrix
+- Owner: GitHub Copilot continuing the release-1.2.5 WS-7 closure track
+- Scope:
+  - extend `closure-summary` with documentation and regression evidence inputs
+  - add an explicit seven-gate release validation matrix covering documentation, multimodal normalization, profile routing, provider runtime, memory governance, Tool/Skill/MCP, and regression
+  - preserve lower-level bundle inspection separately through `bundle_checklist`
+  - document the updated closure command sequence and checklist semantics in README and English/Chinese runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - `closure-summary.checklist` now represents the seven release-1.2.5 validation gates directly instead of mixing gate groups with bundle items
+  - operators can still inspect lower-level bundle readiness through `bundle_checklist` while using `validation_gate_summary` as the integrated release matrix
+  - documentation and regression evidence can now be folded into deterministic closure review without starting live evidence collection
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_reads_session_evidence or closure_summary_includes_memory_governance_bundle_for_local_memory or closure_summary_records_invalid_provider_tool_rejection_in_tool_skill_mcp_bundle or closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied'` -> `4 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 72%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 88%
+
+2026-05-09: Started EXEC-310 for release-1.2.5 by packaging Tool/Skill/MCP governance into the closure surface instead of leaving it spread across runtime evidence. `closure-summary` now advances to `1.2.5-closure-summary-v6`, adds a dedicated Tool/Skill/MCP bundle gate and checklist item, and summarizes available-tool enforcement, governed side-effect tool approval boundaries, workflow-plan requirements, and descriptor-only/read-only MCP constraints in one operator-facing block. Regression coverage now exercises the closure bundle on both normal tool selection and provider invalid-tool rejection paths. - Copilot
+
+#### EXEC-310 Release 1.2.5 Tool Skill MCP Final Regression And Closure Gates Bundle
+
+- Status: completed for the Tool/Skill/MCP closure bundle
+- Owner: GitHub Copilot continuing the release-1.2.5 WS-5 closure track
+- Scope:
+  - add `closure-summary` aggregation for available-tool enforcement, governed side-effect approval boundaries, skill workflow-plan requirements, and read-only MCP descriptor limits
+  - extend the session checklist with `tool_skill_mcp_bundle`
+  - align invalid provider-tool rejection assertions with the current rational-plan validation contract
+  - document the Tool/Skill/MCP closure gate in README and English/Chinese runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - closure review can now verify WS-5 governance directly from `execution_summaries[0].tool_skill_mcp_summary` instead of reconstructing it from raw session context
+  - provider-selected tools that fall outside the manifest are reflected as enforced rejection evidence within the Tool/Skill/MCP closure bundle
+  - checklist consumers now get a dedicated `tool_skill_mcp_bundle` item alongside memory/provider/multimodal bundles
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_reads_session_evidence or closure_summary_includes_memory_governance_bundle_for_local_memory or closure_summary_records_invalid_provider_tool_rejection_in_tool_skill_mcp_bundle or workflow_rejects_real_provider_plan_for_unknown_manifest_tool or cli_agent_run_can_use_real_provider_with_injected_default_factory or real_provider_receives_prompt_safe_context_only'` -> `6 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 70%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 87%
+
+2026-05-09: Started EXEC-309 for release-1.2.5 by separating memory recall policy from raw lookup behavior. Prompt-safe session context now carries a dedicated recall policy contract that splits affective long-term recall from rational operational recall, records filtered-out ungoverned categories and backend continuity, and keeps provider-facing memory context limited to governed summaries only. `closure-summary` advances to `1.2.5-closure-summary-v5` with a dedicated memory recall gate and checklist item, so closure review can verify recall separation and fallback continuity alongside memory governance. - Copilot
+
+#### EXEC-309 Release 1.2.5 Memory Recall Policy And Agent Context Bundle
+
+- Status: completed for the memory recall policy and agent context bundle
+- Owner: GitHub Copilot continuing the release-1.2.5 WS-6 closure track
+- Scope:
+  - split affective long-term recall from rational operational recall in prompt-safe context
+  - record recall policy evidence with selected counts, filtered categories, backend kind, and fallback continuity
+  - ensure provider-facing memory context receives governed summaries only and filters ungoverned sidecar results out of prompts
+  - extend `agent_run_evidence` and `closure-summary` with memory recall policy gates
+  - document the new recall gate in README and English/Chinese runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/session.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - provider-facing affective calls now receive a separate recall slice from rational planning context instead of sharing one undifferentiated memory list
+  - recall evidence now reports when sidecar results were filtered out for being ungoverned rather than silently mixing them into prompts
+  - closure review can directly verify recall separation with `memory_recall_policy_bundle`
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary or local_memory_backend or mem0_memory_backend or prompt_safe_context_summarizes_history_and_memory or real_provider_receives_prompt_safe_context_only or mem0_prompt_safe_recall_excludes_ungoverned_sidecar_results or cli_agent_run_can_use_real_provider_with_injected_default_factory or cli_no_model_dry_run_can_use_local_memory_backend or cli_no_model_dry_run_can_request_mem0_with_local_fallback'` -> `12 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 67%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 86%
+
+2026-05-09: Started EXEC-308 for release-1.2.5 by turning the memory governance baseline into a full lifecycle bundle. Workflow memory candidates now link back to persisted source facts, pass through deterministic screening into accepted/rejected states, and only accepted candidates are promoted into long-term memory. Local and Mem0-backed paths now retain explicit retention metadata, commit eligibility, mirror/fallback status, and retirement support for expired memories, while `closure-summary` adds a dedicated memory governance bundle gate and checklist item so operator closure review can validate the memory lifecycle directly from session evidence. - Copilot
+
+#### EXEC-308 Release 1.2.5 Memory Governance Lifecycle Bundle
+
+- Status: completed for the memory governance lifecycle bundle
+- Owner: GitHub Copilot continuing the release-1.2.5 memory governance and closure track
+- Scope:
+  - add deterministic candidate screening with accepted/rejected lifecycle states, retention metadata, and commit eligibility
+  - link memory candidates back to persisted workflow facts through non-empty `source_fact_refs`
+  - keep Mem0 sidecar payloads governed and prompt-safe instead of forwarding raw operational fact content
+  - add long-term memory update/retire support and exclude retired memories from active lookup
+  - extend `closure-summary` with a memory governance gate, summary block, and checklist item
+  - document the new closure review surface in README and English/Chinese runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/data.py`
+  - `applocation/NeuroLink/neurolink_core/memory.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - memory evidence now distinguishes retained operational lessons from rejected ephemeral telemetry instead of promoting every topic into long-term storage
+  - closure review can inspect governed candidate counts, rejection reasons, committed memory count, and commit backends directly from `closure-summary`
+  - expired long-term memories can be retired without leaking them back into active lookup results
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'memory_backend or memory_candidates_include_governance or reuses_prior_memories or dedupes_duplicate_commit_candidates' && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary or memory_backend or retires_expired_memories or memory_governance_bundle'` -> `7 passed` and `12 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 64%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 85%
+
+2026-05-09: Started EXEC-307 for release-1.2.5 by connecting WS-2/WS-3 multimodal/profile evidence into the active Affective provider runtime. Real-provider `agent-run` and workflow evidence now carry a prompt-safe affective runtime bundle with multimodal summary, routed profile summary, and presentation policy, while provider timeouts and unroutable affective profile selections fail closed instead of degrading silently. - Copilot
+
+#### EXEC-307 Release 1.2.5 Affective Runtime Multimodal Context Bundle
+
+- Status: completed for the affective runtime multimodal context bundle
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - build a prompt-safe affective runtime context from workflow events using multimodal normalization and profile routing summaries
+  - pass that compact context into the real affective provider path without exposing raw unrestricted payloads
+  - record multimodal summary, profile route, presentation policy, and fail-closed provider behavior in `model_call_evidence` and `agent_run_evidence`
+  - fail closed when the affective provider route is unroutable in real-provider mode
+  - surface structured CLI failures for provider timeout paths
+  - document the new runtime evidence fields in README and English/Chinese runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/session.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - WS-4 now receives a prompt-safe multimodal/profile context bundle instead of frame-only provider prompts
+  - operator-facing evidence can verify selected profile, multimodal shape, presentation policy, and Core-owned tool boundaries on real-provider runs
+  - provider timeout and unavailable affective route paths now fail closed with structured evidence rather than implicit fallback
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -k 'real_provider_affective_adapter_passes_prompt_safe_runtime_context or real_provider_rational_adapter_passes_live_context_to_provider or real_provider_adapters_can_use_injected_provider_client' && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'prompt_safe_context_summarizes_history_and_memory or cli_agent_run_can_use_real_provider_with_injected_default_factory or real_provider_receives_prompt_safe_context_only or cli_agent_run_reports_provider_timeout_as_structured_error or real_provider_fails_closed_when_affective_profile_route_is_unavailable'` -> `3 passed` and `5 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 61%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 84%
+
+2026-05-09: Started EXEC-306 for release-1.2.5 by moving multimodal normalization and inference profile routing from smoke-level contracts into closure-ready evidence. `multimodal-profile-smoke` now emits closure gates and an `evidence_summary` for normalized input modes, response modes, selected/requested profile, route status, fallback state, failure status, candidate rejection count, and live-backend requirement. `closure-summary` now accepts `--multimodal-profile-file`, supports `--require-multimodal-profile`, promotes its schema to `1.2.5-closure-summary-v4`, and exposes `aggregate_gates.multimodal_profile_gate_satisfied` plus a checklist item for the multimodal/profile bundle. - Copilot
+
+#### EXEC-306 Release 1.2.5 Multimodal Profile Closure Evidence Bundle
+
+- Status: completed for the expanded multimodal/profile closure evidence bundle slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - add closure gates and compact evidence summary to `multimodal-profile-smoke`
+  - include multimodal input recording, route decision recording, profile readiness, route-ready, fail-closed unroutable, and no-model-call evidence
+  - extend `closure-summary` with `--multimodal-profile-file` and `--require-multimodal-profile`
+  - promote the closure summary schema to `1.2.5-closure-summary-v4` for the multimodal/profile bundle contract
+  - add aggregate gate `multimodal_profile_gate_satisfied` and checklist entry `multimodal_profile_bundle`
+  - document the multimodal/profile smoke and closure bundle workflow in README and English/Chinese runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/inference.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - WS-2 multimodal normalization and WS-3 profile routing now have a machine-readable closure evidence path
+  - `closure-summary` can fail closed when required multimodal/profile evidence is absent or incomplete
+  - routable and deliberately unroutable multimodal/profile requests now produce explicit evidence instead of relying on raw route payload interpretation
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -k 'multimodal_profile or inference_route or normalize_multimodal' && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_reads_session_evidence or closure_summary_bundles_provider_smoke_evidence or closure_summary_fails_closed_when_required_provider_smoke_missing or closure_summary_accepts_real_provider_null_plan'` -> `9 passed` and `4 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 57%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 with a larger closure evidence bundle slice. `closure-summary` now accepts a saved `maf-provider-smoke` JSON payload through `--provider-smoke-file`, can require that provider smoke evidence through `--require-provider-smoke`, folds provider smoke contract/version, opt-in, outcome, readiness/missing-requirements, and live-call evidence consistency into aggregate closure gates, and now emits a machine-readable `checklist` array so operator review and later closure automation do not have to reconstruct pass/fail items from raw booleans. This moves the release closer to a single operator-facing closure bundle instead of separate manual checks for session evidence and provider smoke. - Copilot
+
+#### EXEC-305 Release 1.2.5 Closure Summary Provider Smoke Bundle Slice
+
+- Status: completed for the expanded closure summary provider smoke bundle slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - extend `closure-summary` with `--provider-smoke-file` and `--require-provider-smoke`
+  - promote the closure summary schema to `1.2.5-closure-summary-v3` for the expanded provider smoke bundle and checklist contract
+  - summarize provider smoke schema/version support, opt-in compliance, recorded outcome, readiness or clean missing-requirements evidence, and live-call evidence consistency
+  - add aggregate gate `provider_smoke_gate_satisfied`
+  - emit a stable machine-readable `checklist` layer on top of aggregate gates
+  - keep selected-tool and valid no-tool Rational closure paths intact
+  - document the provider smoke bundle workflow in README and English/Chinese runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - closure summary now acts as a broader evidence bundle instead of only a session rollup
+  - provider smoke evidence can be optional for local checks or required for closure readiness, with missing required smoke evidence failing closed
+  - the operator path now has one JSON surface for session execution closure gates plus provider smoke closure gates
+  - operator review and later tooling can consume `checklist` directly instead of mapping aggregate gates by convention
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_reads_session_evidence or closure_summary_bundles_provider_smoke_evidence or closure_summary_fails_closed_when_required_provider_smoke_missing or closure_summary_accepts_real_provider_null_plan'` -> `4 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 53%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 by hardening `closure-summary` for valid provider/copilot no-tool plans. The summary now treats `rational_plan_evidence.status=no_tool_selected` as an explicit recorded outcome even when no tool result exists, which keeps closure evidence aligned with the WS-5 contract that providers may choose exactly one available tool or return null. - Copilot
+
+#### EXEC-304 Release 1.2.5 Closure Summary No-Tool Outcome Slice
+
+- Status: completed for the bounded closure summary no-tool outcome slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - align `closure-summary` with the provider/copilot Rational contract that permits valid null/no-tool plans
+  - keep `tool_result_outcome_recorded` true when Rational evidence explicitly records `no_tool_selected`
+  - add focused regression coverage for closure summary over a real-provider null-plan run
+  - document the no-tool closure semantics in the English and Chinese AI Core runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - closure summary no longer rejects valid provider/copilot no-tool outcomes just because `tool_result_count=0`
+  - release-1.2.5 closure evidence now distinguishes missing tool execution from explicitly unnecessary tool execution
+  - operator runbooks now describe how to interpret `no_tool_selected` in closure summary output
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_reads_session_evidence or closure_summary_accepts_real_provider_null_plan'` -> `passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 48%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 by adding a read-only `closure-summary` CLI for session-level closure evidence rollups. Operators can now point the CLI at a Core database and session id to summarize recent execution evidence, Rational plan evidence, model-call evidence, pending approvals, and aggregate closure gates without manually stitching together `session-inspect`, audit records, and per-run JSON payloads. - Copilot
+
+#### EXEC-303 Release 1.2.5 Closure Summary CLI Slice
+
+- Status: completed for the bounded closure summary CLI slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - add `neurolink_core.cli closure-summary` as a read-only session evidence rollup
+  - summarize recent execution evidence, audit presence, Rational plan evidence, model-call evidence, tool-result counts, pending approvals, and aggregate closure gates
+  - document the new closure rollup in the English/Chinese AI Core runbooks and README
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - closure review now has a stable JSON entrypoint for session-level evidence instead of relying on manual inspection of separate session, audit, and run payloads
+  - the rollup exposes `aggregate_gates.session_has_execution_evidence`, `latest_execution_closure_ready`, and `no_pending_approvals` for final closure preparation
+  - operator documentation now points to the new rollup as part of release-1.2.5 closure preparation
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_reads_session_evidence'` -> `1 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 47%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 by aligning the top-level README with the closure-gated provider smoke contract. The README AI Core smoke section now points readers at the new `closure_gates` fields, so the documentation gate no longer depends on operators discovering those provider smoke expectations only in the detailed runbooks. - Copilot
+
+#### EXEC-302 Release 1.2.5 README Provider Smoke Alignment Slice
+
+- Status: completed for the bounded README alignment slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - align the README AI Core smoke section with the 1.2.5 provider smoke closure contract
+  - keep the top-level operator entrypoint consistent with the detailed runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+- Result:
+  - the README now tells operators which provider smoke `closure_gates` matter for closure evidence
+  - the documentation gate is tighter because README and runbooks now describe the same provider smoke review surface
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && git -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check -- PROJECT_PROGRESS.md README.md` -> `clean`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 45%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 by versioning the evolved provider smoke contract correctly. After adding explicit closure gates to `maf-provider-smoke`, the payload schema is now promoted to a 1.2.5-specific version so downstream closure evidence consumers can distinguish the newer closure-ready contract from the earlier status-only provider smoke payload. - Copilot
+
+#### EXEC-301 Release 1.2.5 Provider Smoke Schema Versioning Slice
+
+- Status: completed for the bounded provider smoke schema versioning slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - version the expanded `maf-provider-smoke` payload contract consistently with its new closure gate fields
+  - keep project progress aligned with the evolved provider smoke closure surface
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+- Result:
+  - the provider smoke payload now advertises a 1.2.5-era schema version instead of reusing the older 1.2.0 contract label
+  - downstream closure tooling can distinguish the closure-gated smoke payload from the earlier readiness-only payload
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -k 'provider_smoke_executes_affective_call_with_injected_provider or cli_maf_provider_smoke_outputs_json'` -> `passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && git -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check -- PROJECT_PROGRESS.md neurolink_core/maf.py` -> `clean`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 45%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 by turning `maf-provider-smoke` into a closure-ready provider smoke summary. The smoke payload now emits explicit closure gates for operator opt-in, provider readiness, cleanly reported missing requirements, model-call evidence presence, and stable outcome recording, so release closure no longer has to reverse-engineer readiness from `status`/`reason` pairs alone. The AI Core runbooks were updated at the same time to point operators at these new fields for both availability-only and live-call provider smoke. - Copilot
+
+#### EXEC-300 Release 1.2.5 Provider Smoke Closure Gate Slice
+
+- Status: completed for the bounded provider smoke closure gate slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - add explicit closure gate booleans to `maf_provider_smoke_status()`
+  - add focused regressions for successful smoke, invalid provider output, CLI availability-only smoke, and opt-in enforcement
+  - document the new provider smoke closure fields in the English and Chinese AI Core runbooks
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/maf.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+- Result:
+  - provider smoke now reports closure-ready gates instead of forcing downstream closure review to infer readiness from low-level status fields
+  - availability-only smoke and live-call smoke now share a stable contract for opt-in compliance and outcome recording
+  - operators have runbook guidance for the new provider smoke closure fields on both English and Chinese paths
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_maf.py -k 'provider_smoke_executes_affective_call_with_injected_provider or provider_smoke_reports_structured_failure_for_invalid_affective_output or cli_maf_provider_smoke_outputs_json or cli_maf_provider_smoke_rejects_execute_without_allow'` -> `4 passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && git -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check -- PROJECT_PROGRESS.md docs/project/AI_CORE_RUNBOOK.md docs/project/AI_CORE_RUNBOOK_ZH.md neurolink_core/maf.py neurolink_core/tests/test_maf.py` -> `clean`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 44%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 by updating the operator runbooks for the new Rational approval and closure evidence path. The English and Chinese AI Core runbooks now tell operators where to inspect `rational_plan_evidence` during approval review, how to interpret fail-closed provider planning errors, and which closure-gate fields must be present before 1.2.5 can be considered ready for final closure evidence. - Copilot
+
+#### EXEC-299 Release 1.2.5 Rational Evidence Runbook Slice
+
+- Status: completed for the bounded runbook/closure documentation slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - update the English AI Core runbook with Rational approval-inspection fields, fail-closed troubleshooting, and 1.2.5 closure checks
+  - update the Chinese AI Core runbook with the same 1.2.5 Rational evidence guidance
+  - keep project progress aligned with the release-1.2.5 WS-7 documentation gate
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+- Result:
+  - operators now have a documented review path for `approval_context.operator_requirements.rational_plan_evidence`
+  - fail-closed provider planning errors are documented as approval/audit review scenarios rather than opaque backend failures
+  - the 1.2.5 closure checklist now explicitly names the Rational evidence and closure-gate fields expected before release promotion
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && git -c core.whitespace=trailing-space,space-before-tab,cr-at-eol diff --check -- PROJECT_PROGRESS.md docs/project/AI_CORE_RUNBOOK.md docs/project/AI_CORE_RUNBOOK_ZH.md` -> `clean`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 42%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%
+
+2026-05-09: Continued release-1.2.5 by wiring `rational_plan_evidence` into the approval and closure aggregation layers. Approval inspection now surfaces the source execution's Rational plan outcome directly inside `operator_requirements`, and `agent_run_evidence` closure gates now explicitly require that a Rational outcome is recorded instead of merely inferring that planning occurred from surrounding tool results. This closes another WS-7 evidence gap without changing execution semantics. - Copilot
+
+#### EXEC-298 Release 1.2.5 Rational Evidence Closure Aggregation Slice
+
+- Status: completed for the bounded Rational evidence closure aggregation slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - surface `rational_plan_evidence` directly in approval operator requirements
+  - add explicit closure gates for Rational evidence presence and recorded outcome state
+  - add focused regressions covering provider success/invalid/null outcomes plus approval inspection evidence
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - approval review now exposes the source execution's Rational outcome directly instead of forcing operators to inspect raw audit payload structure
+  - closure evidence now explicitly checks that a Rational outcome was recorded, which strengthens WS-7 audit/closure readiness without requiring any live-provider-only path
+  - WS-5 provider Rational contract evidence is now connected through audit payload, agent-run evidence, approval inspection, and closure gates
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'can_use_real_provider_with_injected_default_factory or rejects_real_provider_plan_for_unknown_manifest_tool or accepts_real_provider_null_plan_without_tool_execution or cli_approval_inspect_and_approve_is_blocked_when_required_resources_missing'` -> `4 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 41%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by propagating Rational plan outcomes into stable audit evidence. Core now records summarized `rational_plan_evidence` for provider-backed planning outcomes across the three important states: `tool_selected`, `no_tool_selected`, and `invalid_payload`. That evidence is written into audit payloads and surfaced again through `agent_run_evidence`, so operator review and later closure checks no longer need to infer provider planning behavior indirectly from tool-result absence or error classes alone. - Copilot
+
+#### EXEC-297 Release 1.2.5 Rational Plan Evidence Propagation Slice
+
+- Status: completed for the bounded Rational plan evidence propagation slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - summarize provider/copilot Rational outcomes into explicit `rational_plan_evidence`
+  - persist that evidence into audit payloads and expose it through `agent_run_evidence`
+  - add focused regressions for selected-tool, invalid-payload, and null-plan provider outcomes
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - audit payloads now preserve a compact Rational outcome summary instead of leaving operator review to reconstruct intent from surrounding tool results
+  - `agent_run_evidence` now exposes stable Rational outcome evidence for successful selection, invalid provider payloads, and valid no-tool/null outcomes
+  - WS-7 audit evidence is now better aligned with the WS-5 provider Rational contract hardening already landed in the previous slice
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'can_use_real_provider_with_injected_default_factory or rejects_real_provider_plan_for_unknown_manifest_tool or accepts_real_provider_null_plan_without_tool_execution'` -> `3 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 39%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by hardening the provider-backed Rational contract itself, not only the later workflow checks. Provider and Copilot Rational backends now reject any non-null plan whose `tool_name` is outside the exact `available_tools` list supplied by Core, while still accepting `null` as the only valid no-tool outcome. Workflow also now fail-closes invalid provider/copilot plan payloads as structured `rational_plan_payload_invalid` tool results instead of letting backend validation exceptions abort the run. This moves the “pick at most one available tool or return null” HLD rule from prompt guidance into executable contract enforcement. - Copilot
+
+#### EXEC-296 Release 1.2.5 Provider Rational Contract Hardening Slice
+
+- Status: completed for the bounded provider/copilot Rational contract hardening slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - require provider/copilot Rational backends to accept only `null` or a single tool drawn from Core-supplied `available_tools`
+  - fail close on invalid provider/copilot tool selection before manifest lookup and adapter execution
+  - convert backend validation failures into structured workflow error results instead of uncaught exceptions
+  - add focused regressions for invalid-tool rejection and valid `null` no-tool behavior across backend and workflow surfaces
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/rational_backends.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_rational_backends.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - provider and Copilot Rational backends now enforce the HLD “available tool only or null” rule as code, not just prompt text
+  - hallucinated provider/copilot tool names are now reported as structured `rational_plan_payload_invalid` failures with preserved `available_tools` evidence
+  - `null` provider/copilot plans remain valid and now have deterministic regression coverage showing delegated reasoning may end with no tool execution
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_rational_backends.py neurolink_core/tests/test_neurolink_core.py -k 'accepts_null_plan or accepts_real_provider_null_plan_without_tool_execution or tool_outside_available_tools or rejects_real_provider_plan_for_unknown_manifest_tool'` -> `7 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 37%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 82%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by hardening Rational `plan_quality` beyond missing-argument checks. Core now verifies that the selected tool still matches the live manifest contract, records explicit `resource_fit`, `retryability`, and `cleanup_awareness` evidence, and fails closed when a side-effecting or lease-bound tool lacks the cleanup guidance needed for safe approval and retry handling. This keeps provider or deterministic plans from drifting into partially-specified side-effect proposals even before policy evaluation runs. - Copilot
+
+#### EXEC-295 Release 1.2.5 Rational Plan-Quality Hardening Slice
+
+- Status: completed for the bounded Rational plan-quality hardening slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - extend `plan_quality` with live manifest parity checks for the chosen tool contract
+  - add explicit `resource_fit`, `retryability`, and `cleanup_awareness` evidence to Rational plan validation
+  - fail close when side-effecting or resource-bound tools lack cleanup guidance required for safe approval handling
+  - add focused regressions covering preserved restart approval flow and cleanup-awareness invalidation
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - Rational plan validation now checks more than tool name and missing args: it also confirms the selected tool still matches the live manifest contract exposed to the planner
+  - approval-gated restart flows now carry explicit `resource_fit`, `retryability`, and `cleanup_awareness` evidence inside `plan_quality`
+  - malformed side-effect proposals that require approval/resources but omit cleanup guidance are rejected before policy or adapter execution with `rational_plan_contract_invalid`
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'workflow_rejects_plan_missing_non_resolvable_required_arguments or workflow_rejects_plan_when_cleanup_awareness_is_missing or cli_agent_run_routes_restart_request_to_pending_approval'` -> `3 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 34%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 81%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by propagating the bounded MCP bridge contract into the same governance path already used for Tool and Skill evidence. The prompt-safe provider context now carries a summarized read-only MCP bridge surface, and approval-gated execution now preserves explicit `mcp_requirements` inside `plan_quality` and operator requirements. This closes the gap where MCP was CLI-visible but not yet part of provider-safe planning or operator approval review, while still keeping MCP descriptor-only and non-executable. - Copilot
+
+#### EXEC-294 Release 1.2.5 MCP Governance Propagation Slice
+
+- Status: completed for the bounded MCP governance propagation slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - inject summarized MCP bridge evidence into prompt-safe provider context alongside Tool and Skill summaries
+  - carry `mcp_requirements` into Rational `plan_quality` and approval operator requirements
+  - add focused regressions for prompt-safe MCP summaries and approval-path MCP safety evidence
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/session.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - provider-facing prompt-safe context now includes a bounded MCP bridge summary that states the bridge is read-only, descriptor-only, and cannot execute tools directly
+  - approval requests and approval operator inspection now carry explicit MCP governance evidence, making the MCP safety boundary auditable in the same path as Skill workflow-plan evidence
+  - WS-5 Tool/Skill/MCP governance is now stitched through CLI contract exposure, provider-safe planning context, and approval/operator evidence without introducing any live MCP execution path
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'prompt_safe_context_summarizes_history_and_memory or cli_agent_run_routes_restart_request_to_pending_approval or cli_approval_inspect_and_approve_is_blocked_when_required_resources_missing or real_provider_receives_prompt_safe_context_only or cli_approval_inspect_and_approve_resume_execution_when_resources_are_satisfied'` -> `5 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 31%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 80%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by landing the first bounded MCP bridge slice. Instead of introducing a live external MCP client/server path, Core now derives a deterministic read-only MCP bridge descriptor from the authoritative Tool manifest and exposes it through a new `mcp-descriptor` CLI command. The bridge explicitly advertises only read-only tools, lists approval or side-effecting tools as blocked, and records that no external MCP connection or tool execution is enabled through this surface. This keeps the Tool/Skill/MCP boundary moving toward HLD completeness while remaining fail-closed and testable. - Copilot
+
+#### EXEC-293 Release 1.2.5 Read-Only MCP Bridge Descriptor Slice
+
+- Status: completed for the first bounded read-only MCP bridge descriptor slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - add a Core-owned MCP bridge descriptor derived from the live Tool manifest instead of wiring a live external MCP runtime
+  - expose a deterministic read-only `mcp-descriptor` CLI command
+  - advertise only read-only tools through the descriptor and mark approval or side-effecting tools as blocked
+  - add focused tests for MCP descriptor payload shape and CLI output stability
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+- Result:
+  - Core now has a bounded read-only MCP bridge descriptor surface that complements the existing Tool and Skill descriptors without introducing execution bypasses
+  - the MCP descriptor is explicitly descriptor-only: it forbids tool execution via MCP, disables external MCP connection, and excludes side-effecting tools from the exposed read-only tool list
+  - Tool/Skill/MCP contract exposure is now symmetrical at the CLI layer, which narrows the remaining WS-5 gap to deeper provider plan quality checks and any future live MCP runtime path
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py -k 'mcp_bridge_descriptor or cli_mcp_descriptor or skill_descriptor or cli_tool_manifest_outputs_contracts'` -> `5 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 28%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 79%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by landing the next bounded Tool/Skill governance slice on top of the new skill descriptor surface. Rational execution no longer jumps straight from a provider or deterministic plan to policy only; Core now computes explicit `plan_quality` evidence before execution, carries that evidence into approval requests, and exposes skill-governed workflow-plan expectations in both prompt-safe context and approval operator requirements. The new behavior stays narrow: arguments that an operator can still resolve later during approval such as `--app` or `--lease-id` remain approval-gated instead of being rejected early, while genuinely non-resolvable missing required arguments now fail closed before adapter execution. This makes WS-5 more executable without destabilizing the release-1.2.4 approval and control flows. - Copilot
+
+#### EXEC-292 Release 1.2.5 Rational Plan Quality And Skill-Governed Approval Slice
+
+- Status: completed for the bounded Rational plan-quality and Skill-governed approval evidence slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - add local `plan_quality` validation before tool execution so Rational plans are checked against the live Tool contract
+  - surface safe Skill constraints in prompt-safe context and approval operator requirements
+  - preserve approval-gated operator resolution for arguments like `--app` and `--lease-id` while fail-closing on non-resolvable missing required arguments
+  - add focused workflow regressions for prompt-safe skill summaries, approval evidence, and invalid-plan blocking
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/session.py`
+  - `applocation/NeuroLink/neurolink_core/workflow.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - prompt-safe Rational context now includes a bounded Skill summary so provider-facing planning sees workflow-plan and release guardrails without seeing raw markdown or gaining execution power
+  - approval requests and approval operator inspection now carry `plan_quality` and `workflow_plan_required` evidence, which makes Skill governance auditable instead of implicit
+  - app control approval flows remain intact for operator-resolvable arguments, avoiding regression in the current restart/start/stop/unload approval paths
+  - invalid plans that omit non-resolvable required arguments are now rejected before adapter execution with explicit `rational_plan_contract_invalid` evidence
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'prompt_safe_context_summarizes_history_and_memory or cli_agent_run_routes_app_control_request_to_pending_approval or cli_approval_inspect_and_approve_is_blocked_when_required_resources_missing or real_provider_receives_prompt_safe_context_only or workflow_rejects_plan_missing_non_resolvable_required_arguments'` -> `4 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 24%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 78%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by landing the first bounded Tool/Skill safety descriptor slice. Core now exposes the Neuro CLI Skill contract as a structured read-only descriptor instead of treating `SKILL.md` as opaque markdown only: the descriptor normalizes frontmatter, ground rules, first-check commands, and reference links into a JSON-safe contract that can be consumed by later Rational planning and policy checks without giving provider paths any direct execution surface. This complements the existing `ToolContract` manifest and starts making the HLD Tool/Skill/MCP boundary executable from the Core side. Added focused regressions for descriptor parsing and the new `skill-descriptor` CLI command while preserving the existing `tool-manifest` behavior. - Copilot
+
+#### EXEC-291 Release 1.2.5 Tool And Skill Descriptor Baseline Slice
+
+- Status: completed for the first bounded Tool/Skill descriptor executable slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - convert the supported Neuro CLI `SKILL.md` contract into a Core-readable safe skill descriptor
+  - expose a read-only `skill-descriptor` Core CLI command alongside the existing `tool-manifest` command
+  - preserve the current execution boundary so Skill metadata is structured for planning/policy only, not for direct provider execution
+  - add focused tests for descriptor parsing and CLI output stability
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tools.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_tools.py`
+- Result:
+  - release-1.2.5 now has a Core-owned safe Skill descriptor surface that captures workflow-plan requirements, JSON-readable output expectations, release-promotion guardrails, callback audit expectations, first checks, and references from the canonical Neuro CLI skill contract
+  - `skill-descriptor` is now a deterministic read-only CLI command that can feed later Rational planning and Tool/Skill/MCP policy checks without bypassing Core gates
+  - the Tool manifest remains authoritative for execution while the new Skill descriptor makes supported skill metadata machine-readable instead of markdown-only
+  - this narrows the remaining WS-5 gap to MCP bridge bounding, provider plan quality checks, and explicit side-effect/approval audit integration
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_tools.py -k 'skill_descriptor or cli_tool_manifest_outputs_contracts or manifest_exposes_state_sync_contract'` -> `4 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 19%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 77%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Continued release-1.2.5 by landing the first executable memory governance slice on top of the already-open multimodal/runtime plan. The Core long-term memory backends no longer persist bare topic payloads only; fake/local/mem0 candidate generation now stamps deterministic governance metadata including lifecycle state, reason, confidence, dedupe key, and source event references, and local/mem0 commit paths now promote those candidates into committed long-term memory records with explicit commit backend and mirror status. This keeps the release-1.2.5 governance work moving without expanding the SQLite schema yet, while still making the candidate-to-commit chain auditable and deterministic enough for later approval/review policy. Added focused regressions for governed candidate payloads and duplicate candidate commit dedupe, while preserving the current local and mem0 fallback behavior. - Copilot
+
+#### EXEC-290 Release 1.2.5 Memory Governance Baseline Slice
+
+- Status: completed for the first bounded memory governance executable slice
+- Owner: GitHub Copilot continuing the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - enrich fake/local/mem0 memory candidates with deterministic governance metadata instead of bare topic payloads
+  - persist committed long-term memories with explicit lifecycle transition, commit reason, commit backend, and mem0 mirror status
+  - add bounded duplicate-candidate dedupe at commit time without changing the current database schema or workflow API
+  - add focused tests for candidate governance metadata and duplicate commit handling
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/neurolink_core/memory.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - release-1.2.5 memory governance is now executable at the backend layer with deterministic `memory_governance` payloads on both `memory_candidates` and committed `long_term_memories`
+  - local SQLite and mem0-sidecar paths now preserve governance clues needed for later review policy, including lifecycle state, decision reason, confidence, dedupe key, source event refs, and commit backend
+  - duplicate candidate commits are now collapsed within the same commit batch instead of producing duplicate long-term memory rows for identical candidates
+  - the slice stayed schema-compatible with existing workflow and CLI evidence surfaces, which keeps the next approval/review expansion local to runtime policy instead of forcing an immediate datastore migration
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'local_memory_backend_commits_long_term_memories or mem0_memory_backend_falls_back_to_local_when_unavailable or mem0_memory_backend_uses_injected_sidecar_and_sqlite_mirror or local_memory_backend_reuses_prior_memories_on_next_run or cli_no_model_dry_run_can_use_local_memory_backend or cli_no_model_dry_run_can_request_mem0_with_local_fallback'` -> `6 passed`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -k 'fake_memory_candidates_include_governance_metadata or local_memory_backend_commits_long_term_memories or local_memory_backend_dedupes_duplicate_commit_candidates or mem0_memory_backend_falls_back_to_local_when_unavailable or mem0_memory_backend_uses_injected_sidecar_and_sqlite_mirror or local_memory_backend_reuses_prior_memories_on_next_run'` -> `6 passed`
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 15%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 76%, target about 83% after release-1.2.5 closure
+
+2026-05-09: Started release-1.2.5 implementation after closing release-1.2.4. Added the release-1.2.5 Multimodal Agent Runtime and Governance plan, fixed the stale README release-note wording that still described release-1.2.4 as the next planned slice, and locked the next three-minor-release burn-down toward release-2.0.0. The new active slice targets HLD completion movement from about 75% to about 83% by making multimodal Affective Agent normalization, inference profile routing, memory governance, and safe Agent Tool/Skill/MCP boundaries executable while deferring Core federation/Gateway relay to release-1.2.6 and productization/multi-board/security hardening to release-1.2.7. Release identity remains `1.2.4` until release-1.2.5 closure evidence passes. - Copilot
+
+#### EXEC-289 Release 1.2.5 Kickoff And Scope Lock
+
+- Status: in progress; release-1.2.5 active development has started
+- Owner: GitHub Copilot starting the release-1.2.5 multimodal Agent runtime track
+- Scope:
+  - add the release-1.2.5 plan and HLD/LLD gap map
+  - fix README release-note wording so release-1.2.4 is closed and release-1.2.5 is active development
+  - preserve the canonical release identity at `1.2.4` until 1.2.5 closure evidence passes
+  - start the first implementation slice for deterministic multimodal normalization and inference profile routing
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.5_MULTIMODAL_AGENT_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/__init__.py`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/inference.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_maf.py`
+- Result:
+  - release-1.2.5 now has a formal plan tied to the HLD and AI Core LLD
+  - the three-minor-release path to release-2.0.0 is explicit: 1.2.5 Agent runtime/governance, 1.2.6 federation/Gateway relay, 1.2.7 productization/hardening, 2.0.0 stabilization
+  - Core now has the first release-1.2.5 executable surface: deterministic multimodal input normalization, inference profile catalog/readiness, fail-closed route decisions, and a read-only `multimodal-profile-smoke` CLI command that does not execute model calls
+- Updated progress estimate:
+  - release-1.2.5 implementation progress: about 9%
+  - release-1.2.5 closure progress: 0%
+  - overall HLD completion: about 75%, target about 83% after release-1.2.5 closure
+
 2026-05-09: Closed release-1.2.4 after finishing the remaining WS-6 and closure work on top of the already landed Core app lifecycle slices. The final release pass hardened `event-service` into a restart-safe supervised service with heartbeat, restart, stale-endpoint, and checkpoint continuity evidence; aligned the English/Chinese runbooks and README to the Core-owned build/deploy/event-service operator path; fixed the two real-hardware closure defects exposed by the final prepare/verify run (`parse_failed` on log-prefixed preflight JSON and hardcoded `python` argv templates); reran the Core-owned hardware gate on the connected DNESP32S3B; and then promoted the canonical host release identity to `1.2.4`. Real closure evidence now includes `app-build-plan` for `neuro_unit_app`, explicit artifact admission for `build/neurolink_unit_app/neuro_unit_app.llext`, serial-required preflight `status=ready`, successful `app-deploy-prepare-verify` through `deploy_verify`, successful lease cleanup, and final `query_leases=[]`. Post-closure promotion also aligned the workflow catalog, capabilities payload, and sample app build metadata on `RELEASE_TARGET = "1.2.4"`. - Copilot
 
 #### EXEC-288 Release 1.2.4 Final Closure And Promotion

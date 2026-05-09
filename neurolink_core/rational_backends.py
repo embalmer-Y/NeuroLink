@@ -30,7 +30,11 @@ class RationalBackend(Protocol):
         ...
 
 
-def validate_rational_plan_payload(payload: dict[str, Any] | None) -> RationalPlan | None:
+def validate_rational_plan_payload(
+    payload: dict[str, Any] | None,
+    *,
+    available_tools: list[dict[str, Any]] | None = None,
+) -> RationalPlan | None:
     if payload is None:
         return None
     tool_name = payload.get("tool_name")
@@ -42,6 +46,13 @@ def validate_rational_plan_payload(payload: dict[str, Any] | None) -> RationalPl
         raise ValueError("rational_plan_args_must_be_object")
     if not isinstance(reason, str) or not reason:
         raise ValueError("rational_plan_reason_must_be_string")
+    if available_tools is not None:
+        available_tool_names = {
+            str(tool.get("name") or tool.get("tool_name") or "")
+            for tool in available_tools
+        }
+        if tool_name not in available_tool_names:
+            raise ValueError("rational_plan_tool_not_in_available_tools")
     return RationalPlan(
         tool_name=tool_name,
         args=dict(args),
@@ -109,7 +120,8 @@ class ProviderRationalBackend:
                 self.profile,
                 available_tools or [],
                 session_context or {},
-            )
+            ),
+            available_tools=available_tools or [],
         )
 
 
@@ -179,7 +191,8 @@ class CopilotSdkRationalBackend:
             _extract_json_object(
                 self._run_copilot_agent(json.dumps(payload, sort_keys=True)),
                 allow_none=True,
-            )
+            ),
+            available_tools=available_tools or [],
         )
 
     def _run_copilot_agent(self, prompt: str) -> str:

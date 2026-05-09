@@ -11,7 +11,9 @@ from neurolink_core.policy import ReadOnlyToolPolicy
 from neurolink_core.tools import (
     ACTIVATION_HEALTH_SCHEMA_VERSION,
     CommandExecutionResult,
+    MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION,
     NeuroCliToolAdapter,
+    SKILL_DESCRIPTOR_SCHEMA_VERSION,
     STATE_SYNC_SCHEMA_VERSION,
     StateSyncSnapshot,
     StateSyncSurface,
@@ -20,10 +22,43 @@ from neurolink_core.tools import (
     FakeUnitToolAdapter,
     SideEffectLevel,
     ToolContract,
+    load_mcp_bridge_descriptor_payload,
+    load_neuro_cli_skill_descriptor_payload,
 )
 
 
 class TestFakeUnitToolAdapterContract(unittest.TestCase):
+    def test_mcp_bridge_descriptor_payload_exposes_only_read_only_tools(self) -> None:
+        payload = load_mcp_bridge_descriptor_payload()
+
+        self.assertEqual(payload["schema_version"], MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION)
+        self.assertEqual(payload["bridge_mode"], "read_only_descriptor_only")
+        self.assertTrue(payload["safety_boundaries"]["tool_execution_via_mcp_forbidden"])
+        self.assertTrue(payload["safety_boundaries"]["external_mcp_connection_enabled"] is False)
+        read_only_names = {tool["name"] for tool in payload["read_only_tools"]}
+        blocked_names = {tool["name"] for tool in payload["blocked_tools"]}
+        self.assertIn("system_state_sync", read_only_names)
+        self.assertIn("system_query_device", read_only_names)
+        self.assertNotIn("system_restart_app", read_only_names)
+        self.assertIn("system_restart_app", blocked_names)
+        self.assertIn("system_stop_app", blocked_names)
+
+    def test_skill_descriptor_payload_parses_neuro_cli_skill_contract(self) -> None:
+        payload = load_neuro_cli_skill_descriptor_payload()
+
+        self.assertEqual(payload["schema_version"], SKILL_DESCRIPTOR_SCHEMA_VERSION)
+        self.assertEqual(payload["name"], "neuro-cli")
+        self.assertTrue(payload["workflow_plan_required"])
+        self.assertTrue(payload["json_output_required"])
+        self.assertTrue(payload["release_target_promotion_blocked"])
+        self.assertTrue(payload["callback_audit_required"])
+        self.assertGreaterEqual(len(payload["ground_rules"]), 6)
+        self.assertTrue(
+            payload["first_check_commands"][0].startswith(
+                "python applocation/NeuroLink/neuro_cli/scripts/invoke_neuro_cli.py system init"
+            )
+        )
+
     def test_read_only_policy_allows_read_only_contracts(self) -> None:
         contract = ToolContract(
             tool_name="system_state_sync",
@@ -301,6 +336,33 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertIn("system_start_app", names)
         self.assertIn("system_stop_app", names)
         self.assertIn("system_unload_app", names)
+
+    def test_cli_skill_descriptor_outputs_safe_contract(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["skill-descriptor"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["schema_version"], SKILL_DESCRIPTOR_SCHEMA_VERSION)
+        self.assertEqual(payload["name"], "neuro-cli")
+        self.assertTrue(payload["workflow_plan_required"])
+
+    def test_cli_mcp_descriptor_outputs_bounded_read_only_contract(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["mcp-descriptor"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["schema_version"], MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION)
+        self.assertEqual(payload["bridge_mode"], "read_only_descriptor_only")
+        self.assertTrue(payload["safety_boundaries"]["descriptor_only"])
+        self.assertTrue(payload["safety_boundaries"]["tool_execution_via_mcp_forbidden"])
 
     def test_cli_activation_health_guard_outputs_structured_observation(self) -> None:
         out = io.StringIO()

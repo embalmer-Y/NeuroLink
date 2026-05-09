@@ -20,7 +20,7 @@ from .rational_backends import (
 
 
 MAF_RUNTIME_SCHEMA_VERSION = "1.2.0-maf-runtime-v1"
-MAF_PROVIDER_SMOKE_SCHEMA_VERSION = "1.2.0-maf-provider-smoke-v1"
+MAF_PROVIDER_SMOKE_SCHEMA_VERSION = "1.2.5-maf-provider-smoke-v2"
 MAF_PROVIDER_CONFIG_SCHEMA_VERSION = "1.2.0-maf-provider-config-v1"
 MAF_PROVIDER_ENV_VARS = (
     "AZURE_OPENAI_ENDPOINT",
@@ -238,12 +238,45 @@ def maf_provider_smoke_status(
     env: Mapping[str, str] | None = None,
     provider_client: MafProviderClient | None = None,
 ) -> dict[str, Any]:
+    def build_closure_gates(
+        *,
+        runtime_ready: bool,
+        smoke_status: str,
+        smoke_reason: str,
+        call_status: str,
+        model_call_evidence_present: bool,
+    ) -> dict[str, bool]:
+        return {
+            "real_provider_call_opt_in_respected": not execute_model_call or allow_model_call,
+            "provider_requirements_ready": runtime_ready,
+            "missing_requirements_cleanly_reported": (
+                not runtime_ready
+                and smoke_status == "skipped"
+                and smoke_reason
+                in {
+                    "agent_framework_package_not_installed",
+                    "model_credentials_not_configured",
+                    "model_identifier_not_configured",
+                }
+            ),
+            "model_call_evidence_present": model_call_evidence_present,
+            "closure_smoke_outcome_recorded": call_status
+            in {
+                "not_requested",
+                "model_call_not_requested",
+                "model_call_skipped_not_ready",
+                "model_call_succeeded",
+                "model_call_failed",
+                "model_call_not_allowed",
+            },
+        }
+
     if execute_model_call and not allow_model_call:
         runtime_profile = build_maf_runtime_profile(
             provider_mode=MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
             env=env,
         )
-        return {
+        payload = {
             "schema_version": MAF_PROVIDER_SMOKE_SCHEMA_VERSION,
             "ok": False,
             "status": "error",
@@ -265,6 +298,14 @@ def maf_provider_smoke_status(
             "call_status": "model_call_not_allowed",
             "executes_model_call": False,
         }
+        payload["closure_gates"] = build_closure_gates(
+            runtime_ready=False,
+            smoke_status=str(payload["status"]),
+            smoke_reason=str(payload["reason"]),
+            call_status=str(payload["call_status"]),
+            model_call_evidence_present=False,
+        )
+        return payload
 
     requested_mode = (
         MafProviderMode.REAL_PROVIDER.value
@@ -323,10 +364,24 @@ def maf_provider_smoke_status(
         ),
         "executes_model_call": False,
     }
+    payload["closure_gates"] = build_closure_gates(
+        runtime_ready=runnable,
+        smoke_status=status,
+        smoke_reason=reason,
+        call_status=str(payload["call_status"]),
+        model_call_evidence_present=False,
+    )
     if not execute_model_call:
         return payload
     if not runnable:
         payload["call_status"] = "model_call_skipped_not_ready"
+        payload["closure_gates"] = build_closure_gates(
+            runtime_ready=runnable,
+            smoke_status=str(payload["status"]),
+            smoke_reason=str(payload["reason"]),
+            call_status=str(payload["call_status"]),
+            model_call_evidence_present=False,
+        )
         return payload
 
     smoke_frame = PerceptionFrame(
@@ -355,6 +410,13 @@ def maf_provider_smoke_status(
         payload["failure_class"] = exc.__class__.__name__
         payload["failure_status"] = str(exc)
         payload["executes_model_call"] = True
+        payload["closure_gates"] = build_closure_gates(
+            runtime_ready=runnable,
+            smoke_status=str(payload["status"]),
+            smoke_reason=str(payload["reason"]),
+            call_status=str(payload["call_status"]),
+            model_call_evidence_present=False,
+        )
         return payload
 
     payload["status"] = "ready"
@@ -370,6 +432,13 @@ def maf_provider_smoke_status(
         "provider_client_kind": _provider_client_kind(resolved_provider_client),
         "response_schema": "AffectiveDecision",
     }
+    payload["closure_gates"] = build_closure_gates(
+        runtime_ready=runnable,
+        smoke_status=str(payload["status"]),
+        smoke_reason=str(payload["reason"]),
+        call_status=str(payload["call_status"]),
+        model_call_evidence_present=True,
+    )
     return payload
 
 
@@ -383,6 +452,7 @@ class MafProviderClient(Protocol):
         frame: PerceptionFrame,
         memory_items: list[dict[str, Any]],
         profile: MafRuntimeProfile,
+        affective_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -473,8 +543,9 @@ class PlaceholderMafProviderClient:
         frame: PerceptionFrame,
         memory_items: list[dict[str, Any]],
         profile: MafRuntimeProfile,
+        affective_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        del frame, memory_items, profile
+        del frame, memory_items, profile, affective_context
         raise NotImplementedError("real_provider_affective_agent_not_implemented")
 
     def plan(
@@ -550,7 +621,9 @@ class AgentFrameworkMafProviderClient:
     def _affective_instructions() -> str:
         return (
             "You are the NeuroLink Core affective agent. "
+            "Use only the prompt-safe affective context summary, multimodal summary, profile route summary, and presentation policy provided by Core. "
             "Decide whether the current perception frame should delegate to the rational agent. "
+            "Do not execute tools, mutate state, or invent extra capabilities. "
             "Return JSON only with keys delegated (bool), reason (string), salience (int 0-100)."
         )
 
@@ -596,6 +669,7 @@ class AgentFrameworkMafProviderClient:
         frame: PerceptionFrame,
         memory_items: list[dict[str, Any]],
         profile: MafRuntimeProfile,
+        affective_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = self._run_json_agent(
             agent_name="neurolink-core-affective",
@@ -604,6 +678,7 @@ class AgentFrameworkMafProviderClient:
                 "frame": frame.to_dict(),
                 "memory_items": memory_items,
                 "maf_runtime": profile.to_dict(),
+                "affective_context": dict(affective_context or {}),
             },
         )
         assert payload is not None
@@ -683,7 +758,10 @@ class MafAffectiveAgentAdapter:
         self,
         frame: PerceptionFrame,
         memory_items: list[dict[str, Any]],
+        *,
+        affective_context: dict[str, Any] | None = None,
     ) -> AffectiveDecision:
+        del affective_context
         return self.agent.decide(frame, memory_items)
 
 
@@ -716,9 +794,25 @@ class RealMafAffectiveAgentAdapter:
         self,
         frame: PerceptionFrame,
         memory_items: list[dict[str, Any]],
+        *,
+        affective_context: dict[str, Any] | None = None,
     ) -> AffectiveDecision:
+        provider_decide = self.provider_client.decide
+        provider_payload: dict[str, Any]
+        if affective_context is None:
+            provider_payload = provider_decide(frame, memory_items, self.profile)
+        else:
+            try:
+                provider_payload = provider_decide(
+                    frame,
+                    memory_items,
+                    self.profile,
+                    affective_context,
+                )
+            except TypeError:
+                provider_payload = provider_decide(frame, memory_items, self.profile)
         return _coerce_affective_decision(
-            self.provider_client.decide(frame, memory_items, self.profile)
+            provider_payload
         )
 
 

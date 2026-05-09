@@ -1,10 +1,12 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` for the
-active release-1.2.4 Core orchestrator and live-event-service line. It is
-written for operators and developers who need to run Core locally, check
-provider and memory readiness, execute the Core-owned build/deploy gates, or
-close the bounded live service and hardware release evidence.
+closed release-1.2.5 multimodal Agent runtime and governance line, while still
+covering the inherited release-1.2.4 Core orchestrator and live-event-service
+surfaces that remain part of the closure baseline. It is written for operators
+and developers who need to run Core locally, check provider and memory
+readiness, execute the Core-owned build/deploy gates, or close bounded live
+service and AI Core release evidence.
 
 ## 1. Runtime Shape
 
@@ -124,7 +126,31 @@ Expected evidence:
 3. fake memory and fake tool adapter unless overridden
 4. `agent_run_evidence.ok=true`
 
-### 4.2 Provider Readiness Without Model Call
+### 4.2 Multimodal And Profile Route Smoke
+
+Use this to validate the release-1.2.5 multimodal normalization and inference
+profile route contract without executing a model call:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli multimodal-profile-smoke \
+  --text inspect \
+  --image-ref frame-001
+```
+
+Expected evidence:
+
+1. `executes_model_call=false`
+2. `closure_gates.multimodal_input_recorded=true`
+3. `closure_gates.route_decision_recorded=true`
+4. `closure_gates.profile_readiness_recorded=true`
+5. `closure_gates.route_ready=true` for a routable request
+6. `evidence_summary.selected_profile` records the chosen inference profile
+
+For closure, save the JSON and pass it to `closure-summary` with
+`--multimodal-profile-file <multimodal-profile.json>` and
+`--require-multimodal-profile`.
+
+### 4.3 Provider Readiness Without Model Call
 
 Use this to check package and provider configuration without spending tokens:
 
@@ -139,8 +165,21 @@ Expected evidence:
 2. `provider_ready_for_model_call=true`
 3. `executes_model_call=false`
 4. no endpoint values or API key values in output
+5. `closure_gates.real_provider_call_opt_in_respected=true`
+6. `closure_gates.closure_smoke_outcome_recorded=true`
 
-### 4.3 Affective Live Model Smoke
+For real-provider `agent-run` validation, also inspect the session evidence:
+
+1. `model_call_evidence.multimodal_summary` records only prompt-safe counts,
+  modes, and short text previews
+2. `model_call_evidence.profile_route.selected_profile` records the routed
+  provider profile
+3. `model_call_evidence.presentation_policy.prompt_safe_multimodal_summary_only=true`
+4. `agent_run_evidence.closure_gates.direct_tool_execution_by_model_disabled=true`
+5. provider timeout or unavailable profile route failures must fail closed with
+  structured error output instead of silent fallback
+
+### 4.4 Affective Live Model Smoke
 
 This executes a real model call. Run only when live-call validation is intended.
 
@@ -155,8 +194,11 @@ Expected evidence:
 2. `executes_model_call=true`
 3. `provider_client_kind=agent_framework_openai`
 4. validated `affective_decision`
+5. `closure_gates.provider_requirements_ready=true`
+6. `closure_gates.model_call_evidence_present=true`
+7. `closure_gates.closure_smoke_outcome_recorded=true`
 
-### 4.4 Mem0 Memory Smoke
+### 4.5 Mem0 Memory Smoke
 
 This may call configured embedding/model services through Mem0.
 
@@ -431,6 +473,14 @@ For rollback review, inspect these fields in the JSON output:
 3. `approval_context.source_execution_evidence.facts` for `activation_health_observation` and `recovery_candidate`
 4. `approval_context.source_execution_evidence.audit_record.payload.activation_health_summary`
 
+For release-1.2.5 provider-backed side-effecting plans, inspect these fields
+before approving:
+
+1. `approval_context.operator_requirements.rational_plan_evidence.status`
+2. `approval_context.operator_requirements.rational_plan_evidence.selected_tool_name`
+3. `approval_context.operator_requirements.rational_plan_evidence.failure_status`
+4. `approval_context.source_execution_evidence.audit_record.payload.rational_plan_evidence`
+
 Apply an approval decision:
 
 ```bash
@@ -457,6 +507,13 @@ validated model in this runbook or select another provider-supported chat model.
 
 `copilot_rational_backend_requires_allow_model_call` means
 `--rational-backend copilot` was selected without `--allow-model-call`.
+
+`rational_plan_payload_invalid` or
+`rational_plan_tool_not_in_available_tools` means the provider/copilot Rational
+response proposed a tool outside the prompt-safe `available_tools` contract or
+returned a malformed plan. Treat this as a fail-closed planning outcome: review
+`approval_context.operator_requirements.rational_plan_evidence` and the source
+audit payload before retrying with a narrower task or corrected provider model.
 
 `require_real_tool_adapter_requires_neuro_cli_adapter` means a release gate was
 requested with the fake adapter. Add `--tool-adapter neuro-cli`.
@@ -498,4 +555,22 @@ Before promoting release identity, verify:
 5. hardware preflight returns `status=ready`, or a bounded simulated recovery is explicitly documented when unsafe to induce live rollback.
 6. `neurolink_core/tests` pass for the touched release slices.
 7. `neuro_cli/tests/test_neuro_cli.py` and touched script checks pass.
-8. English and Chinese runbooks plus the release plan/README all reflect release-1.2.4 as the active orchestrator/live-service track.
+8. English and Chinese runbooks plus the release plan/README all reflect release-1.2.5 as the closed AI Core release while preserving release-1.2.4 as the inherited orchestrator/live-service baseline.
+
+For release-1.2.5 closure preparation, also verify:
+
+1. provider-backed runs only occur with `--allow-model-call`, and missing provider requirements fail cleanly when the flag or credentials are absent.
+2. `execution_evidence.audit_record.payload.rational_plan_evidence` records one of `tool_selected`, `no_tool_selected`, or `invalid_payload` for each provider/copilot Rational outcome.
+3. `approval-inspect` exposes `approval_context.operator_requirements.rational_plan_evidence` before any side-effecting provider-proposed tool is approved.
+4. `agent_run_evidence.closure_gates.rational_plan_evidence_present=true` and `agent_run_evidence.closure_gates.rational_plan_outcome_recorded=true` whenever provider/copilot Rational planning is exercised.
+5. run `closure-summary --session-id <session-id>` against the closure database and verify `aggregate_gates.session_has_execution_evidence=true`, `aggregate_gates.latest_execution_closure_ready=true`, and `aggregate_gates.no_pending_approvals=true` before collecting final evidence.
+6. verify `aggregate_gates.memory_governance_gate_satisfied=true`, then inspect `execution_summaries[0].memory_governance_summary` for accepted/rejected candidate counts, committed memory count, rejection reasons, and commit backends.
+7. verify `aggregate_gates.memory_recall_gate_satisfied=true`, then inspect `execution_summaries[0].memory_recall_summary` for affective/rational selected counts, filtered categories, backend kind, and fallback continuity.
+8. verify `aggregate_gates.tool_skill_mcp_gate_satisfied=true`, then inspect `execution_summaries[0].tool_skill_mcp_summary` for available-tool enforcement, governed side-effect tool counts, workflow-plan requirement, and read-only MCP boundaries.
+9. save the documentation closure JSON and pass it through `closure-summary --documentation-file <documentation.json>`; verify `validation_gates.documentation_gate=true`.
+10. when provider smoke evidence is required, save the `maf-provider-smoke` JSON and run `closure-summary --provider-smoke-file <provider-smoke.json> --require-provider-smoke`; verify `validation_gates.provider_runtime_gate=true` and `aggregate_gates.provider_smoke_gate_satisfied=true`.
+11. when multimodal/profile evidence is required, save the `multimodal-profile-smoke` JSON and run `closure-summary --multimodal-profile-file <multimodal-profile.json> --require-multimodal-profile`; verify `validation_gates.multimodal_normalization_gate=true` and `validation_gates.profile_routing_gate=true`.
+12. save regression evidence JSON and pass it through `closure-summary --regression-file <regression.json>`; verify `validation_gates.regression_gate=true`.
+13. consume `closure-summary.checklist` as the seven-gate machine-readable release-1.2.5 validation matrix, and use `closure-summary.bundle_checklist` for lower-level bundle items such as `memory_governance_bundle`, `memory_recall_policy_bundle`, and `tool_skill_mcp_bundle`.
+14. valid `no_tool_selected` Rational outcomes may have `tool_result_count=0`; closure is still acceptable when `closure_gates.tool_result_outcome_recorded=true` and the Rational evidence records `status=no_tool_selected`.
+15. After release-1.2.5 closure evidence passes and promotion is approved, canonical release identity advances from `1.2.4` to `1.2.5`.

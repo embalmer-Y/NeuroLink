@@ -1,6 +1,6 @@
 # NeuroLink AI Core 中文运行手册
 
-本文档说明当前 active 的 release-1.2.4 Core orchestrator 与 live event service 线如何启动、验证和收尾。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与硬件 closure 的开发者和操作者。
+本文档说明已闭环的 release-1.2.5 multimodal Agent runtime 与 governance 线如何启动、验证和收尾，同时覆盖仍作为闭环基线保留的 release-1.2.4 Core orchestrator 与 live event service surface。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core closure 的开发者和操作者。
 
 ## 1. Core 运行形态
 
@@ -113,7 +113,28 @@ cd /home/emb/project/zephyrproject/applocation/NeuroLink
 3. 默认使用 fake memory 和 fake tool adapter。
 4. `agent_run_evidence.ok=true`。
 
-### 4.2 只检查 provider readiness，不调用模型
+### 4.2 Multimodal 与 profile route smoke
+
+用于验证 release-1.2.5 的 multimodal normalization 与 inference profile route contract，不执行模型调用：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli multimodal-profile-smoke \
+  --text inspect \
+  --image-ref frame-001
+```
+
+预期证据：
+
+1. `executes_model_call=false`。
+2. `closure_gates.multimodal_input_recorded=true`。
+3. `closure_gates.route_decision_recorded=true`。
+4. `closure_gates.profile_readiness_recorded=true`。
+5. 对可路由请求，`closure_gates.route_ready=true`。
+6. `evidence_summary.selected_profile` 记录选中的 inference profile。
+
+closure 时，保存该 JSON，并通过 `--multimodal-profile-file <multimodal-profile.json>` 与 `--require-multimodal-profile` 传给 `closure-summary`。
+
+### 4.3 只检查 provider readiness，不调用模型
 
 用于检查依赖、环境变量和 provider readiness，不消耗模型调用：
 
@@ -128,8 +149,18 @@ source /home/emb/.bashrc
 2. `provider_ready_for_model_call=true`。
 3. `executes_model_call=false`。
 4. 输出中没有 endpoint value 或 API key value。
+5. `closure_gates.real_provider_call_opt_in_respected=true`。
+6. `closure_gates.closure_smoke_outcome_recorded=true`。
 
-### 4.3 Affective live model smoke
+对 real-provider `agent-run` 验证，还应检查 session evidence：
+
+1. `model_call_evidence.multimodal_summary` 只记录 prompt-safe 的 modes、count 与短文本预览。
+2. `model_call_evidence.profile_route.selected_profile` 记录实际路由到的 provider profile。
+3. `model_call_evidence.presentation_policy.prompt_safe_multimodal_summary_only=true`。
+4. `agent_run_evidence.closure_gates.direct_tool_execution_by_model_disabled=true`。
+5. provider timeout 或 profile route 不可用时，必须以结构化错误 fail-close，不能静默回退。
+
+### 4.4 Affective live model smoke
 
 这会执行真实模型调用，只在需要 live-call validation 时运行：
 
@@ -144,8 +175,11 @@ source /home/emb/.bashrc
 2. `executes_model_call=true`。
 3. `provider_client_kind=agent_framework_openai`。
 4. 返回经过校验的 `affective_decision`。
+5. `closure_gates.provider_requirements_ready=true`。
+6. `closure_gates.model_call_evidence_present=true`。
+7. `closure_gates.closure_smoke_outcome_recorded=true`。
 
-### 4.4 Mem0 memory smoke
+### 4.5 Mem0 memory smoke
 
 这可能通过 Mem0 调用 embedding/model 服务：
 
@@ -393,6 +427,13 @@ operational topic，而不是停留在低层事件名。
 3. `approval_context.source_execution_evidence.facts` 中的 `activation_health_observation` 与 `recovery_candidate`
 4. `approval_context.source_execution_evidence.audit_record.payload.activation_health_summary`
 
+针对 release-1.2.5 中 provider 驱动的带副作用计划，在批准前还要检查：
+
+1. `approval_context.operator_requirements.rational_plan_evidence.status`
+2. `approval_context.operator_requirements.rational_plan_evidence.selected_tool_name`
+3. `approval_context.operator_requirements.rational_plan_evidence.failure_status`
+4. `approval_context.source_execution_evidence.audit_record.payload.rational_plan_evidence`
+
 提交 approval decision：
 
 ```bash
@@ -413,6 +454,8 @@ operational topic，而不是停留在低层事件名。
 `Unsupported model` 表示 endpoint 和 key 已经连通，但当前 `OPENAI_MODEL` 不被该 provider 的 chat path 支持。使用本文档中已验证的模型，或换成 provider 支持的 chat model。
 
 `copilot_rational_backend_requires_allow_model_call` 表示选择了 `--rational-backend copilot`，但没有带 `--allow-model-call`。
+
+`rational_plan_payload_invalid` 或 `rational_plan_tool_not_in_available_tools` 表示 provider/copilot 的 Rational 响应提出了不在 prompt-safe `available_tools` 合约中的工具，或者返回了格式错误的 plan。这类情况必须按 fail-closed 处理：先检查 `approval_context.operator_requirements.rational_plan_evidence` 和源 audit payload，再决定是否缩小任务范围或调整 provider model 后重试。
 
 `require_real_tool_adapter_requires_neuro_cli_adapter` 表示请求 release gate 时仍使用 fake adapter。需要加 `--tool-adapter neuro-cli`。
 
@@ -441,4 +484,22 @@ promote release identity 前，需要确认：
 5. hardware preflight 返回 `status=ready`；如果 live rollback 不安全，需明确记录 bounded simulated recovery 的理由。
 6. `neurolink_core/tests` 中本 release 触达的 slice 全部通过。
 7. `neuro_cli/tests/test_neuro_cli.py` 和触达的 script checks 通过。
-8. 英文/中文 runbook、release plan 和 README 都已把 release-1.2.4 标记为当前 orchestrator/live-service track。
+8. 英文/中文 runbook、release plan 和 README 都已把 release-1.2.5 标记为已闭环的 AI Core release，并保留 release-1.2.4 作为继承的 orchestrator/live-service baseline。
+
+针对 release-1.2.5 的 closure 准备，还需要确认：
+
+1. provider 路径只在显式带上 `--allow-model-call` 时运行；缺少 flag 或 credentials 时，系统能给出干净的缺失前提错误。
+2. 每次 provider/copilot Rational 结果都会在 `execution_evidence.audit_record.payload.rational_plan_evidence` 中记录 `tool_selected`、`no_tool_selected` 或 `invalid_payload` 三类之一。
+3. 对任何 provider 提议的带副作用工具，`approval-inspect` 都会先暴露 `approval_context.operator_requirements.rational_plan_evidence`，供 operator 审查。
+4. 一旦实际走过 provider/copilot Rational 规划，`agent_run_evidence.closure_gates.rational_plan_evidence_present=true` 且 `agent_run_evidence.closure_gates.rational_plan_outcome_recorded=true`。
+5. 针对 closure 使用的数据库运行 `closure-summary --session-id <session-id>`，确认 `aggregate_gates.session_has_execution_evidence=true`、`aggregate_gates.latest_execution_closure_ready=true` 与 `aggregate_gates.no_pending_approvals=true` 后，再收集最终 evidence。
+6. 确认 `aggregate_gates.memory_governance_gate_satisfied=true`，并检查 `execution_summaries[0].memory_governance_summary` 中的 accepted/rejected candidate 数量、committed memory 数量、rejection reasons 与 commit backends。
+7. 确认 `aggregate_gates.memory_recall_gate_satisfied=true`，并检查 `execution_summaries[0].memory_recall_summary` 中的 affective/rational selected counts、filtered categories、backend kind 与 fallback continuity。
+8. 确认 `aggregate_gates.tool_skill_mcp_gate_satisfied=true`，并检查 `execution_summaries[0].tool_skill_mcp_summary` 中的 available-tool enforcement、governed side-effect tool counts、workflow-plan requirement 与只读 MCP boundary。
+9. 保存 documentation closure JSON，并通过 `closure-summary --documentation-file <documentation.json>` 传入；确认 `validation_gates.documentation_gate=true`。
+10. 当 closure 要求 provider smoke evidence 时，先保存 `maf-provider-smoke` JSON，再运行 `closure-summary --provider-smoke-file <provider-smoke.json> --require-provider-smoke`；确认 `validation_gates.provider_runtime_gate=true` 且 `aggregate_gates.provider_smoke_gate_satisfied=true`。
+11. 当 closure 要求 multimodal/profile evidence 时，先保存 `multimodal-profile-smoke` JSON，再运行 `closure-summary --multimodal-profile-file <multimodal-profile.json> --require-multimodal-profile`；确认 `validation_gates.multimodal_normalization_gate=true` 与 `validation_gates.profile_routing_gate=true`。
+12. 保存 regression evidence JSON，并通过 `closure-summary --regression-file <regression.json>` 传入；确认 `validation_gates.regression_gate=true`。
+13. 优先消费 `closure-summary.checklist` 作为七个 release gate 的机器可读矩阵，并使用 `closure-summary.bundle_checklist` 查看 `memory_governance_bundle`、`memory_recall_policy_bundle` 与 `tool_skill_mcp_bundle` 等底层 bundle 项。
+14. 合法的 `no_tool_selected` Rational 结果可以有 `tool_result_count=0`；只要 `closure_gates.tool_result_outcome_recorded=true` 且 Rational evidence 记录 `status=no_tool_selected`，closure summary 仍可接受。
+15. 在 release-1.2.5 closure evidence 全部通过且批准 promotion 后，canonical release identity 从 `1.2.4` 提升到 `1.2.5`。

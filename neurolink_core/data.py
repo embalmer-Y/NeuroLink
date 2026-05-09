@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any
+from typing import cast
 
 from .common import PerceptionEvent, new_id, utc_now_iso
 
@@ -422,6 +423,24 @@ class CoreDataStore:
         self._conn.commit()
         return memory_id
 
+    def update_long_term_memory(
+        self,
+        memory_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._conn.execute(
+            """
+            UPDATE long_term_memories
+            SET payload_json = ?
+            WHERE memory_id = ?
+            """,
+            (
+                json.dumps(payload, sort_keys=True),
+                memory_id,
+            ),
+        )
+        self._conn.commit()
+
     def get_policy_decisions(self, execution_span_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM policy_decisions WHERE execution_span_id = ? ORDER BY created_at",
@@ -601,6 +620,7 @@ class CoreDataStore:
         *,
         source_execution_span_id: str | None = None,
         semantic_topic: str | None = None,
+        include_retired: bool = False,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM long_term_memories WHERE 1 = 1"
@@ -614,7 +634,7 @@ class CoreDataStore:
         sql += " ORDER BY created_at DESC, memory_id DESC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [
+        memories = [
             {
                 "memory_id": row["memory_id"],
                 "source_execution_span_id": row["source_execution_span_id"],
@@ -624,6 +644,83 @@ class CoreDataStore:
             }
             for row in rows
         ]
+        if include_retired:
+            return memories
+        active_memories: list[dict[str, Any]] = []
+        for memory in memories:
+            payload = cast(dict[str, Any], memory["payload"])
+            governance = cast(dict[str, Any], payload.get("memory_governance") or {})
+            if governance.get("lifecycle_state") == "retired":
+                continue
+            active_memories.append(memory)
+        return active_memories
+
+    def retire_long_term_memories(
+        self,
+        *,
+        semantic_topic: str | None = None,
+        source_execution_span_id: str | None = None,
+        reason: str = "retention_expired",
+    ) -> list[str]:
+        memories = self.get_long_term_memories(
+            source_execution_span_id=source_execution_span_id,
+            semantic_topic=semantic_topic,
+            include_retired=True,
+            limit=1000,
+        )
+        retired_memory_ids: list[str] = []
+        for memory in memories:
+            payload = dict(memory["payload"])
+            governance = dict(payload.get("memory_governance") or {})
+            if governance.get("lifecycle_state") == "retired":
+                continue
+            lifecycle_history = list(governance.get("lifecycle_history") or [])
+            if "retired" not in lifecycle_history:
+                lifecycle_history.append("retired")
+            governance.update(
+                {
+                    "lifecycle_state": "retired",
+                    "decision_reason": reason,
+                    "retired_at": utc_now_iso(),
+                    "lifecycle_history": lifecycle_history,
+                }
+            )
+            payload["memory_governance"] = governance
+            self.update_long_term_memory(str(memory["memory_id"]), payload)
+            retired_memory_ids.append(str(memory["memory_id"]))
+        return retired_memory_ids
+
+    def retire_expired_long_term_memories(
+        self,
+        *,
+        reference_time: str | None = None,
+    ) -> list[str]:
+        resolved_reference_time = reference_time or utc_now_iso()
+        memories = self.get_long_term_memories(include_retired=True, limit=1000)
+        retired_memory_ids: list[str] = []
+        for memory in memories:
+            payload = dict(memory["payload"])
+            governance = dict(payload.get("memory_governance") or {})
+            if governance.get("lifecycle_state") == "retired":
+                continue
+            retention_expires_at = str(governance.get("retention_expires_at") or "")
+            if not retention_expires_at or retention_expires_at > resolved_reference_time:
+                continue
+            lifecycle_history = list(governance.get("lifecycle_history") or [])
+            if "retired" not in lifecycle_history:
+                lifecycle_history.append("retired")
+            governance.update(
+                {
+                    "lifecycle_state": "retired",
+                    "decision_reason": "retention_expired",
+                    "retired_at": resolved_reference_time,
+                    "lifecycle_history": lifecycle_history,
+                }
+            )
+            payload["memory_governance"] = governance
+            self.update_long_term_memory(str(memory["memory_id"]), payload)
+            retired_memory_ids.append(str(memory["memory_id"]))
+        return retired_memory_ids
 
     def get_audit_record(self, audit_id: str) -> dict[str, Any] | None:
         row = self._conn.execute(

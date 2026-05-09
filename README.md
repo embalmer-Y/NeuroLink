@@ -2,7 +2,7 @@
 
 NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
 
-The project is currently on closed release `1.2.4`, which completed the Core App Build/Deploy Orchestrator and production live event service slice. The canonical host CLI now advertises `RELEASE_TARGET = "1.2.4"`, and release `1.2.5` is the next planned HLD delivery slice.
+The project is currently on closed release `1.2.5`, which completed the multimodal Agent runtime, inference profile routing, memory governance, and safe Agent Tool/Skill/MCP closure slice. The canonical host CLI now advertises `RELEASE_TARGET = "1.2.5"`, and release `1.2.6` is the next planned HLD delivery slice.
 
 Release `1.2.0` remains the earlier local AI Core baseline. Release `1.2.1` is now the closed Core-Agent baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, guarded real-provider wiring, approval-gated resumable tool execution, and bounded real Neuro CLI control integration validated on the connected DNESP32S3B hardware path. The validated release `1.1.10` Unit/demo platform remains the underlying hardware/runtime baseline for later provider or live-event follow-up work.
 
@@ -11,6 +11,8 @@ Release `1.2.2` is the closed real-LLM Core line. Core can run through a real MA
 Release `1.2.3` is the closed autonomous-perception line. Core now has deterministic event replay/daemon evidence, explicit live-ingest provenance, approval-bounded recovery evidence, and real hardware callback/lease/state/update-plane proof through the generic Unit event listener.
 
 Release `1.2.4` is the closed Core App Build/Deploy Orchestrator and production live event service slice. It moved the project from about 64% total HLD completion to about 75% by turning existing script and Neuro CLI paths into Core-owned build, artifact-admission, deploy, activation, recovery, and supervised event-service workflows.
+
+Release `1.2.5` is the closed multimodal Agent runtime and governance slice. It carried the project to about 88% HLD completion by making deterministic multimodal normalization, inference profile routing, provider-safe prompt context, governed memory lifecycle and recall, and Tool/Skill/MCP closure evidence executable and release-gated.
 
 ## Project Layout
 
@@ -114,7 +116,66 @@ bash applocation/NeuroLink/neuro_unit/tests/unit/run_ut_linux.sh
 ```bash
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli no-model-dry-run --output json
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli maf-provider-smoke --output json
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli multimodal-profile-smoke --text inspect --image-ref frame-001 --output json
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id>
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id> --provider-smoke-file <provider-smoke.json> --require-provider-smoke
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id> --multimodal-profile-file <multimodal-profile.json> --require-multimodal-profile
 ```
+
+For the release-1.2.5 provider smoke contract, treat `maf-provider-smoke`
+output as closure evidence rather than a simple readiness probe: inspect
+`closure_gates.real_provider_call_opt_in_respected`,
+`closure_gates.closure_smoke_outcome_recorded`, and, for live-call smoke,
+`closure_gates.provider_requirements_ready` plus
+`closure_gates.model_call_evidence_present`.
+Use `closure-summary` as the read-only session-level closure rollup for recent
+execution evidence, Rational plan evidence, pending approvals, and aggregate
+closure gates. When collecting release-1.2.5 provider evidence, pass the saved
+`maf-provider-smoke` JSON through `--provider-smoke-file` and add
+`--require-provider-smoke` so missing provider smoke evidence fails closed in the
+aggregate gates. Prefer consuming `checklist` as the seven-gate release
+validation matrix, use `bundle_checklist` for the lower-level bundle results,
+and use `aggregate_gates` as the compact session/bundle readiness summary.
+For the integrated release validation gate matrix, pass the saved documentation
+closure JSON through `--documentation-file`, provider smoke through
+`--provider-smoke-file`, multimodal/profile smoke through
+`--multimodal-profile-file`, and regression evidence through `--regression-file`.
+Then inspect `validation_gates`, `validation_gate_summary`, and `checklist` for
+the seven release-1.2.5 gates: documentation, multimodal normalization,
+profile routing, provider runtime, memory governance, Tool/Skill/MCP, and
+regression.
+For the memory governance closure bundle, verify
+`aggregate_gates.memory_governance_gate_satisfied=true` and inspect
+`execution_summaries[0].memory_governance_summary` for accepted/rejected
+candidate counts, committed memory count, rejection reasons, and commit
+backends. The bundle now keeps ephemeral telemetry as rejected evidence,
+records `source_fact_refs` for governed candidates, and promotes only accepted
+operational memories into long-term storage.
+For the memory recall closure bundle, verify
+`aggregate_gates.memory_recall_gate_satisfied=true` and inspect
+`execution_summaries[0].memory_recall_summary` for affective versus rational
+selected counts, filtered categories, backend kind, and fallback continuity.
+Provider-facing context now receives only governed recall summaries: affective
+recall stays separate from rational operational recall, while ungoverned sidecar
+results are filtered out and reported in recall evidence instead of being passed
+through to provider prompts.
+For the Tool/Skill/MCP closure bundle, verify
+`aggregate_gates.tool_skill_mcp_gate_satisfied=true` and inspect
+`execution_summaries[0].tool_skill_mcp_summary` for available-tool enforcement,
+governed side-effect tool counts, workflow-plan requirement, and MCP bridge
+boundaries. The bundle now records that provider-selected tools stayed within the
+manifest or were rejected, governed side-effect tools remain approval-gated,
+MCP stays descriptor-only/read-only, external MCP stays disabled, and direct
+model tool execution remains forbidden.
+For the multimodal/profile validation gate, save the `multimodal-profile-smoke`
+JSON and pass it through `--multimodal-profile-file`; use
+`--require-multimodal-profile` when the closure bundle must fail closed without
+normalization and route evidence.
+For active real-provider `agent-run` evidence, inspect
+`model_call_evidence.multimodal_summary`, `model_call_evidence.profile_route`,
+and `model_call_evidence.presentation_policy` to confirm the affective model
+received only prompt-safe multimodal/profile context and that tool execution
+remained Core-owned.
 
 For the active release-1.2.4 Core operator paths, including app build/deploy
 orchestration, bounded event-service supervision, Affective live model smoke,
@@ -169,9 +230,10 @@ Capability map:
 Release progress and architecture closure notes live in:
 
 - `PROJECT_PROGRESS.md`
+- `docs/project/RELEASE_1.2.5_MULTIMODAL_AGENT_PLAN.md`
 - `docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
 - `docs/project/RELEASE_1.2.3_AUTONOMOUS_PERCEPTION_PLAN.md`
 - `docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
 - `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.2.3` is closed as the current autonomous-perception and live-ingest baseline. Release `1.2.4` is the next planned HLD slice, focused on Core-owned app build/deploy orchestration and production-shaped live event service behavior. Remaining work after `1.2.4` is planned across `1.2.5`, `1.2.6`, and `1.2.7` so release `2.0.0` can be a stabilization and acceptance release rather than a large feature release.
+Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is now also closed as the multimodal Agent runtime and governance baseline. Remaining work is planned across `1.2.6` and `1.2.7` so release `2.0.0` can be a stabilization and acceptance release rather than a large feature release.

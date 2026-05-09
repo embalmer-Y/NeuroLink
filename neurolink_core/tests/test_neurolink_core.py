@@ -43,7 +43,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(events[0]["source_app"], "neuro_demo_gpio")
         self.assertEqual(events[0]["payload"]["target_app_id"], "neuro_demo_gpio")
 
-    def test_workflow_blocks_disallowed_tool_before_adapter_execution(self) -> None:
+    def test_workflow_rejects_manifest_mismatched_tool_contract_before_adapter_execution(self) -> None:
         class DestructiveStateSyncAdapter:
             executed = False
 
@@ -67,18 +67,15 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         result = workflow.run(sample_events())
 
         self.assertFalse(adapter.executed)
-        self.assertEqual(result.tool_results[0]["status"], "blocked")
+        self.assertEqual(result.tool_results[0]["status"], "error")
         self.assertEqual(
             result.tool_results[0]["payload"]["failure_status"],
-            "policy_blocked",
+            "missing_required_arguments",
         )
         self.assertEqual(data_store.count("tool_results"), 1)
-        self.assertEqual(data_store.count("policy_decisions"), 1)
+        self.assertEqual(data_store.count("policy_decisions"), 0)
         decisions = data_store.get_policy_decisions(result.execution_span_id)
-        self.assertFalse(decisions[0]["allowed"])
-        self.assertEqual(
-            decisions[0]["reason"], "side_effect_level_not_allowed_in_no_model_slice"
-        )
+        self.assertEqual(decisions, [])
         data_store.close()
 
     def test_dry_run_persists_before_reasoning_and_seals_audit(self) -> None:
@@ -96,7 +93,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(result.events_persisted, 2)
         self.assertEqual(data_store.count("perception_events"), 2)
         self.assertEqual(data_store.count("execution_spans"), 1)
-        self.assertEqual(data_store.count("facts"), 4)
+        self.assertEqual(data_store.count("facts"), 7)
         self.assertEqual(data_store.count("policy_decisions"), 1)
         self.assertEqual(data_store.count("memory_candidates"), 2)
         self.assertEqual(data_store.count("long_term_memories"), 0)
@@ -177,6 +174,365 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertIn(second.audit_id, snapshot.recent_audit_ids)
         data_store.close()
 
+    def test_cli_closure_summary_reads_session_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+
+            run_out = io.StringIO()
+            with redirect_stdout(run_out):
+                run_code = core_cli_main(
+                    [
+                        "agent-run",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-session-001",
+                        "--input-text",
+                        "show current apps on the unit",
+                    ]
+                )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-session-001",
+                    ]
+                )
+
+        self.assertEqual(run_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertEqual(payload["schema_version"], "1.2.5-closure-summary-v7")
+        self.assertEqual(payload["session_id"], "closure-summary-session-001")
+        self.assertEqual(payload["execution_count"], 1)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["aggregate_gates"]["session_has_execution_evidence"])
+        self.assertTrue(payload["aggregate_gates"]["latest_execution_closure_ready"])
+        self.assertTrue(payload["aggregate_gates"]["no_pending_approvals"])
+        self.assertTrue(payload["aggregate_gates"]["memory_governance_gate_satisfied"])
+        self.assertTrue(payload["aggregate_gates"]["memory_recall_gate_satisfied"])
+        self.assertTrue(payload["aggregate_gates"]["tool_skill_mcp_gate_satisfied"])
+        self.assertFalse(payload["validation_gate_summary"]["ok"])
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 2)
+        self.assertEqual(
+            payload["validation_gate_summary"]["failed_gate_ids"],
+            [
+                "documentation_gate",
+                "multimodal_normalization_gate",
+                "profile_routing_gate",
+                "provider_runtime_gate",
+                "regression_gate",
+            ],
+        )
+        self.assertFalse(payload["validation_gates"]["documentation_gate"])
+        self.assertTrue(payload["validation_gates"]["memory_governance_gate"])
+        self.assertTrue(payload["validation_gates"]["tool_skill_mcp_gate"])
+        self.assertEqual(
+            [item["item_id"] for item in payload["checklist"]],
+            [
+                "documentation_gate",
+                "multimodal_normalization_gate",
+                "profile_routing_gate",
+                "provider_runtime_gate",
+                "memory_governance_gate",
+                "tool_skill_mcp_gate",
+                "regression_gate",
+            ],
+        )
+        self.assertEqual(
+            [item["item_id"] for item in payload["bundle_checklist"]],
+            [
+                "session_execution_evidence",
+                "latest_execution_ready",
+                "pending_approvals_cleared",
+                "memory_governance_bundle",
+                "memory_recall_policy_bundle",
+                "tool_skill_mcp_bundle",
+                "provider_smoke_bundle",
+                "multimodal_profile_bundle",
+            ],
+        )
+        self.assertTrue(all(item["passed"] for item in payload["bundle_checklist"]))
+        execution_summary = payload["execution_summaries"][0]
+        self.assertTrue(execution_summary["ok"])
+        self.assertEqual(execution_summary["tool_result_count"], 1)
+        self.assertTrue(execution_summary["closure_gates"]["audit_record_present"])
+        self.assertTrue(execution_summary["closure_gates"]["rational_plan_evidence_present"])
+        self.assertTrue(execution_summary["closure_gates"]["rational_plan_outcome_recorded"])
+        self.assertTrue(execution_summary["closure_gates"]["memory_governance_recorded"])
+        self.assertTrue(execution_summary["closure_gates"]["memory_recall_policy_recorded"])
+        self.assertTrue(execution_summary["closure_gates"]["tool_skill_mcp_recorded"])
+        self.assertTrue(execution_summary["memory_governance_summary"]["ok"])
+        self.assertTrue(execution_summary["memory_recall_summary"]["ok"])
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["ok"])
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["closure_gates"]["available_tools_only_enforced"])
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["closure_gates"]["side_effect_tools_require_approval"])
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["closure_gates"]["mcp_descriptor_read_only"])
+        self.assertEqual(execution_summary["rational_plan_evidence"]["status"], "tool_selected")
+
+    def test_cli_closure_summary_includes_memory_governance_bundle_for_local_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+
+            run_out = io.StringIO()
+            with redirect_stdout(run_out):
+                run_code = core_cli_main(
+                    [
+                        "no-model-dry-run",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-memory-001",
+                        "--memory-backend",
+                        "local",
+                    ]
+                )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-memory-001",
+                    ]
+                )
+
+        self.assertEqual(run_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["aggregate_gates"]["memory_governance_gate_satisfied"])
+        self.assertTrue(payload["aggregate_gates"]["memory_recall_gate_satisfied"])
+        self.assertTrue(payload["aggregate_gates"]["tool_skill_mcp_gate_satisfied"])
+        self.assertFalse(payload["validation_gate_summary"]["ok"])
+        self.assertFalse(payload["validation_gates"]["documentation_gate"])
+        self.assertTrue(payload["validation_gates"]["memory_governance_gate"])
+        self.assertTrue(payload["validation_gates"]["tool_skill_mcp_gate"])
+        execution_summary = payload["execution_summaries"][0]
+        self.assertEqual(execution_summary["memory_governance_summary"]["candidate_count"], 2)
+        self.assertEqual(execution_summary["memory_governance_summary"]["committed_memory_count"], 1)
+        self.assertEqual(execution_summary["memory_governance_summary"]["rejected_candidate_count"], 1)
+        self.assertEqual(execution_summary["memory_governance_summary"]["commit_backends"], ["local_sqlite"])
+        self.assertEqual(execution_summary["memory_governance_summary"]["rejection_reasons"], ["ephemeral_telemetry_not_retained"])
+        self.assertEqual(execution_summary["memory_recall_summary"]["affective_selected_count"], 0)
+        self.assertEqual(execution_summary["memory_recall_summary"]["rational_selected_count"], 0)
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["ok"])
+
+    def test_cli_closure_summary_records_invalid_provider_tool_rejection_in_tool_skill_mcp_bundle(self) -> None:
+        class FakeProviderClient:
+            provider_client_kind = "test_client"
+
+            def decide(
+                self,
+                frame: Any,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+            ) -> dict[str, Any]:
+                del frame, memory_items, profile
+                return {
+                    "delegated": True,
+                    "reason": "real_provider_affective_decision",
+                    "salience": 93,
+                }
+
+            def plan(
+                self,
+                decision: Any,
+                frame: Any,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any]:
+                del decision, frame, profile, available_tools, session_context
+                return {
+                    "tool_name": "system_unknown_write",
+                    "args": {"source": "real-provider"},
+                    "reason": "hallucinated_tool_from_provider",
+                }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            with mock.patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "secret", "OPENAI_MODEL": "gpt-4.1-mini"},
+                clear=False,
+            ):
+                with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+                    payload = run_no_model_dry_run(
+                        db_path,
+                        session_id="closure-summary-tool-skill-mcp-001",
+                        maf_provider_mode="real_provider",
+                        allow_model_call=True,
+                        provider_client=FakeProviderClient(),
+                    )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-tool-skill-mcp-001",
+                    ]
+                )
+
+        self.assertEqual(
+            payload["tool_results"][0]["payload"]["failure_status"],
+            "rational_plan_tool_not_in_available_tools",
+        )
+        self.assertEqual(summary_code, 0)
+        summary_payload = json.loads(summary_out.getvalue())
+        execution_summary = summary_payload["execution_summaries"][0]
+        self.assertTrue(summary_payload["aggregate_gates"]["tool_skill_mcp_gate_satisfied"])
+        self.assertTrue(summary_payload["validation_gates"]["tool_skill_mcp_gate"])
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["invalid_tool_rejected"])
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["closure_gates"]["available_tools_only_enforced"])
+        self.assertTrue(execution_summary["tool_skill_mcp_summary"]["ok"])
+
+    def test_cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            documentation_file = Path(tmpdir) / "documentation.json"
+            provider_smoke_file = Path(tmpdir) / "provider-smoke.json"
+            multimodal_profile_file = Path(tmpdir) / "multimodal-profile.json"
+            regression_file = Path(tmpdir) / "regression.json"
+
+            with redirect_stdout(io.StringIO()):
+                run_code = core_cli_main(
+                    [
+                        "no-model-dry-run",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-gates-001",
+                        "--memory-backend",
+                        "local",
+                    ]
+                )
+
+            documentation_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.5-documentation-closure-v1",
+                        "status": "ready",
+                        "reason": "documentation_aligned",
+                        "closure_gates": {
+                            "release_plan_aligned": True,
+                            "readme_aligned": True,
+                            "progress_recorded": True,
+                            "runbooks_aligned": True,
+                            "release_identity_unpromoted": True,
+                        },
+                        "evidence_summary": {"release_identity": "1.2.4"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            provider_smoke_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.5-maf-provider-smoke-v2",
+                        "status": "ready",
+                        "reason": "provider_available_no_call",
+                        "call_status": "skipped",
+                        "executes_model_call": False,
+                        "closure_gates": {
+                            "closure_smoke_outcome_recorded": True,
+                            "real_provider_call_opt_in_respected": True,
+                            "provider_requirements_ready": True,
+                            "missing_requirements_cleanly_reported": False,
+                            "model_call_evidence_present": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            multimodal_profile_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.5-inference-route-v1",
+                        "status": "ready",
+                        "reason": "route_ready",
+                        "executes_model_call": False,
+                        "closure_gates": {
+                            "multimodal_input_recorded": True,
+                            "route_decision_recorded": True,
+                            "profile_readiness_recorded": True,
+                            "route_ready": True,
+                            "no_model_call_executed": True,
+                        },
+                        "evidence_summary": {
+                            "input_modes": ["text"],
+                            "selected_profile": "local_16g",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            regression_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.5-regression-closure-v1",
+                        "status": "ready",
+                        "reason": "focused_regressions_green",
+                        "closure_gates": {
+                            "core_tests_passed": True,
+                            "app_lifecycle_regression_passed": True,
+                            "event_service_regression_passed": True,
+                        },
+                        "evidence_summary": {"command_count": 3},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-gates-001",
+                        "--documentation-file",
+                        str(documentation_file),
+                        "--provider-smoke-file",
+                        str(provider_smoke_file),
+                        "--multimodal-profile-file",
+                        str(multimodal_profile_file),
+                        "--regression-file",
+                        str(regression_file),
+                    ]
+                )
+
+        self.assertEqual(run_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gate_summary"]["ok"])
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 7)
+        self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
+        self.assertTrue(all(payload["validation_gates"].values()))
+        self.assertTrue(all(item["passed"] for item in payload["checklist"]))
+        self.assertEqual(
+            payload["documentation_summary"]["schema_version"],
+            "1.2.5-documentation-closure-v1",
+        )
+        self.assertEqual(
+            payload["regression_summary"]["schema_version"],
+            "1.2.5-regression-closure-v1",
+        )
+
     def test_low_salience_tick_does_not_delegate(self) -> None:
         data_store = CoreDataStore()
         workflow = NoModelCoreWorkflow(data_store=data_store)
@@ -199,7 +555,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertIn("no delegated action", result.final_response["text"])
         self.assertEqual(data_store.count("perception_events"), 1)
         self.assertEqual(data_store.count("execution_spans"), 1)
-        self.assertEqual(data_store.count("facts"), 3)
+        self.assertEqual(data_store.count("facts"), 6)
         self.assertEqual(data_store.count("memory_candidates"), 1)
         self.assertEqual(data_store.count("policy_decisions"), 0)
         self.assertEqual(data_store.count("tool_results"), 0)
@@ -474,7 +830,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["final_response"]["speaker"], "affective")
         self.assertEqual(payload["db_counts"]["perception_events"], 2)
         self.assertEqual(payload["db_counts"]["execution_spans"], 1)
-        self.assertEqual(payload["db_counts"]["facts"], 4)
+        self.assertEqual(payload["db_counts"]["facts"], 7)
         self.assertEqual(payload["db_counts"]["policy_decisions"], 1)
         self.assertEqual(payload["db_counts"]["memory_candidates"], 2)
         self.assertEqual(payload["db_counts"]["tool_results"], 1)
@@ -562,7 +918,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(evidence["audit_record"]["audit_id"], payload["audit_id"])
         self.assertEqual(
             {fact["fact_type"] for fact in evidence["facts"]},
-            {"notification_dispatch", "perception_event_topic", "perception_frame"},
+            {
+                "affective_runtime_context",
+                "memory_governance_summary",
+                "memory_recall_policy",
+                "notification_dispatch",
+                "perception_event_topic",
+                "perception_frame",
+            },
         )
         self.assertEqual(len(evidence["policy_decisions"]), 1)
         self.assertTrue(evidence["policy_decisions"][0]["allowed"])
@@ -579,18 +942,33 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
     def test_local_memory_backend_commits_long_term_memories(self) -> None:
         payload = run_no_model_dry_run(memory_backend="local")
 
-        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 1)
         self.assertEqual(payload["memory_runtime"]["backend_kind"], "local_sqlite")
         self.assertFalse(payload["memory_runtime"]["fallback_active"])
-        self.assertEqual(len(payload["execution_evidence"]["long_term_memories"]), 2)
+        self.assertEqual(len(payload["execution_evidence"]["long_term_memories"]), 1)
         self.assertEqual(
             payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["committed_memory_count"],
-            2,
+            1,
+        )
+        self.assertEqual(
+            payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["accepted_memory_candidate_count"],
+            1,
+        )
+        self.assertEqual(
+            payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["rejected_memory_candidate_count"],
+            1,
         )
         self.assertEqual(
             payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["memory_runtime"],
             payload["memory_runtime"],
         )
+        first_memory = payload["execution_evidence"]["long_term_memories"][0]["payload"]
+        self.assertEqual(first_memory["memory_governance"]["schema_version"], "1.2.5-memory-governance-v1")
+        self.assertEqual(first_memory["memory_governance"]["lifecycle_state"], "committed")
+        self.assertEqual(first_memory["memory_governance"]["commit_backend"], "local_sqlite")
+        self.assertEqual(first_memory["memory_governance"]["decision_reason"], "auto_commit_local_sqlite")
+        self.assertEqual(first_memory["memory_governance"]["retention_class"], "operational_lesson")
+        self.assertTrue(first_memory["memory_governance"]["source_fact_refs"])
 
     def test_mem0_memory_backend_falls_back_to_local_when_unavailable(self) -> None:
         with mock.patch("neurolink_core.memory.find_spec", return_value=None):
@@ -605,7 +983,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         )
         self.assertEqual(payload["memory_runtime"]["last_lookup_status"], "fallback_local_sqlite")
         self.assertEqual(payload["memory_runtime"]["last_commit_status"], "fallback_local_sqlite")
-        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 1)
         self.assertEqual(
             payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["memory_runtime"],
             payload["memory_runtime"],
@@ -659,16 +1037,18 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         )
         self.assertEqual(
             payload["memory_runtime"]["sidecar_memory_ids"],
-            ["mem0-new-001", "mem0-new-002"],
+            ["mem0-new-001"],
         )
-        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 1)
         self.assertEqual(len(client.search_calls), 1)
-        self.assertEqual(len(client.add_calls), 2)
+        self.assertEqual(len(client.add_calls), 1)
         self.assertEqual(client.add_calls[0]["user_id"], "neurolink-core")
         self.assertEqual(
             client.add_calls[0]["metadata"]["agent_id"],
             "neurolink-rational",
         )
+        self.assertIn("source_fact_refs", client.add_calls[0]["message"])
+        self.assertNotIn("frame_id", client.add_calls[0]["message"])
 
     def test_local_memory_backend_reuses_prior_memories_on_next_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -684,8 +1064,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 memory_backend="local",
             )
 
-        self.assertEqual(first["db_counts"]["long_term_memories"], 2)
-        self.assertEqual(second["db_counts"]["long_term_memories"], 4)
+        self.assertEqual(first["db_counts"]["long_term_memories"], 1)
+        self.assertEqual(second["db_counts"]["long_term_memories"], 2)
         self.assertGreater(
             second["execution_evidence"]["audit_record"]["payload"]["session_context"]["memory_lookup_count"],
             0,
@@ -710,7 +1090,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
 
         self.assertEqual(
             prompt_context["schema_version"],
-            "1.2.2-prompt-safe-context-v1",
+            "1.2.5-prompt-safe-context-v2",
         )
         self.assertEqual(prompt_context["session_id"], "prompt-safe-session-001")
         self.assertEqual(prompt_context["history"]["previous_execution_count"], 1)
@@ -721,6 +1101,15 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         )
         self.assertGreater(prompt_context["memory"]["lookup_count"], 0)
         self.assertLessEqual(len(prompt_context["memory"]["items"]), 5)
+        self.assertEqual(prompt_context["memory"]["recall_policy"]["schema_version"], "1.2.5-memory-recall-policy-v1")
+        self.assertEqual(prompt_context["memory"]["recall_policy"]["affective_recall"]["selected_count"], 0)
+        self.assertEqual(prompt_context["memory"]["recall_policy"]["rational_recall"]["selected_count"], 1)
+        self.assertEqual(prompt_context["memory"]["items"], prompt_context["memory"]["rational_items"])
+        self.assertEqual(prompt_context["memory"]["affective_items"], [])
+        self.assertEqual(
+            prompt_context["memory"]["recall_policy"]["filtered_out_categories"].get("ungoverned_memory_result", 0),
+            0,
+        )
         self.assertEqual(
             prompt_context["safety_boundaries"]["can_execute_tools_directly"],
             False,
@@ -899,8 +1288,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         )
         self.assertEqual(
             agent_run_evidence["prompt_safe_context"]["schema_version"],
-            "1.2.2-prompt-safe-context-v1",
+            "1.2.5-prompt-safe-context-v2",
         )
+        self.assertEqual(agent_run_evidence["prompt_safe_context"]["affective_memory_count"], 0)
+        self.assertEqual(agent_run_evidence["prompt_safe_context"]["rational_memory_count"], 0)
         self.assertFalse(
             agent_run_evidence["prompt_safe_context"]["safety_boundaries"]["can_execute_tools_directly"]
         )
@@ -908,6 +1299,9 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(agent_run_evidence["evidence_counts"]["policy_decisions"], 1)
         self.assertEqual(agent_run_evidence["evidence_counts"]["tool_results"], 1)
         self.assertTrue(agent_run_evidence["audit"]["audit_record_present"])
+        self.assertTrue(agent_run_evidence["closure_gates"]["memory_recall_policy_present"])
+        self.assertTrue(agent_run_evidence["closure_gates"]["affective_memory_recall_recorded"])
+        self.assertTrue(agent_run_evidence["closure_gates"]["rational_memory_recall_recorded"])
 
     def test_workflow_rejects_real_provider_plan_for_unknown_manifest_tool(self) -> None:
         class FakeProviderClient:
@@ -959,11 +1353,11 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["tool_results"][0]["status"], "error")
         self.assertEqual(
             payload["tool_results"][0]["payload"]["failure_status"],
-            "unknown_tool",
+            "rational_plan_tool_not_in_available_tools",
         )
         self.assertEqual(
             payload["tool_results"][0]["payload"]["failure_class"],
-            "manifest_lookup_failed",
+            "rational_plan_payload_invalid",
         )
         self.assertGreater(
             len(payload["tool_results"][0]["payload"]["available_tools"]),
@@ -980,6 +1374,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
 
             def __init__(self) -> None:
                 self.memory_items: list[dict[str, Any]] = []
+                self.affective_context: dict[str, Any] = {}
                 self.session_context: dict[str, Any] = {}
 
             def decide(
@@ -987,9 +1382,11 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 frame: Any,
                 memory_items: list[dict[str, Any]],
                 profile: Any,
+                affective_context: dict[str, Any] | None = None,
             ) -> dict[str, Any]:
                 del frame, profile
                 self.memory_items = memory_items
+                self.affective_context = dict(affective_context or {})
                 return {
                     "delegated": True,
                     "reason": "real_provider_affective_decision",
@@ -1038,7 +1435,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         audit_session_context = payload["execution_evidence"]["audit_record"]["payload"]["session_context"]
         self.assertEqual(
             client.session_context["schema_version"],
-            "1.2.2-prompt-safe-context-v1",
+            "1.2.5-prompt-safe-context-v2",
         )
         self.assertNotIn("previous_execution_spans", client.session_context)
         self.assertNotIn("model_call_evidence", client.session_context)
@@ -1047,8 +1444,39 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             audit_session_context["prompt_safe_context"],
             client.session_context,
         )
-        self.assertTrue(client.memory_items)
-        self.assertNotIn("payload", client.memory_items[0])
+        self.assertEqual(client.affective_context, client.session_context["affective_runtime"])
+        self.assertEqual(client.memory_items, [])
+        self.assertEqual(client.session_context["memory"]["recall_policy"]["affective_recall"]["selected_count"], 0)
+        self.assertEqual(client.session_context["memory"]["recall_policy"]["rational_recall"]["selected_count"], 1)
+        self.assertEqual(len(client.session_context["memory"]["items"]), 1)
+        self.assertEqual(client.session_context["memory"]["affective_items"], [])
+        self.assertNotIn("payload", client.session_context["memory"]["items"][0])
+
+    def test_mem0_prompt_safe_recall_excludes_ungoverned_sidecar_results(self) -> None:
+        class FakeMem0Client:
+            def search(self, query: str, user_id: str, limit: int) -> dict[str, Any]:
+                del query, user_id, limit
+                return {"results": [{"id": "mem0-existing-001", "memory": "raw private sidecar text"}]}
+
+            def add(
+                self,
+                message: str,
+                user_id: str,
+                metadata: dict[str, Any],
+            ) -> dict[str, Any]:
+                del message, user_id, metadata
+                return {"id": "mem0-new-001"}
+
+        payload = run_no_model_dry_run(memory_backend="mem0", mem0_client=FakeMem0Client())
+        prompt_context = payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["prompt_safe_context"]
+        recall_policy = prompt_context["memory"]["recall_policy"]
+
+        self.assertEqual(recall_policy["backend_kind"], "mem0_sidecar")
+        self.assertFalse(recall_policy["fallback_active"])
+        self.assertEqual(recall_policy["affective_recall"]["selected_count"], 0)
+        self.assertEqual(recall_policy["rational_recall"]["selected_count"], 0)
+        self.assertEqual(recall_policy["filtered_out_categories"]["ungoverned_memory_result"], 1)
+        self.assertEqual(len(prompt_context["memory"]["items"]), 0)
 
     def test_copilot_rational_backend_requires_allow_model_call(self) -> None:
         with self.assertRaisesRegex(
@@ -1117,7 +1545,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(rational_backend["model_call_allowed"])
         self.assertFalse(rational_backend["can_execute_tools_directly"])
         self.assertTrue(payload["agent_run_evidence"]["ok"])
-        self.assertIn("1.2.2-prompt-safe-context-v1", created_agents[0].prompt)
+        self.assertIn("1.2.5-prompt-safe-context-v2", created_agents[0].prompt)
         self.assertIn("system_query_device", created_agents[0].prompt)
 
     def test_cli_no_model_dry_run_can_use_local_memory_backend(self) -> None:
@@ -1133,10 +1561,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 1)
         self.assertEqual(
             payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["committed_memory_count"],
-            2,
+            1,
         )
 
     def test_cli_no_model_dry_run_can_request_mem0_with_local_fallback(self) -> None:
@@ -1155,7 +1583,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["memory_runtime"]["backend_kind"], "mem0_sidecar")
         self.assertTrue(payload["memory_runtime"]["fallback_active"])
-        self.assertEqual(payload["db_counts"]["long_term_memories"], 2)
+        self.assertEqual(payload["db_counts"]["long_term_memories"], 1)
 
     def test_cli_session_inspect_reports_existing_session_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5821,7 +6249,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["event_source"], "neuro_cli_events_live")
         self.assertEqual(payload["final_response"]["topics"], ["unit.health.degraded"])
         self.assertEqual(payload["final_response"]["salience"], 85)
-        self.assertEqual(payload["db_counts"]["facts"], 3)
+        self.assertEqual(payload["db_counts"]["facts"], 6)
 
     def test_data_store_query_and_topic_index_follow_priority_and_topic_filters(self) -> None:
         data_store = CoreDataStore()
