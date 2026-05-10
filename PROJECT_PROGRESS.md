@@ -1,3 +1,134 @@
+2026-05-10: Completed release-2.0.0 final promotion. The active promotion bundle `smoke-evidence/release-2.0.0-promotion-20260510T044228Z/` first reached a green `closure-summary-final.json` with `validation_gate_summary.ok=true`, `passed_count=20`, and `failed_gate_ids=[]`. After that green bundle, canonical identity was promoted to `2.0.0` in the Neuro CLI, workflow catalog, and sample Unit app source, the LLEXT artifact was rebuilt, post-promotion hardware/resource/signing evidence was refreshed from the rebuilt artifact, and `closure-summary-post-promotion.json` again reported 20/20 gates green. Full Python regression passed with `367 passed, 6 subtests passed`. Release-2.0.0 is now the promoted baseline; stable 1.2.x evidence schema names remain intentionally frozen per the contract checklist. - Copilot
+
+#### EXEC-345 Release 2.0.0 Final Promotion
+
+- Status: promoted and regression-green
+- Bundle: `smoke-evidence/release-2.0.0-promotion-20260510T044228Z/`
+- Final pre-promotion closure:
+  - `closure-summary-final.json`
+  - `validation_gate_summary.ok=true`
+  - `validation_gate_summary.passed_count=20`
+  - `validation_gate_summary.failed_gate_ids=[]`
+- Promotion changes:
+  - `neuro_cli/src/neuro_cli.py`: `RELEASE_TARGET = "2.0.0"`
+  - `neuro_cli/src/neuro_workflow_catalog.py`: `RELEASE_TARGET = "2.0.0"`
+  - `subprojects/neuro_unit_app/src/main.c`: version/build id/manifest set to `2.0.0`
+  - rebuilt artifact: `/home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext`
+- Post-promotion closure:
+  - `closure-summary-post-promotion.json`
+  - `validation_gate_summary.ok=true`
+  - `validation_gate_summary.passed_count=20`
+  - `validation_gate_summary.failed_gate_ids=[]`
+- Validation:
+  - Neuro CLI focused regression: `127 passed`
+  - AI Core focused regression: `122 passed, 3 subtests passed`
+  - full Python regression: `367 passed, 6 subtests passed`
+- Result:
+  - release-2.0.0 is now the promoted product baseline
+  - the new promotion checklist records the decision and evidence boundary
+
+2026-05-10: Fixed the first release-2.0.0 stabilization regression found while preparing promotion evidence. Running the full AI Core regression suite from the NeuroLink project root initially showed two failures in Core-governed Neuro CLI adapter evidence: read-only real adapter execution was blocked by MCP direct-execution safety metadata, and state-sync failure summaries could not reach the runner path. Updated `neurolink_core/workflow.py` so legacy read-only Neuro CLI wrapper manifests without explicit `output_contract` remain executable through the Core-owned adapter while MCP direct-tool execution stays forbidden. Targeted tests passed, then the full AI Core suite passed with `229 passed, 6 subtests passed`. - Copilot
+
+#### EXEC-343 Release 2.0.0 Adapter Stabilization Fix
+
+- Status: fixed and regression-green
+- Scope:
+  - preserve the safety rule that MCP/model backends do not execute tools directly
+  - allow Core-governed read-only Neuro CLI wrapper contracts from legacy manifests to execute through the adapter
+  - preserve the public invalid-plan `failure_status=missing_required_arguments` compatibility while retaining detailed nested `plan_quality`
+- Validation:
+  - targeted adapter tests: `2 passed`
+  - full AI Core tests: `229 passed, 6 subtests passed`
+- Result:
+  - release-2.0.0 has one stabilization defect closed before final promotion
+  - refreshed promotion evidence uses the post-fix code path
+
+2026-05-10: Refreshed the release-2.0.0 promotion bundle after the adapter stabilization fix. The superseding bundle is `smoke-evidence/release-2.0.0-promotion-20260510T044228Z/`; the earlier `20260510T043745Z` bundle is now a superseded draft because it was generated before the code fix. The refreshed bundle includes deterministic Core dry-run evidence, provider/multimodal/agent excellence smokes, documentation closure, regression closure, federated dry-run, relay failure/fallback evidence, contract freeze archive, and a partial closure summary. The partial closure summary now has `passed_count=10`; documentation, provider runtime, multimodal normalization, profile routing, regression, federation, relay, and Agent excellence gates are green. Remaining gates are hardware abstraction/artifact compatibility, hardware acceptance matrix, restricted Unit compatibility, resource budget governance, release rollback hardening, signing/provenance, observability/diagnosis, and real-scene E2E. - Copilot
+
+#### EXEC-344 Release 2.0.0 Deterministic Closure Partial
+
+- Status: partial closure ready; final promotion still blocked
+- Bundle: `smoke-evidence/release-2.0.0-promotion-20260510T044228Z/`
+- Supersedes: `smoke-evidence/release-2.0.0-promotion-20260510T043745Z/`
+- Current partial result:
+  - `closure-summary-deterministic-partial.json`
+  - `validation_gate_summary.ok=false`
+  - `validation_gate_summary.passed_count=10`
+  - deterministic/documentation/provider/multimodal/regression/federation/relay/agent gates are green
+- Remaining:
+  - hardware compatibility and acceptance evidence
+  - resource budget governance evidence
+  - signing/provenance evidence
+  - observability and rollback hardening evidence
+  - live-event and real-scene E2E evidence
+  - final 20/20 closure summary and promotion approval
+
+2026-05-10: Started the fresh release-2.0.0 promotion evidence bundle after contract freeze. Created ignored bundle directory `smoke-evidence/release-2.0.0-promotion-20260510T043745Z/`, archived the contract freeze checklist into it, generated a bundle manifest, and captured deterministic non-hardware evidence: `no-model-dry-run.json`, `provider-smoke.json`, `multimodal-profile-smoke.json`, `real-scene-checklist-template.json`, and `agent-excellence-smoke.json`, plus `closure.db`. Payload-level status checks showed dry-run `ok`, provider/multimodal/agent excellence `ready`, and real-scene checklist template `2.0.0-real-scene-checklist-template-v1`. Remaining bundle work is hardware/resource/signing/rollback/observability/live-event/real-scene/final closure evidence. - Copilot
+
+#### EXEC-342 Release 2.0.0 Fresh Promotion Bundle Start
+
+- Status: deterministic evidence started; final closure not yet green
+- Bundle: `smoke-evidence/release-2.0.0-promotion-20260510T043745Z/`
+- Captured:
+  - `closure.db`
+  - `no-model-dry-run.json`
+  - `provider-smoke.json`
+  - `multimodal-profile-smoke.json`
+  - `real-scene-checklist-template.json`
+  - `agent-excellence-smoke.json`
+  - `contract-freeze-checklist.json`
+  - `bundle-manifest.json`
+- Validation:
+  - bundle JSON files parsed successfully
+  - payload-level statuses were checked instead of relying only on command exit codes
+  - bundle remains under ignored `smoke-evidence/` output, so durable docs stay separate from generated evidence
+- Next:
+  - generate documentation and regression closure payloads
+  - refresh hardware compatibility, hardware acceptance, resource budget, signing/provenance, observability, rollback, live-event, and real-scene E2E evidence
+  - run final `closure-summary` before any release identity promotion
+
+2026-05-10: Advanced release-2.0.0 from documentation foundation into contract freeze. Added `RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.md` and its machine-archivable JSON companion to freeze the AI Core CLI evidence surface, closure/evidence schema versions, 20-gate validation expectation, Neuro CLI release identity boundary, Unit topic contracts, AI safety/tool governance rules, memory/multimodal contracts, hardware compatibility classes, evidence bundle shape, and final identity promotion boundary. README, finalization plan, and AI Core user guide now point to the freeze checklist. The canonical implementation release remains `1.2.7`; promotion to `2.0.0` is still blocked until a fresh promotion bundle is green. - Copilot
+
+#### EXEC-341 Release 2.0.0 Contract Freeze Checklist
+
+- Status: ready for fresh release-2.0.0 promotion bundle
+- Owner: GitHub Copilot preparing contract freeze evidence
+- Scope:
+  - freeze AI Core CLI evidence commands and JSON status semantics
+  - freeze closure/evidence schema versions used by the promotion bundle
+  - freeze the 20-gate final validation expectation
+  - preserve Neuro CLI `1.2.7` implementation identity until green 2.0.0 evidence
+  - freeze Unit topic and update/app operation contracts without hardware-specific assumptions
+  - record AI safety, memory, multimodal, hardware compatibility, evidence bundle, and promotion identity boundaries
+- Result:
+  - `RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.md` added for human review
+  - `RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.json` added for archive/evidence use
+  - finalization plan and README now reference the freeze checklist
+- Next:
+  - generate a fresh `smoke-evidence/release-2.0.0-promotion-*` directory
+  - run deterministic Core evidence into the bundle
+  - continue toward hardware preflight, real-scene rerun, and final closure summary
+
+2026-05-10: Started release-2.0.0 implementation with the documentation and planning foundation required before the final frozen rerun. Added a full release-2.0.0 finalization plan, migration/operator handoff notes, and a task-oriented AI Core user guide so the project now has a mature user-facing entry point in addition to the existing evidence-heavy runbooks. The README was reshaped into a project front door with release status, capability overview, architecture snapshot, quick start, AI Core usage, validation commands, and a documentation map. This keeps the active 2.0.0 line focused on stabilization, freeze, complete-function confirmation, final real-scene rerun, and promotion rather than reopening feature scope. - Copilot
+
+#### EXEC-340 Release 2.0.0 Planning Docs And AI Core User Guide Start
+
+- Status: in progress for release-2.0.0 documentation and planning foundation
+- Owner: GitHub Copilot starting the final release-2.0.0 implementation line
+- Scope:
+  - create `RELEASE_2.0.0_FINALIZATION_PLAN.md` as the active stabilization, freeze, rerun, and promotion plan
+  - create `RELEASE_2.0.0_MIGRATION_NOTES.md` for migration and operator handoff boundaries
+  - create `AI_CORE_USER_GUIDE.md` as the primary task-oriented AI Core startup and usage guide
+  - update README into a mature project entry point with sparse section emoji, capability overview, quick start, AI Core usage, validation, and docs map
+  - link the new guide and finalization plan from the English and Chinese AI Core runbooks
+- Result:
+  - release-2.0.0 now has an explicit finalization plan instead of only the scenario checklist
+  - AI Core now has a user-oriented guide separate from the closure/evidence runbook
+  - README now presents the project as a complete runtime and release-gated platform while preserving copyable command examples
+- Next:
+  - run documentation validation and link checks
+  - continue with contract freeze checklist and fresh release-2.0.0 promotion evidence bundle
+
 2026-05-10: Closed release-1.2.7 and switched the repository into the release-2.0.0 stabilization, freeze, and promotion line. The final archived bundle now lives under `smoke-evidence/release-1.2.7-closure-20260510T040915Z/` and includes real live-event evidence (`live-event-smoke.json` with `session_id=session-147afc4ddeec`), a green integrated `closure-summary-current.json`, focused regression artifacts, signing/provenance, observability/rollback hardening, hardware acceptance, and the final documentation handoff surface for release-2.0.0. The remaining work is now explicitly stabilization-only: rerun the frozen real Core/Unit scenario checklist, review freeze blockers, and promote release-2.0.0 when that rerun archive is green. - Copilot
 
 #### EXEC-339 Release 1.2.7 Final Closure Bundle And 2.0.0 Line Switch

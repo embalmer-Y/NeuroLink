@@ -1,8 +1,50 @@
 # NeuroLink
 
-NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
+NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing
+Neuro Unit devices, deployable LLEXT applications, leases, update flows,
+governed AI Core workflows, and release-grade smoke validation.
 
-The project is now on the active release `2.0.0` stabilization, freeze, and promotion line after closing release `1.2.7` on top of the closed release `1.2.6` baseline. Release `1.2.7` completed the remaining non-stabilization HLD surface, the canonical host CLI now advertises `RELEASE_TARGET = "1.2.7"`, and the archived final closure bundle lives under `smoke-evidence/release-1.2.7-closure-20260510T040915Z/` with a green integrated `closure-summary`.
+## 🚀 Current Release Line
+
+The project has now entered the promoted release `2.0.0` baseline after closing release `1.2.7` on top of the closed release `1.2.6` baseline. Release `1.2.7` completed the remaining non-stabilization HLD surface, the fresh release-2.0.0 promotion bundle is green, and the canonical host CLI now advertises `RELEASE_TARGET = "2.0.0"`.
+
+## ✨ What NeuroLink Provides
+
+- Zephyr-based Neuro Unit runtime with command, query, event, update, lease, and
+	app lifecycle planes.
+- Host-side Neuro CLI for discovery, preflight, app deploy/activate/rollback,
+	serial recovery, live events, and evidence collection.
+- Python AI Core built around deterministic workflows, Microsoft Agent
+	Framework-compatible provider seams, governed memory, and policy-controlled
+	Unit tool execution.
+- LLEXT app artifact admission, signing/provenance evidence, resource-budget
+	governance, and rollback-aware release gates.
+- Hardware-agnostic capability classes for Extensible, Restricted,
+	Relay-capable, Federated-access, storage-constrained, and signing-required
+	Unit scenarios.
+- Release evidence bundles with structured JSON gates and integrated
+	`closure-summary` validation.
+
+## 🧭 Architecture Snapshot
+
+```text
+User / Operator / Event Source
+				|
+				v
+neurolink_core  ->  policy, memory, Agent runtime, closure evidence
+				|
+				v
+neuro_cli       ->  governed host adapter and workflow catalog
+				|
+				v
+Neuro Unit      ->  Zephyr control plane, LLEXT runtime, events, leases
+```
+
+The key safety rule is simple: models and Agent backends may propose decisions
+or plans, but Unit tools execute only through Core policy, approvals, leases,
+adapters, and audit-visible JSON evidence.
+
+## Release History
 
 Release `1.2.0` remains the earlier local AI Core baseline. Release `1.2.1` is now the closed Core-Agent baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, guarded real-provider wiring, approval-gated resumable tool execution, and bounded real Neuro CLI control integration validated on the connected DNESP32S3B hardware path. The validated release `1.1.10` Unit/demo platform remains the underlying hardware/runtime baseline for later provider or live-event follow-up work.
 
@@ -16,9 +58,9 @@ Release `1.2.5` is the closed multimodal Agent runtime and governance slice. It 
 
 Release `1.2.6` is the closed federation, relay, and Agent platform slice. It carried the project to about 94% HLD completion by making Core-to-Core topology sync, delegated execution planning, Gateway Unit relay route evidence, hardware-agnostic capability descriptors, and higher-quality Agent Tool/Skill/MCP governance executable without hardcoding the current validation hardware.
 
-Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is the active line and should now focus only on stabilization, API/contract freeze, compatibility review, migration notes, final full real-scene rerun, and explicit promotion.
+Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is now the promoted baseline after stabilization, API/contract freeze, compatibility review, migration notes, final full real-scene rerun, and explicit promotion evidence passed.
 
-## Project Layout
+## 📁 Project Layout
 
 ```text
 NeuroLink/
@@ -32,7 +74,7 @@ NeuroLink/
 └── smoke-evidence/   # Generated smoke/serial evidence placeholder; evidence files are not committed
 ```
 
-## Requirements
+## ✅ Requirements
 
 NeuroLink is developed inside a Zephyr west workspace. From the workspace root, the expected paths are:
 
@@ -58,14 +100,15 @@ requires the GitHub Copilot CLI to be installed and authenticated. Runtime use i
 explicitly gated with `--rational-backend copilot --allow-model-call`; default
 Core tests and dry-runs remain deterministic or injected-client based.
 
-The AI Core operator startup and validation guide is documented in:
+The AI Core user guide and operator validation runbooks are documented in:
 
 ```bash
+applocation/NeuroLink/docs/project/AI_CORE_USER_GUIDE.md
 applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md
 applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md
 ```
 
-## Environment Setup
+## ⚡ Quick Start
 
 From the west workspace root:
 
@@ -87,7 +130,32 @@ bash applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh --device /dev/ttyAC
 
 Pass Wi-Fi credentials through command-line options or environment variables when the defaults are not appropriate for the lab.
 
-## Common Validation Gates
+## 🧠 AI Core Usage
+
+Start with the user guide:
+
+```bash
+applocation/NeuroLink/docs/project/AI_CORE_USER_GUIDE.md
+```
+
+Fast deterministic sanity check:
+
+```bash
+cd applocation/NeuroLink
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli no-model-dry-run --output json
+```
+
+Provider readiness check without a live model call:
+
+```bash
+cd applocation/NeuroLink
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli maf-provider-smoke --output json
+```
+
+Full release closure and evidence collection details live in the English and
+Chinese runbooks.
+
+## 🧪 Common Validation Gates
 
 Run commands from the west workspace root.
 
@@ -231,7 +299,7 @@ bash applocation/NeuroLink/scripts/smoke_neurolink_linux.sh --install-missing-cl
 
 Generated smoke and serial evidence is written under `smoke-evidence/` and is ignored by Git.
 
-## Neuro CLI
+## 🛠️ Neuro CLI
 
 The canonical CLI entrypoint is:
 
@@ -245,11 +313,37 @@ Capability map:
 /home/emb/project/zephyrproject/.venv/bin/python applocation/NeuroLink/neuro_cli/src/neuro_cli.py --output json capabilities
 ```
 
-## Release Notes
+## 📚 Documentation Map
+
+- `docs/project/AI_CORE_USER_GUIDE.md` - AI Core startup, usage, and
+	troubleshooting.
+- `docs/project/AI_CORE_RUNBOOK.md` - English AI Core operator runbook and
+	release evidence guide.
+- `docs/project/AI_CORE_RUNBOOK_ZH.md` - Chinese AI Core operator runbook.
+- `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md` - active 2.0.0
+	stabilization, freeze, rerun, and promotion plan.
+- `docs/project/RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.md` - frozen public
+	contracts, schema expectations, compatibility classes, and promotion boundary.
+- `docs/project/RELEASE_2.0.0_PROMOTION_CHECKLIST.md` - final release-2.0.0
+	promotion decision, evidence bundle, and validation result.
+- `docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.md` - RS-01
+	through RS-08 final real Core/Unit rerun checklist.
+- `docs/project/RELEASE_2.0.0_MIGRATION_NOTES.md` - migration and operator
+	handoff notes for the 2.0.0 baseline.
+- `docs/project/AI_CORE_LLD.md` - AI Core low-level design.
+- `docs/project/UNIT_LLD.md` - Unit runtime and control-plane low-level design.
+- `PROJECT_PROGRESS.md` - chronological release progress ledger.
+
+## 🚢 Release Notes
 
 Release progress and architecture closure notes live in:
 
 - `PROJECT_PROGRESS.md`
+- `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md`
+- `docs/project/RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.md`
+- `docs/project/RELEASE_2.0.0_PROMOTION_CHECKLIST.md`
+- `docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.md`
+- `docs/project/RELEASE_2.0.0_MIGRATION_NOTES.md`
 - `docs/project/RELEASE_1.2.5_MULTIMODAL_AGENT_PLAN.md`
 - `docs/project/RELEASE_1.2.4_CORE_ORCHESTRATOR_PLAN.md`
 - `docs/project/RELEASE_1.2.3_AUTONOMOUS_PERCEPTION_PLAN.md`

@@ -1,6 +1,6 @@
 # NeuroLink AI Core 中文运行手册
 
-本文档说明如何在已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线，以及现已闭环的 release-1.2.7 HLD completion bundle 之上启动、验证和收尾 `neurolink_core`，同时支撑当前 active 的 release-2.0.0 stabilization、freeze 与 promotion 线。它也继续覆盖已闭环的 release-1.2.5 multimodal Agent governance 基线，以及仍作为 release evidence 基线保留的 release-1.2.4 Core orchestrator 与 live event service surface。canonical release identity 现已提升到 `1.2.7`；下一次边界是 release-2.0.0 的最终 promotion，需要在 stabilization evidence 与冻结后的 real-scene rerun archive 审批通过后推进。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core release evidence 的开发者和操作者。
+本文档说明如何在已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线，以及现已闭环的 release-1.2.7 HLD completion bundle 之上启动、验证和收尾 `neurolink_core`。它也继续覆盖已闭环的 release-1.2.5 multimodal Agent governance 基线，以及仍作为 release evidence 基线保留的 release-1.2.4 Core orchestrator 与 live event service surface。canonical release identity 现已提升到 `2.0.0`，release-2.0.0 stabilization evidence 与冻结后的 real-scene rerun archive 已通过。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core release evidence 的开发者和操作者。面向日常启动和使用的任务式入口请先阅读 `docs/project/AI_CORE_USER_GUIDE.md`；release-2.0.0 stabilization 与 promotion 计划见 `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md`。
 
 ## 1. Core 运行形态
 

@@ -1,0 +1,164 @@
+{
+  "schema_version": "2.0.0-contract-freeze-checklist-v1",
+  "release_target": "2.0.0",
+  "implementation_release_before_promotion": "1.2.7",
+  "date": "2026-05-10",
+  "status": "promoted_after_green_bundle",
+  "result": "release_2_0_0_promoted",
+  "allowed_change_classes": [
+    "documentation_corrections",
+    "evidence_wiring_fixes_preserving_existing_schemas",
+    "stabilization_fixes_for_claimed_1_2_7_behavior",
+    "environment_recovery_notes_for_hardware_reruns",
+    "release_identity_promotion_after_green_gates"
+  ],
+  "blocked_change_classes": [
+    "new_agent_capability_families",
+    "new_unit_command_planes",
+    "incompatible_closure_summary_schema_changes",
+    "hardware_specific_assumptions_in_shared_contracts",
+    "direct_model_or_tool_execution_bypassing_core_policy"
+  ],
+  "frozen_surfaces": [
+    {
+      "id": "FS-01",
+      "name": "AI Core CLI evidence surface",
+      "status": "frozen",
+      "commands": [
+        "no-model-dry-run",
+        "event-replay",
+        "event-daemon",
+        "live-event-smoke",
+        "event-service",
+        "activation-health-guard",
+        "app-build-plan",
+        "app-artifact-admission",
+        "hardware-compatibility-smoke",
+        "hardware-acceptance-matrix",
+        "resource-budget-governance-smoke",
+        "signing-provenance-smoke",
+        "app-deploy-plan",
+        "app-deploy-prepare-verify",
+        "app-deploy-activate",
+        "app-deploy-rollback",
+        "agent-run",
+        "tool-manifest",
+        "skill-descriptor",
+        "mcp-descriptor",
+        "agent-excellence-smoke",
+        "observability-diagnosis-smoke",
+        "release-rollback-hardening-smoke",
+        "real-scene-checklist-template",
+        "real-scene-e2e-smoke",
+        "session-inspect",
+        "closure-summary",
+        "approval-inspect",
+        "approval-decision",
+        "maf-provider-smoke",
+        "multimodal-profile-smoke",
+        "federation-route-smoke"
+      ]
+    },
+    {
+      "id": "FS-02",
+      "name": "Closure and evidence schemas",
+      "status": "frozen",
+      "schema_versions": [
+        "1.2.7-closure-summary-v13",
+        "1.2.5-documentation-closure-v1",
+        "1.2.6-regression-closure-v2",
+        "1.2.6-relay-failure-closure-v1",
+        "1.2.6-hardware-compatibility-closure-v1",
+        "1.2.7-hardware-acceptance-matrix-v1",
+        "1.2.7-agent-excellence-smoke-v1",
+        "1.2.7-signing-provenance-smoke-v1",
+        "1.2.7-real-scene-e2e-smoke-v1",
+        "1.2.7-observability-diagnosis-smoke-v1",
+        "1.2.7-release-rollback-hardening-smoke-v1",
+        "1.2.7-resource-budget-governance-smoke-v1",
+        "2.0.0-real-scene-checklist-template-v1"
+      ]
+    },
+    {
+      "id": "FS-03",
+      "name": "Validation gate matrix",
+      "status": "frozen",
+      "expected_final_summary": {
+        "ok": true,
+        "passed_count": 20,
+        "failed_gate_ids": []
+      }
+    },
+    {
+      "id": "FS-04",
+      "name": "Neuro CLI release identity and JSON semantics",
+      "status": "promoted_after_green_bundle",
+      "current_release_target": "2.0.0",
+      "promotion_release_target": "2.0.0"
+    },
+    {
+      "id": "FS-05",
+      "name": "Unit topic and operation contracts",
+      "status": "frozen",
+      "topics": [
+        "neuro/<node-id>/cmd/lease/acquire",
+        "neuro/<node-id>/cmd/lease/release",
+        "neuro/<node-id>/cmd/app/<app-id>/<command-name>",
+        "neuro/<node-id>/cmd/app/<app-id>/start",
+        "neuro/<node-id>/cmd/app/<app-id>/stop",
+        "neuro/<node-id>/query/device",
+        "neuro/<node-id>/query/apps",
+        "neuro/<node-id>/query/leases",
+        "neuro/<node-id>/event/state",
+        "neuro/<node-id>/event/update",
+        "neuro/<node-id>/event/lease/<lease-id>",
+        "neuro/<node-id>/update/app/<app-id>/prepare",
+        "neuro/<node-id>/update/app/<app-id>/verify",
+        "neuro/<node-id>/update/app/<app-id>/activate",
+        "neuro/<node-id>/update/app/<app-id>/rollback"
+      ]
+    },
+    {
+      "id": "FS-06",
+      "name": "AI safety and tool governance",
+      "status": "frozen"
+    },
+    {
+      "id": "FS-07",
+      "name": "Memory and multimodal contracts",
+      "status": "frozen"
+    },
+    {
+      "id": "FS-08",
+      "name": "Hardware compatibility classes",
+      "status": "frozen",
+      "classes": [
+        "Extensible Unit",
+        "Restricted Unit",
+        "Relay-capable Unit",
+        "Federated-access Unit",
+        "Storage-constrained Unit",
+        "Signing-required Unit"
+      ]
+    },
+    {
+      "id": "FS-09",
+      "name": "Release evidence bundle shape",
+      "status": "frozen",
+      "bundle_root_pattern": "smoke-evidence/release-2.0.0-promotion-<UTC>/"
+    },
+    {
+      "id": "FS-10",
+      "name": "Promotion identity boundary",
+      "status": "frozen_as_final_step"
+    }
+  ],
+  "open_items_before_rerun": [],
+  "promotion_result": {
+    "bundle": "smoke-evidence/release-2.0.0-promotion-20260510T044228Z/",
+    "final_closure_summary": "closure-summary-final.json",
+    "post_promotion_closure_summary": "closure-summary-post-promotion.json",
+    "passed_count": 20,
+    "failed_gate_ids": []
+  }
+}

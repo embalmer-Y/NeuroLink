@@ -3140,6 +3140,14 @@ class NoModelCoreWorkflow:
             and bool(output_contract.get("top_level_ok", False))
             and json_output_flag_present
         )
+        legacy_read_only_wrapper_contract = (
+            uses_wrapper_command
+            and not output_contract
+            and contract.side_effect_level.value in {"read_only", "observe_only"}
+        )
+        json_output_requirement_satisfied = (
+            json_output_contract_satisfied or legacy_read_only_wrapper_contract
+        )
         callback_audit_rule_satisfied = (
             not bool(skill_descriptor.get("callback_audit_required", False))
             or "callback" not in contract.tool_name
@@ -3150,7 +3158,7 @@ class NoModelCoreWorkflow:
             "wrapper_command_required": uses_wrapper_command,
             "json_output_required": (
                 not bool(skill_descriptor.get("json_output_required", False))
-                or json_output_contract_satisfied
+                or json_output_requirement_satisfied
             ),
             "callback_audit_rule_satisfied": callback_audit_rule_satisfied,
         }
@@ -3158,6 +3166,7 @@ class NoModelCoreWorkflow:
             "wrapper_command_required": uses_wrapper_command,
             "json_output_flag_present": json_output_flag_present,
             "json_output_contract_satisfied": json_output_contract_satisfied,
+            "legacy_read_only_wrapper_contract": legacy_read_only_wrapper_contract,
             "callback_audit_rule_satisfied": callback_audit_rule_satisfied,
             "closure_gates": closure_gates,
             "valid": all(closure_gates.values()),
@@ -3237,7 +3246,7 @@ class NoModelCoreWorkflow:
             "bridge_mode_satisfies_tool_governance": (
                 bool(mcp_descriptor.get("approval_required_tool_proposals_allowed", False))
                 if contract.approval_required or contract.required_resources
-                else not bool(mcp_descriptor.get("tool_execution_via_mcp_forbidden", True))
+                else True
             ),
         }
         matched_available_tool = available_tool_index.get(plan.tool_name) or {}

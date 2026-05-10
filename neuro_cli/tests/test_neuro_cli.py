@@ -470,7 +470,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "1.2.7")
+        self.assertEqual(payload["release_target"], "2.0.0")
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -1990,9 +1990,9 @@ class TestNeuroCliResultClassification(unittest.TestCase):
             f'static const char app_build_id[] = "neuro_unit_app-{neuro_cli.RELEASE_TARGET}-cbor-v2";',
             source_text,
         )
-        self.assertIn(".major = 1,", source_text)
-        self.assertIn(".minor = 2,", source_text)
-        self.assertIn(".patch = 7,", source_text)
+        self.assertIn(".major = 2,", source_text)
+        self.assertIn(".minor = 0,", source_text)
+        self.assertIn(".patch = 0,", source_text)
 
     def test_canonical_skill_package_contains_required_resources(self) -> None:
         project_root = NEURO_CLI_DIR.parent
@@ -3287,7 +3287,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "1.2.7")
+        self.assertEqual(payload["release_target"], "2.0.0")
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

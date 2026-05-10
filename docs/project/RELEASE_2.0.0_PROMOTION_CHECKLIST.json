@@ -1,0 +1,46 @@
+{
+  "schema_version": "2.0.0-promotion-checklist-v1",
+  "release_target": "2.0.0",
+  "previous_release_target": "1.2.7",
+  "date": "2026-05-10",
+  "status": "promoted",
+  "bundle": "smoke-evidence/release-2.0.0-promotion-20260510T044228Z/",
+  "closure_summaries": {
+    "pre_identity_promotion": {
+      "file": "closure-summary-final.json",
+      "ok": true,
+      "passed_count": 20,
+      "failed_gate_ids": []
+    },
+    "post_identity_promotion": {
+      "file": "closure-summary-post-promotion.json",
+      "ok": true,
+      "passed_count": 20,
+      "failed_gate_ids": []
+    }
+  },
+  "identity_evidence": {
+    "system_capabilities_file": "system-capabilities-post-promotion.json",
+    "release_target": "2.0.0",
+    "unit_app_version": "2.0.0",
+    "unit_app_build_id": "neuro_unit_app-2.0.0-cbor-v2",
+    "rebuilt_artifact": "/home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext"
+  },
+  "validation": {
+    "neuro_cli_tests": "127 passed",
+    "ai_core_tests": "122 passed, 3 subtests passed",
+    "full_python_regression": "367 passed, 6 subtests passed"
+  },
+  "promoted_files": [
+    "neuro_cli/src/neuro_cli.py",
+    "neuro_cli/src/neuro_workflow_catalog.py",
+    "subprojects/neuro_unit_app/src/main.c",
+    "neuro_cli/tests/test_neuro_cli.py",
+    "README.md",
+    "docs/project/AI_CORE_RUNBOOK.md",
+    "docs/project/AI_CORE_RUNBOOK_ZH.md",
+    "docs/project/RELEASE_2.0.0_MIGRATION_NOTES.md"
+  ],
+  "schema_renaming_required": false,
+  "schema_renaming_note": "Frozen evidence schemas keep their stable 1.2.x names where applicable; release 2.0.0 is the promoted product identity."
+}

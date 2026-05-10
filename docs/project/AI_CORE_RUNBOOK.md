@@ -6,12 +6,16 @@ now-closed release-1.2.7 HLD-completion bundle while the project moves through
 the active release-2.0.0 stabilization, freeze, and promotion line. It still
 covers the closed release-1.2.5 multimodal governance baseline and the
 inherited release-1.2.4 Core orchestrator/live-event-service surfaces that
-remain part of release evidence. Release identity is now promoted to `1.2.7`;
-the next boundary is release-2.0.0 final promotion after stabilization evidence
-and the frozen real-scene rerun archive are approved. This runbook is written
+remain part of release evidence. Release identity is now promoted to `2.0.0`
+after the stabilization evidence and frozen real-scene rerun archive passed.
+This runbook is written
 for operators and developers who need to run Core locally, check provider and
 memory readiness, execute the Core-owned build/deploy gates, or close bounded
 live service and AI Core release evidence.
+
+For a task-oriented startup and daily-use guide, start with
+`docs/project/AI_CORE_USER_GUIDE.md`. For the active release-2.0.0 stabilization
+and promotion plan, use `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md`.
 
 ## 1. Runtime Shape
 

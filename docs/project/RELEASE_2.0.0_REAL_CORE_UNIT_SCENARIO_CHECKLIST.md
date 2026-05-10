@@ -7,6 +7,9 @@ and promotion execution surface after release-1.2.7 closure. It is the single
 bounded checklist for real neuro_core plus neuro_unit integration evidence that
 must be rerun before release-2.0.0 promotion.
 
+The full release-2.0.0 stabilization and promotion plan is tracked in
+`docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md`.
+
 The machine-archivable JSON form is intentionally versioned and committed in
 two repository files:
 
