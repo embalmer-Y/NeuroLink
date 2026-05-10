@@ -2,7 +2,7 @@
 
 NeuroLink is a Zephyr-based edge runtime and host-control toolkit for managing Neuro Unit devices, deployable LLEXT applications, leases, update flows, and smoke validation.
 
-The project is currently implementing release `1.2.7` on top of the closed release `1.2.6` baseline. Release `1.2.6` completed the federation, relay, hardware-abstraction, and governed Agent Tool/Skill/MCP closure slice, and the canonical host CLI now advertises `RELEASE_TARGET = "1.2.6"`. Release `1.2.7` is the active productization and release-2.0.0-readiness line and must preserve the same hardware-agnostic, Core-governed architecture rather than hardcoding the current validation board.
+The project is now on the active release `2.0.0` stabilization, freeze, and promotion line after closing release `1.2.7` on top of the closed release `1.2.6` baseline. Release `1.2.7` completed the remaining non-stabilization HLD surface, the canonical host CLI now advertises `RELEASE_TARGET = "1.2.7"`, and the archived final closure bundle lives under `smoke-evidence/release-1.2.7-closure-20260510T040915Z/` with a green integrated `closure-summary`.
 
 Release `1.2.0` remains the earlier local AI Core baseline. Release `1.2.1` is now the closed Core-Agent baseline: `neurolink_core` provides a deterministic Microsoft Agent Framework-compatible workflow/Agent adapter seam, persistent perception/execution evidence, guarded real-provider wiring, approval-gated resumable tool execution, and bounded real Neuro CLI control integration validated on the connected DNESP32S3B hardware path. The validated release `1.1.10` Unit/demo platform remains the underlying hardware/runtime baseline for later provider or live-event follow-up work.
 
@@ -16,7 +16,7 @@ Release `1.2.5` is the closed multimodal Agent runtime and governance slice. It 
 
 Release `1.2.6` is the closed federation, relay, and Agent platform slice. It carried the project to about 94% HLD completion by making Core-to-Core topology sync, delegated execution planning, Gateway Unit relay route evidence, hardware-agnostic capability descriptors, and higher-quality Agent Tool/Skill/MCP governance executable without hardcoding the current validation hardware.
 
-Release `1.2.7` is the active productization and release-2.0.0 readiness slice. It targets about 98% HLD completion through multi-board acceptance evidence, stronger rollback/release policy hardening, resource-budget governance, signing/provenance enforcement maturation, and acceptance-runbook completion.
+Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is the active line and should now focus only on stabilization, API/contract freeze, compatibility review, migration notes, final full real-scene rerun, and explicit promotion.
 
 ## Project Layout
 
@@ -124,6 +124,11 @@ bash applocation/NeuroLink/neuro_unit/tests/unit/run_ut_linux.sh
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id>
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id> --provider-smoke-file <provider-smoke.json> --require-provider-smoke
 /home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id> --multimodal-profile-file <multimodal-profile.json> --require-multimodal-profile
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli observability-diagnosis-smoke --relay-failure-file <relay-failure.json> --activate-failure-file <activate-failure.json> --output json
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli release-rollback-hardening-smoke --activate-failure-file <activate-failure.json> --rollback-file <app-deploy-rollback.json> --output json
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli resource-budget-governance-smoke --hardware-compatibility-file <hardware-compatibility.json> --output json
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli real-scene-checklist-template --release-target 2.0.0 --implementation-release 1.2.7 --output json
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id> --documentation-file <documentation.json> --provider-smoke-file <provider-smoke.json> --require-provider-smoke --multimodal-profile-file <multimodal-profile.json> --require-multimodal-profile --regression-file <regression.json> --relay-failure-file <relay-failure.json> --hardware-compatibility-file <hardware-compatibility.json> --hardware-acceptance-matrix-file <hardware-acceptance-matrix.json> --resource-budget-governance-file <resource-budget-governance-smoke.json> --agent-excellence-file <agent-excellence-smoke.json> --release-rollback-file <release-rollback-hardening-smoke.json> --signing-provenance-file <signing-provenance-smoke.json> --observability-diagnosis-file <observability-diagnosis-smoke.json> --real-scene-e2e-file <real-scene-e2e-smoke.json> --output json
 ```
 
 For the release-1.2.5 provider smoke contract, treat `maf-provider-smoke`
@@ -148,6 +153,17 @@ Then inspect `validation_gates`, `validation_gate_summary`, and `checklist` for
 the seven release-1.2.5 gates: documentation, multimodal normalization,
 profile routing, provider runtime, memory governance, Tool/Skill/MCP, and
 regression.
+For the release-1.2.7 final closure bundle, derive
+`observability-diagnosis-smoke.json` from relay failure plus
+`rollback_required` activation evidence, derive
+`release-rollback-hardening-smoke.json` from activation failure plus rollback
+evidence, derive `resource-budget-governance-smoke.json` from the existing
+hardware compatibility payload, and pass those files through the final
+`closure-summary` command so the new independent diagnosis, governed budget,
+and guarded rollback gates are archived in the
+same machine-readable bundle as hardware, Agent excellence, signing, and real
+scene evidence.
+
 For the memory governance closure bundle, verify
 `aggregate_gates.memory_governance_gate_satisfied=true` and inspect
 `execution_summaries[0].memory_governance_summary` for accepted/rejected
@@ -240,4 +256,4 @@ Release progress and architecture closure notes live in:
 - `docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
 - `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is now also closed as the multimodal Agent runtime and governance baseline. Remaining work is planned across `1.2.6` and `1.2.7` so release `2.0.0` can be a stabilization and acceptance release rather than a large feature release.
+Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is now also closed as the multimodal Agent runtime and governance baseline. Releases `1.2.6` and `1.2.7` are both now closed, so release `2.0.0` can stay a stabilization and acceptance release rather than turning back into a large feature release.

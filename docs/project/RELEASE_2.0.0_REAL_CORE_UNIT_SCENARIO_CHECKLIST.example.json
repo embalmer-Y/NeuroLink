@@ -1,0 +1,244 @@
+{
+  "schema_version": "2.0.0-real-scene-checklist-template-v1",
+  "command": "real-scene-checklist-template",
+  "status": "review_ready",
+  "release_target": "2.0.0",
+  "implementation_release": "1.2.7",
+  "checklist_id": "release-2.0.0-real-core-unit-scenarios",
+  "shared_rules": [
+    "shared Core and Unit contracts remain hardware-agnostic",
+    "artifact identity provenance and signing policy are recorded before live deploy or activate",
+    "real tool execution remains Core-governed audit-visible and lease-aware",
+    "logs are supporting evidence only; archive structured JSON payloads",
+    "Restricted Unit behavior is a compatibility outcome rather than a skipped row"
+  ],
+  "shared_preconditions": [
+    "confirm release target source manifest identity and artifact identity align",
+    "prepare one deterministic Core-only environment and one bounded real Unit environment",
+    "confirm connectivity event transport reachability and cleanup permissions",
+    "create a fresh smoke-evidence directory for the rerun session",
+    "predeclare the artifact set used for live deploy and rollback"
+  ],
+  "archive_layout": [
+    "closure.db",
+    "hardware-acceptance-matrix.json",
+    "restricted-unit-compatibility.json",
+    "agent-excellence-smoke.json",
+    "signing-provenance-smoke.json",
+    "live-event-smoke.json",
+    "real-scene-e2e-smoke.json",
+    "observability-diagnosis-smoke.json",
+    "release-rollback-hardening-smoke.json",
+    "closure-summary.json"
+  ],
+  "scenario_rows": [
+    {
+      "scenario_id": "RS-01",
+      "title": "Deterministic Core/Unit contract baseline",
+      "family": "deterministic_contract",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "session-evidence.json",
+        "agent-excellence-smoke.json",
+        "deterministic-scenario-record.json"
+      ],
+      "primary_gates": [
+        "agent_excellence_gate",
+        "regression_gate"
+      ],
+      "pass_criteria": [
+        "delegated reasoning selects governed tools only",
+        "live-row-compatible evidence shape is preserved",
+        "shared contracts remain hardware-agnostic"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/session-evidence.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/agent-excellence-smoke.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/deterministic-scenario-record.json"
+      ],
+      "blockers": []
+    },
+    {
+      "scenario_id": "RS-02",
+      "title": "Single Core plus single real Unit live event continuity",
+      "family": "single_real_unit_live_event",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "live-event-smoke.json",
+        "real-scene-e2e-smoke.json"
+      ],
+      "primary_gates": [
+        "real_scene_e2e_gate"
+      ],
+      "pass_criteria": [
+        "a live Unit event is collected and persisted",
+        "event source stays consistent across ingest and execution",
+        "real governed tool execution succeeds"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/live-event-smoke.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/real-scene-e2e-smoke.json"
+      ],
+      "blockers": []
+    },
+    {
+      "scenario_id": "RS-03",
+      "title": "Real Unit deploy activate query rollback",
+      "family": "deploy_activate_rollback",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "artifact-admission.json",
+        "app-deploy-activate.json",
+        "app-deploy-rollback.json"
+      ],
+      "primary_gates": [
+        "release_rollback_hardening_gate",
+        "signing_provenance_gate"
+      ],
+      "pass_criteria": [
+        "artifact identity and provenance are recorded before admission",
+        "activation and rollback states are explicit",
+        "operator-visible rollback path is executable"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/artifact-admission.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/app-deploy-activate.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/app-deploy-rollback.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/release-rollback-hardening-smoke.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/signing-provenance-smoke.json"
+      ],
+      "blockers": []
+    },
+    {
+      "scenario_id": "RS-04",
+      "title": "Restricted Unit compatibility outcome",
+      "family": "restricted_unit",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "hardware-acceptance-matrix.json",
+        "restricted-unit-compatibility.json"
+      ],
+      "primary_gates": [
+        "restricted_unit_compatibility_gate"
+      ],
+      "pass_criteria": [
+        "capability limits are explicit",
+        "unsupported paths fail closed as compatibility outcomes",
+        "operator guidance identifies degraded mode"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/hardware-acceptance-matrix.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/restricted-unit-compatibility.json"
+      ],
+      "blockers": []
+    },
+    {
+      "scenario_id": "RS-05",
+      "title": "Multi-Core federation route",
+      "family": "federation_route",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "federation-route.json",
+        "scenario-run-record.json"
+      ],
+      "primary_gates": [
+        "federation_gate",
+        "real_scene_e2e_gate"
+      ],
+      "pass_criteria": [
+        "delegated Core routing is explicit and auditable",
+        "Unit-side continuity remains attributable to the chosen route",
+        "route degradation does not collapse into transport ambiguity"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/federation-route.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/scenario-run-record-rs05.json"
+      ],
+      "blockers": []
+    },
+    {
+      "scenario_id": "RS-06",
+      "title": "Relay-assisted or degraded remote access",
+      "family": "relay_degraded_remote_access",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "relay-failure.json",
+        "observability-diagnosis-smoke.json"
+      ],
+      "primary_gates": [
+        "relay_gate",
+        "observability_diagnosis_gate"
+      ],
+      "pass_criteria": [
+        "stale route unreachable target and relay failure are distinguishable",
+        "diagnosis payload exposes operator next actions",
+        "fallback handling preserves approval and cleanup boundaries"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/relay-failure.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/observability-diagnosis-smoke.json"
+      ],
+      "blockers": []
+    },
+    {
+      "scenario_id": "RS-07",
+      "title": "Agent-assisted governed operation flow",
+      "family": "agent_governed_operation_flow",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "agent-excellence-smoke.json",
+        "session-evidence.json",
+        "approval-or-policy-evidence.json"
+      ],
+      "primary_gates": [
+        "agent_excellence_gate",
+        "documentation_gate"
+      ],
+      "pass_criteria": [
+        "Tool Skill and MCP descriptors remain discoverable",
+        "invalid plans fail before adapter execution",
+        "read-only and approval-required MCP paths remain distinct"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/agent-excellence-smoke.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/session-evidence.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/approval-or-policy-evidence.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/documentation-closure.json"
+      ],
+      "blockers": []
+    },
+    {
+      "scenario_id": "RS-08",
+      "title": "Cleanup and rerun readiness",
+      "family": "cleanup_rerun_readiness",
+      "status": "passed",
+      "required_evidence_artifacts": [
+        "cleanup-evidence.json",
+        "lease-query-evidence.json",
+        "closure-summary.json"
+      ],
+      "primary_gates": [
+        "release_rollback_hardening_gate",
+        "closure_summary_gate"
+      ],
+      "pass_criteria": [
+        "no stale leases remain",
+        "runtime cleanup is explicit",
+        "the bundle is rerunnable without hidden manual state"
+      ],
+      "evidence_files": [
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/cleanup-evidence.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/lease-query-evidence.json",
+        "smoke-evidence/release-2.0.0-rerun-example-20260510T190000Z/closure-summary.json"
+      ],
+      "blockers": []
+    }
+  ],
+  "summary": {
+    "total_rows": 8,
+    "pending_rows": 0,
+    "passed_rows": 8,
+    "failed_rows": 0
+  },
+  "ok": true
+}

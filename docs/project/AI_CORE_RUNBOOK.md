@@ -1,16 +1,17 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` on top of the
-closed release-1.2.6 federation, relay, and Agent-platform baseline while the
-project moves through the active release-1.2.7 productization and
-release-2.0.0-readiness line. It still covers the closed release-1.2.5
-multimodal governance baseline and the inherited release-1.2.4 Core
-orchestrator/live-event-service surfaces that remain part of release evidence.
-Release identity is now promoted to `1.2.6`; the next promotion boundary is
-release-1.2.7 after its own closure evidence and explicit approval. This
-runbook is written for operators and developers who need to run Core locally,
-check provider and memory readiness, execute the Core-owned build/deploy gates,
-or close bounded live service and AI Core release evidence.
+closed release-1.2.6 federation, relay, and Agent-platform baseline and the
+now-closed release-1.2.7 HLD-completion bundle while the project moves through
+the active release-2.0.0 stabilization, freeze, and promotion line. It still
+covers the closed release-1.2.5 multimodal governance baseline and the
+inherited release-1.2.4 Core orchestrator/live-event-service surfaces that
+remain part of release evidence. Release identity is now promoted to `1.2.7`;
+the next boundary is release-2.0.0 final promotion after stabilization evidence
+and the frozen real-scene rerun archive are approved. This runbook is written
+for operators and developers who need to run Core locally, check provider and
+memory readiness, execute the Core-owned build/deploy gates, or close bounded
+live service and AI Core release evidence.
 
 ## 1. Runtime Shape
 
@@ -578,3 +579,58 @@ For release-1.2.5 closure preparation, also verify:
 13. consume `closure-summary.checklist` as the seven-gate machine-readable release-1.2.5 validation matrix, and use `closure-summary.bundle_checklist` for lower-level bundle items such as `memory_governance_bundle`, `memory_recall_policy_bundle`, and `tool_skill_mcp_bundle`.
 14. valid `no_tool_selected` Rational outcomes may have `tool_result_count=0`; closure is still acceptable when `closure_gates.tool_result_outcome_recorded=true` and the Rational evidence records `status=no_tool_selected`.
 15. After release-1.2.5 closure evidence passes and promotion is approved, canonical release identity advances from `1.2.4` to `1.2.5`.
+
+For the release-1.2.7 final closure bundle, keep the same file-driven pattern and
+add the newer independent evidence payloads before running the last
+`closure-summary` pass:
+
+16. save the relay failure closure JSON and the `app-deploy-activate`
+  `rollback_required` payload, then derive the structured diagnosis payload:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli observability-diagnosis-smoke --relay-failure-file <relay-failure.json> --activate-failure-file <activate-failure.json> --output json > <observability-diagnosis-smoke.json>
+```
+
+17. save the same `app-deploy-activate` failure payload and the matching
+  `app-deploy-rollback` payload, then derive the guarded rollback closure
+  payload:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli release-rollback-hardening-smoke --activate-failure-file <activate-failure.json> --rollback-file <app-deploy-rollback.json> --output json > <release-rollback-hardening-smoke.json>
+```
+
+18. save the `hardware-compatibility-smoke` payload and derive the independent
+  governed budget closure payload:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli resource-budget-governance-smoke --hardware-compatibility-file <hardware-compatibility.json> --output json > <resource-budget-governance-smoke.json>
+```
+
+19. when preparing the release-2.0.0 rerun archive shape, generate a fresh
+  checklist skeleton with:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli real-scene-checklist-template --release-target 2.0.0 --implementation-release 1.2.7 --output json > <real-scene-checklist.json>
+```
+
+  You may also start from
+  `docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.template.json`
+  or the filled example
+  `docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.example.json`
+  and replace the archive paths with the current rerun bundle.
+
+20. include the new payloads in the final release-1.2.7 closure-summary run so
+  `validation_gates.resource_budget_governance_gate=true`,
+  `validation_gates.release_rollback_hardening_gate=true` and
+  `validation_gates.observability_diagnosis_gate=true` are proven in the same
+  bundle that already carries documentation, provider, multimodal,
+  regression, relay, hardware, Agent excellence, signing, and real-scene
+  evidence:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id> --documentation-file <documentation.json> --provider-smoke-file <provider-smoke.json> --require-provider-smoke --multimodal-profile-file <multimodal-profile.json> --require-multimodal-profile --regression-file <regression.json> --relay-failure-file <relay-failure.json> --hardware-compatibility-file <hardware-compatibility.json> --hardware-acceptance-matrix-file <hardware-acceptance-matrix.json> --resource-budget-governance-file <resource-budget-governance-smoke.json> --agent-excellence-file <agent-excellence-smoke.json> --release-rollback-file <release-rollback-hardening-smoke.json> --signing-provenance-file <signing-provenance-smoke.json> --observability-diagnosis-file <observability-diagnosis-smoke.json> --real-scene-e2e-file <real-scene-e2e-smoke.json> --output json > <closure-summary.json>
+```
+
+21. treat `closure-summary.validation_gate_summary.failed_gate_ids=[]` as the
+  release-1.2.7 bundle-level proof that the two new independent gates are no
+  longer implicit inside lower-level relay, activate, or rollback evidence.

@@ -1,6 +1,6 @@
 # NeuroLink AI Core 中文运行手册
 
-本文档说明如何在已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线上启动、验证和收尾 `neurolink_core`，同时支撑当前 active 的 release-1.2.7 productization 与 release-2.0.0 readiness 线。它也继续覆盖已闭环的 release-1.2.5 multimodal Agent governance 基线，以及仍作为 release evidence 基线保留的 release-1.2.4 Core orchestrator 与 live event service surface。canonical release identity 现已提升到 `1.2.6`；下一次 promotion 边界是 release-1.2.7，在其 closure evidence 完整且审批通过之后再推进。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core closure 的开发者和操作者。
+本文档说明如何在已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线，以及现已闭环的 release-1.2.7 HLD completion bundle 之上启动、验证和收尾 `neurolink_core`，同时支撑当前 active 的 release-2.0.0 stabilization、freeze 与 promotion 线。它也继续覆盖已闭环的 release-1.2.5 multimodal Agent governance 基线，以及仍作为 release evidence 基线保留的 release-1.2.4 Core orchestrator 与 live event service surface。canonical release identity 现已提升到 `1.2.7`；下一次边界是 release-2.0.0 的最终 promotion，需要在 stabilization evidence 与冻结后的 real-scene rerun archive 审批通过后推进。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core release evidence 的开发者和操作者。
 
 ## 1. Core 运行形态
 
@@ -503,3 +503,55 @@ promote release identity 前，需要确认：
 13. 优先消费 `closure-summary.checklist` 作为七个 release gate 的机器可读矩阵，并使用 `closure-summary.bundle_checklist` 查看 `memory_governance_bundle`、`memory_recall_policy_bundle` 与 `tool_skill_mcp_bundle` 等底层 bundle 项。
 14. 合法的 `no_tool_selected` Rational 结果可以有 `tool_result_count=0`；只要 `closure_gates.tool_result_outcome_recorded=true` 且 Rational evidence 记录 `status=no_tool_selected`，closure summary 仍可接受。
 15. 在 release-1.2.5 closure evidence 全部通过且批准 promotion 后，canonical release identity 从 `1.2.4` 提升到 `1.2.5`。
+
+针对 release-1.2.7 的最终 closure bundle，继续沿用同一套 file-driven
+evidence 流程，并把新增的两个独立 gate 接入最后一次 `closure-summary`：
+
+16. 先保存 relay failure closure JSON，以及 `app-deploy-activate` 返回
+  `rollback_required` 的 payload，再生成结构化 diagnosis payload：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli observability-diagnosis-smoke --relay-failure-file <relay-failure.json> --activate-failure-file <activate-failure.json> --output json > <observability-diagnosis-smoke.json>
+```
+
+17. 再保存同一份 `app-deploy-activate` failure payload 与对应的
+  `app-deploy-rollback` payload，生成 guarded rollback closure payload：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli release-rollback-hardening-smoke --activate-failure-file <activate-failure.json> --rollback-file <app-deploy-rollback.json> --output json > <release-rollback-hardening-smoke.json>
+```
+
+18. 保存 `hardware-compatibility-smoke` payload 后，再生成独立的
+  resource-budget governance closure payload：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli resource-budget-governance-smoke --hardware-compatibility-file <hardware-compatibility.json> --output json > <resource-budget-governance-smoke.json>
+```
+
+19. 为 release-2.0.0 rerun 准备可归档 checklist 时，可直接生成新的
+  skeleton：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli real-scene-checklist-template --release-target 2.0.0 --implementation-release 1.2.7 --output json > <real-scene-checklist.json>
+```
+
+  也可以直接从
+  `docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.template.json`
+  或已填充示例
+  `docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.example.json`
+  起步，再把其中 archive path 替换成当前 rerun bundle 的路径。
+
+20. 最终运行 release-1.2.7 的 `closure-summary` 时，把这些新 payload
+  一起带进去，确保 `validation_gates.resource_budget_governance_gate=true`、
+  `validation_gates.release_rollback_hardening_gate=true` 与
+  `validation_gates.observability_diagnosis_gate=true` 在同一个最终
+  bundle 中被明确证明，而不是继续隐含在 relay、activate 或 rollback
+  的底层 evidence 里：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli closure-summary --db <core.db> --session-id <session-id> --documentation-file <documentation.json> --provider-smoke-file <provider-smoke.json> --require-provider-smoke --multimodal-profile-file <multimodal-profile.json> --require-multimodal-profile --regression-file <regression.json> --relay-failure-file <relay-failure.json> --hardware-compatibility-file <hardware-compatibility.json> --hardware-acceptance-matrix-file <hardware-acceptance-matrix.json> --resource-budget-governance-file <resource-budget-governance-smoke.json> --agent-excellence-file <agent-excellence-smoke.json> --release-rollback-file <release-rollback-hardening-smoke.json> --signing-provenance-file <signing-provenance-smoke.json> --observability-diagnosis-file <observability-diagnosis-smoke.json> --real-scene-e2e-file <real-scene-e2e-smoke.json> --output json > <closure-summary.json>
+```
+
+21. 以 `closure-summary.validation_gate_summary.failed_gate_ids=[]` 作为
+  release-1.2.7 bundle 级别的最终证明，确认这两个独立 gate 已经在最终
+  closure surface 中显式归档。

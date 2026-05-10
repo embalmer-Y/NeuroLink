@@ -1,3 +1,192 @@
+2026-05-10: Closed release-1.2.7 and switched the repository into the release-2.0.0 stabilization, freeze, and promotion line. The final archived bundle now lives under `smoke-evidence/release-1.2.7-closure-20260510T040915Z/` and includes real live-event evidence (`live-event-smoke.json` with `session_id=session-147afc4ddeec`), a green integrated `closure-summary-current.json`, focused regression artifacts, signing/provenance, observability/rollback hardening, hardware acceptance, and the final documentation handoff surface for release-2.0.0. The remaining work is now explicitly stabilization-only: rerun the frozen real Core/Unit scenario checklist, review freeze blockers, and promote release-2.0.0 when that rerun archive is green. - Copilot
+
+#### EXEC-339 Release 1.2.7 Final Closure Bundle And 2.0.0 Line Switch
+
+- Status: completed for final bundle materialization, integrated closure proof, and active-line handoff
+- Owner: GitHub Copilot closing release-1.2.7 and switching to release-2.0.0 stabilization
+- Closure evidence:
+  - archived bundle: `applocation/NeuroLink/smoke-evidence/release-1.2.7-closure-20260510T040915Z`
+  - integrated summary: `closure-summary-current.json` -> `passed_count=20`, `failed_gate_ids=[]`
+  - live evidence: real `live-event-smoke.json` copied from the successful `run_unit_live_event_probe.sh --mode update-activate` session and preserved with `closure.db`
+  - federation/relay closure completion: appended a deterministic federated execution with `federation_route_smoke(...)` into the same archived session so the latest audited execution summary also proves route and relay closure semantics
+- Promotion and handoff result:
+  - canonical release identity had already been promoted to `1.2.7` before bundle assembly and is now confirmed by the archived closure evidence
+  - release-1.2.7 is now treated as closed in README, runbooks, and plan documents
+  - release-2.0.0 is now the active stabilization, freeze, real-scene-rerun, and promotion line
+- Next release-2.0.0 priorities:
+  - rerun the frozen `RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST` archive against the final artifact set
+  - record stabilization blockers only; do not reopen implementation-bearing scope without a new boundary decision
+  - generate the release-2.0.0 promotion archive and approval record after the rerun bundle is green
+
+2026-05-10: Continued release-1.2.7 by closing the last clearly implementation-bearing gap identified in the boundary audit: resource-budget governance is no longer only an internal field inside hardware compatibility evidence. `neurolink_core.cli` now emits an independent `resource-budget-governance-smoke` payload, `closure-summary` evaluates a dedicated `resource_budget_governance_gate`, the focused regression slice proves the gate can pass from existing governed hardware evidence, and the release-1.2.7 runbooks now include the new payload in the final closure bundle command. This materially sharpens the line to release-2.0.0: the remaining work is now centered on producing the final release-1.2.7 archived closure bundle and promotion evidence rather than inventing another missing independent gate surface. - Copilot
+
+#### EXEC-338 Release 1.2.7 Independent Resource Budget Governance Slice
+
+- Status: completed for independent payload, gate, tests, and runbook wiring
+- Owner: GitHub Copilot continuing release-1.2.7 implementation
+- Plan alignment check:
+  - matches WS-2 by turning resource-budget thresholds and sufficiency into an independent closure payload instead of leaving them as nested hardware evidence only
+  - matches Validation Gate 4 by adding an explicit `resource_budget_governance_gate` to the integrated release matrix
+  - matches WS-7 by wiring the new payload into the documented final release-1.2.7 bundle command
+- Scope:
+  - add `resource-budget-governance-smoke` that consumes `hardware-compatibility-smoke` evidence
+  - add `resource_budget_governance_summary` and `resource_budget_governance_gate` to `closure-summary`
+  - extend focused tests and the full release matrix test for the new gate
+  - update README and English/Chinese runbooks to include the new payload in the final closure bundle workflow
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m unittest neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_closure_summary_reads_session_evidence neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_resource_budget_governance_smoke_reports_independent_budget_threshold_evidence neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_closure_summary_can_pass_resource_budget_governance_gate neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied` -> `4 tests`, `OK`
+
+2026-05-10: Audited release-1.2.7 progress and the release-2.0.0 entry boundary before any attempt to advance the active line. The codebase now clearly contains multiple landed release-1.2.7 closure surfaces beyond the initial re-baseline: `hardware-acceptance-matrix`, Restricted Unit compatibility inside that matrix, `agent-excellence-smoke`, `signing-provenance-smoke`, `real-scene-e2e-smoke`, `observability-diagnosis-smoke`, `release-rollback-hardening-smoke`, and the related `closure-summary` gates are all present. However, release-1.2.7 is still not closure-ready and release-2.0.0 must not yet become the active line. Three blocking facts remain explicit in repo evidence: there is no archived `smoke-evidence/release-1.2.7-closure-*/closure-summary-final.json` bundle with all gates green, canonical repository release identity still points at `1.2.6`, and the plan-level `Resource budget governance gate` is not yet represented as an independent release-1.2.7 gate even though resource-budget fields are already recorded inside hardware capability evidence. This keeps the boundary sharp: release-2.0.0 may only start once remaining work is stabilization-only, but the missing independent resource-governance closure plus the missing final 1.2.7 bundle/promotion evidence are still implementation-bearing release-1.2.7 work. - Copilot
+
+#### EXEC-337 Release 1.2.7 Boundary Audit Before 2.0.0 Transition
+
+- Status: completed for progress audit and explicit no-transition decision
+- Owner: GitHub Copilot auditing the active release line before any 2.0.0 handoff
+- Boundary decision:
+  - do not advance the project into release-2.0.0 as the active line yet
+  - keep release-1.2.7 as the active implementation and closure line until the remaining implementation-bearing gaps are closed
+- Evidence reviewed:
+  - `README.md` still describes release-1.2.7 as the active HLD-completion line and release-2.0.0 as stabilization/freeze/promotion only
+  - `smoke-evidence/` contains closed release-1.2.6 bundles but no release-1.2.7 final closure bundle
+  - `neurolink_core.cli` already exposes `hardware-acceptance-matrix`, `agent-excellence-smoke`, `signing-provenance-smoke`, `real-scene-e2e-smoke`, `observability-diagnosis-smoke`, and `release-rollback-hardening-smoke`, and `closure-summary` already computes the matching release-1.2.7 gates
+  - at audit time, `closure-summary` still had no independent `resource_budget_governance_gate`, even though `hardware-compatibility-smoke` already recorded `resource_budget_sufficient`; this gap is now closed by EXEC-338
+- Audit result:
+  - already landed or clearly present in code: multi-hardware acceptance matrix, Restricted Unit compatibility outcome, Agent excellence, signing/provenance, observability/diagnosis, release/rollback hardening, real-scene E2E smoke, rerun checklist template/example, and final-bundle runbook wiring
+  - still blocking release-2.0.0 entry: independent resource-budget governance closure, archived release-1.2.7 final bundle with green `closure-summary`, and explicit 1.2.7 promotion artifacts or release-identity move
+- Current progress judgment:
+  - formal closure status remains below the threshold for 2.0.0 entry because the repo lacks the required final bundle and promotion evidence
+  - practical implementation status is substantially beyond the older 18 percent note because many planned gate surfaces are now implemented, but the remaining gaps are high-leverage closure blockers rather than minor polish
+- Next release-1.2.7 priorities before any 2.0.0 switch:
+  - add an independent resource-budget governance payload and gate, or formally record a decision that the hardware capability closure surface is the accepted gate carrier
+  - materialize and archive the final release-1.2.7 closure bundle under `smoke-evidence/release-1.2.7-closure-*`
+  - only after all release-1.2.7 implementation-bearing gates are green, prepare the release-2.0.0 stabilization-only checklist, freeze review, and promotion track
+
+2026-05-10: Continued release-1.2.7 closure packaging by wiring the two newest independent gates into the operator-facing final bundle workflow instead of leaving them discoverable only through CLI help and tests. The English and Chinese AI Core runbooks plus the README now show how to derive `observability-diagnosis-smoke.json` and `release-rollback-hardening-smoke.json`, then feed both into the final `closure-summary` invocation alongside the rest of the release-1.2.7 bundle evidence. The real-scene checklist track also now includes a committed filled example JSON next to the template so release-2.0.0 reruns can start from either an empty skeleton or a realistic archive-shaped sample. - Copilot
+
+#### EXEC-336 Release 1.2.7 Closure Runbook And Rerun Example Packaging
+
+- Status: completed for runbook integration and filled archive example
+- Owner: GitHub Copilot continuing release-1.2.7 implementation
+- Plan alignment check:
+  - matches WS-6 by turning the new gate surfaces into explicit operator-runnable runbook commands instead of leaving them as code-only features
+  - matches WS-7 by wiring the two new payloads into the documented final release-1.2.7 closure bundle command path
+  - matches WS-8 by providing both a template and a realistic filled example for release-2.0.0 rerun archive packaging
+- Scope:
+  - update English and Chinese AI Core runbooks with command examples for `observability-diagnosis-smoke`, `release-rollback-hardening-smoke`, `real-scene-checklist-template`, and the final bundle `closure-summary` invocation
+  - refresh README command examples for the same release-1.2.7 closure path
+  - add `RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.example.json` as a filled machine-archivable example
+  - link the committed template and example from the human-readable checklist document
+- Touched files:
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.example.json`
+- Result:
+  - the release-1.2.7 final closure bundle now has an operator-facing documented command chain for the new independent diagnosis and guarded rollback gates
+  - the release-2.0.0 rerun checklist now has both an empty template and a realistic filled example to copy from
+
+2026-05-10: Continued release-1.2.7 closure packaging by promoting two remaining 1.2.7 plan bullets into independent machine-consumable surfaces instead of leaving them implicit inside existing evidence. `neurolink_core.cli` now emits standalone `observability-diagnosis-smoke` and `release-rollback-hardening-smoke` payloads, `closure-summary` now evaluates those payloads as first-class gates, and the real Core/Unit rerun checklist now has a machine-archivable JSON template alongside the human-readable plan document. This narrows the remaining 1.2.7 gap: observability, rollback safety, and the 2.0.0 real-scene rerun template are no longer hidden inside relay failure, activate failure, rollback, or Markdown-only notes. - Copilot
+
+#### EXEC-335 Release 1.2.7 Independent Observability Rollback And Real-Scene Template Slice
+
+- Status: completed for independent closure payloads, gates, and rerun template generation
+- Owner: GitHub Copilot continuing release-1.2.7 implementation
+- Plan alignment check:
+  - matches WS-3 by turning guarded release and rollback hardening into an independent closure payload and gate instead of inferring it from lower-level deploy evidence
+  - matches WS-5 by turning structured diagnosis into an independent closure payload and gate that combines relay-failure evidence with rollback-required activation evidence
+  - matches WS-6 item 5 and WS-8 by giving the release-2.0.0 real-scene rerun a machine-archivable JSON template in addition to the human-readable checklist
+- Scope:
+  - add `observability-diagnosis-smoke` and `release-rollback-hardening-smoke` commands in `neurolink_core.cli`
+  - add `observability_diagnosis_gate` and `release_rollback_hardening_gate` to `closure-summary`
+  - add `real-scene-checklist-template` command and commit a default JSON template file for later reruns
+  - extend focused closure-summary regression coverage for the new gates and template command
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.template.json`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Result:
+  - observability/failure-diagnosis is now independently archivable and no longer rides only as an implicit consequence of relay evidence
+  - release/rollback hardening is now independently archivable and no longer rides only as an implicit consequence of activate or rollback payload review
+  - the release-2.0.0 real-scene rerun now has both a stable command-emitted template and a committed default JSON artifact shape
+- Validation evidence:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m unittest neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_closure_summary_reads_session_evidence neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_observability_diagnosis_smoke_reports_structured_operator_guidance neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_closure_summary_can_pass_observability_diagnosis_gate neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_release_rollback_hardening_smoke_reports_guarded_rollback_closure neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_closure_summary_can_pass_release_rollback_hardening_gate neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_real_scene_checklist_template_emits_machine_archivable_rows neurolink_core.tests.test_neurolink_core.TestNoModelCoreWorkflow.test_cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied` -> `7 tests`, `OK`
+- Updated progress estimate:
+  - release-1.2.7 implementation progress: about 18%
+  - release-1.2.7 closure progress: about 8%
+  - overall HLD completion: about 95%
+
+2026-05-10: Continued release-1.2.7 WS-8 and the release-2.0.0 readiness track by materializing the missing real neuro_core plus neuro_unit scenario master checklist as a standalone execution document instead of leaving the workstream only as plan bullets. The new checklist defines stable scenario ids, shared preconditions, evidence bundle layout, and the exact handoff boundary between release-1.2.7 implementation closure and release-2.0.0 frozen reruns. This keeps the latest real-scene closure payload work anchored to a concrete operator-facing run surface and narrows what is still allowed to enter release-2.0.0: reruns, compatibility refresh, handoff notes, and promotion approval only. - Copilot
+
+#### EXEC-334 Release 2.0.0 Real Core Unit Scenario Checklist Slice
+
+- Status: completed for planning and execution-organization of the real-scene rerun surface
+- Owner: GitHub Copilot continuing release-1.2.7 implementation
+- Plan alignment check:
+  - matches WS-6 item 5 by turning real Core/Unit scenario execution into an explicit evidence-collection procedure rather than a loose plan note
+  - matches WS-8 by defining stable scenario families, row-level pass criteria, and rerun expectations before release-2.0.0 freeze
+  - reinforces the release-2.0.0 entry rule that no new implementation-bearing real-scene work should remain after release-1.2.7 closure
+- Scope:
+  - create a dedicated release-2.0.0 pre-promotion real Core/Unit scenario checklist document
+  - define stable scenario ids covering deterministic, single-real-Unit, deploy or rollback, Restricted Unit, federation or relay, Agent-governed flow, and cleanup rerun readiness paths
+  - define shared rules, shared preconditions, and expected evidence bundle contents for the real-scene closure archive
+  - link the checklist back into the release-1.2.7 WS-8 plan surface
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.7_PRODUCTIZATION_AND_2000_READINESS_PLAN.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_2.0.0_REAL_CORE_UNIT_SCENARIO_CHECKLIST.md`
+- Result:
+  - the project now has a standalone real-scene integration checklist instead of relying on scattered WS-8 bullets
+  - release-1.2.7 implementation closure versus release-2.0.0 rerun-only work is now explicit for real Core/Unit validation
+  - future scenario evidence can be archived under stable scenario ids and artifact names without redefining the acceptance surface
+- Validation evidence:
+  - documentation-only slice; validate with Markdown structure review and diff inspection
+- Updated progress estimate:
+  - release-1.2.7 implementation progress: about 10%
+  - release-1.2.7 closure progress: about 2%
+  - overall HLD completion: about 94%
+
+2026-05-10: Started release-1.2.7 implementation by re-baselining the release from a productization-hardening line into the final implementation-heavy HLD completion line before release-2.0.0 stabilization. The release-1.2.7 plan now explicitly closes the remaining non-stabilization HLD surface in one minor version: multi-hardware capability-class acceptance, Restricted Unit compatibility, resource-budget governance, Agent Tool/Skill/MCP excellence informed only by available Hermes AI Agent/qwenpaw tool-calling and MCP UX patterns, release/rollback hardening, signing/provenance policy, structured observability, and real neuro_core plus neuro_unit scenario harnesses. The README now describes release-1.2.7 as the active HLD-completion line, the AI Core and Unit LLDs now carry release-1.2.7 acceptance contracts, and release-2.0.0 remains stabilization, freeze, migration, final real-scene rerun, and promotion. - Copilot
+
+#### EXEC-333 Release 1.2.7 HLD Completion Re-Baseline
+
+- Status: completed for Phase 1 planning re-baseline
+- Owner: GitHub Copilot starting release-1.2.7 implementation
+- Scope:
+  - upgrade the release-1.2.7 plan from productization hardening to final implementation-heavy HLD completion
+  - add an HLD closure map covering multi-hardware, Restricted Unit, Agent Tool/Skill/MCP, release safety, signing/provenance, observability, and real Core/Unit E2E surfaces
+  - define release-2.0.0 as stabilization, compatibility freeze, migration notes, final real-scene rerun, and promotion only
+  - preserve the hardware-agnostic rule that shared Core/Unit contracts consume capability classes and must not hardcode the current validation board or lab network
+  - add AI Core and Unit LLD contract deltas for release-1.2.7 acceptance records, capability classes, Restricted Unit behavior, Agent excellence, signing/provenance, diagnosis, and real-scenario E2E evidence
+  - align README wording with the upgraded release-1.2.7 role
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_LLD.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_1.2.7_PRODUCTIZATION_AND_2000_READINESS_PLAN.md`
+  - `applocation/NeuroLink/docs/project/UNIT_LLD.md`
+- Result:
+  - release-1.2.7 now has a detailed implementation plan for closing all remaining non-stabilization HLD development work before release-2.0.0
+  - Agent Tool/Skill/MCP quality is promoted from safety closure to product-grade acceptance with planner repair, MCP UX, and Skill drift prevention called out explicitly
+  - multi-hardware work is organized by capability class before board-family mapping, keeping test hardware out of shared contract design
+  - AI Core and Unit LLDs now name the release-1.2.7 traceability anchors that later code/test slices must satisfy
+  - real neuro_core plus neuro_unit scenario validation is now an explicit release-1.2.7 implementation and release-2.0.0 final-rerun requirement
+- Validation evidence:
+  - documentation-only slice; validate with Markdown/readability review and follow-up diff checks
+- Updated progress estimate:
+  - release-1.2.7 implementation progress: about 8%
+  - release-1.2.7 closure progress: 0%
+  - overall HLD completion: about 94%; target is about 100% of non-stabilization implementation work by 1.2.7 close and about 98% overall entering 2.0.0 stabilization
+
 2026-05-10: Closed release-1.2.6 by promoting the canonical repository release identity after the WS-7 closure bundle, focused regressions, refreshed post-promotion artifact evidence, and explicit promotion approval all converged. The host CLI and workflow catalog now advertise `RELEASE_TARGET = "1.2.6"`, the sample Unit App source identity and rebuilt artifact now report `neuro_unit_app-1.2.6-cbor-v2`, the top-level README and AI Core runbooks no longer describe release-1.2.6 as merely active implementation work, and release-1.2.7 is now the active productization line. The final release-1.2.6 bundle still reports all twelve validation gates green after post-promotion documentation and hardware-compatibility refresh, so release-1.2.6 is now closed both in evidence and in canonical repository identity. - Copilot
 
 #### EXEC-332 Release 1.2.6 Release Identity Promotion And Closure

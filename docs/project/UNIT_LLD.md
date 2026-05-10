@@ -949,6 +949,51 @@ Production additions to existing runtime exception model:
 5. rollback semantics must be defined before update is marked production-complete.
 6. partial downloads must not be treated as verified artifacts.
 
+### 9.1 Release 1.2.7 Multi-Hardware And Real-Scenario Contracts
+
+Release-1.2.7 closes the remaining Unit-side HLD development work before
+release-2.0.0 stabilization. Unit contracts must support capability-class
+acceptance and real Core/Unit scenario validation without becoming tied to the
+current validation board.
+
+Capability classes:
+
+1. `EXTENSIBLE_UNIT`
+  - supports dynamic LLEXT app lifecycle and full artifact admission.
+2. `RESTRICTED_UNIT`
+  - does not support full dynamic LLEXT or lacks enough resources; exposes
+    explicit degraded deploy, update, query, and event outcomes.
+3. `RELAY_CAPABLE_UNIT`
+  - can preserve relay path metadata and report route health for child Units.
+4. `FEDERATED_ACCESS_UNIT`
+  - can be accessed through policy-bounded Core federation.
+5. `STORAGE_CONSTRAINED_UNIT`
+  - requires storage and staging admission limits before load or activation.
+6. `SIGNING_REQUIRED_UNIT`
+  - rejects artifacts that do not satisfy the target signing policy.
+
+Rules:
+
+1. Board providers may map concrete boards into capability classes, but shared
+   Unit serialization and Core-facing contracts must expose normalized
+   capability fields rather than board-specific assumptions.
+2. Restricted Unit behavior must be explicit. Unsupported dynamic app actions
+   return compatibility decisions, not generic runtime failures.
+3. Resource budgets must include heap, stack, staging, app-slot, and relevant
+   transport or relay buffers. Unsafe artifacts must be rejected before load or
+   activation.
+4. Signing and provenance decisions must include artifact identity, source
+   manifest identity, build provenance, signing state, target policy, and
+   rejection reason when applicable.
+5. Relay and gateway metadata must remain transport-neutral and preserve route
+   path evidence for Core audit correlation.
+6. Real-scene validation must exercise query, event, prepare, verify, activate,
+   rollback, relay/federation route evidence, and restart recovery across the
+   representative capability classes selected for release-1.2.7.
+
+UT anchors: `UT-UNIT-HLD127-*`, `UT-UNIT-HWCAP-*`, `UT-UNIT-BUDGET-*`,
+`UT-UNIT-GW-*`, `UT-UNIT-E2E-*`
+
 ## 10. Unit-Test Design
 
 ### 10.1 Test Families
@@ -981,6 +1026,10 @@ Production additions to existing runtime exception model:
   - reboot reconciliation, stale lease cleanup, staged artifact recovery.
 14. `UT-UNIT-HWCAP-*`
   - capability descriptor normalization, board-provider injection, artifact compatibility rejection.
+15. `UT-UNIT-HLD127-*`
+  - capability-class mapping, Restricted Unit outcomes, signing/provenance policy, and release-2.0.0 entry readiness.
+16. `UT-UNIT-E2E-*`
+  - real-scenario query, event, update, rollback, relay, and restart recovery evidence contracts.
 
 ### 10.2 Mandatory Traceability Rules
 
@@ -1000,6 +1049,9 @@ Production additions to existing runtime exception model:
 8. Add recovery reconciliation.
 9. Add gateway route record and query surface.
 10. Add release-1.2.6 capability descriptor and artifact compatibility rejection surface.
+11. Add release-1.2.7 capability-class acceptance and Restricted Unit outcomes.
+12. Add resource-governance, signing/provenance, and admission policy evidence.
+13. Add real Core/Unit scenario evidence hooks for release-1.2.7 acceptance and release-2.0.0 rerun.
 
 ## 12. Traceability Prefixes
 

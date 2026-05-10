@@ -931,6 +931,64 @@ Critical counters:
 5. Mem0 candidate accept rate
 6. model switch failure rate
 
+### 9.1 Release 1.2.7 HLD Completion Acceptance Contracts
+
+Release-1.2.7 turns the release-1.2.6 federation, relay, capability, and
+Tool/Skill/MCP governance surfaces into final HLD development closure evidence.
+The Core must expose acceptance-grade contracts for these surfaces before
+release-2.0.0 stabilization begins.
+
+Core-owned release-1.2.7 acceptance records:
+
+1. `hld_closure_map`
+  - assigns every remaining HLD item to release-1.2.7 closure,
+    release-2.0.0 stabilization-only work, or explicit exclusion.
+2. `hardware_acceptance_matrix`
+  - records capability class, mapped board family, architecture, ABI, storage
+    class, transports, LLEXT support, relay support, signing policy, resource
+    budget, deterministic result, and bounded real-evidence reference.
+3. `restricted_unit_decision`
+  - records degraded behavior for non-LLEXT or resource-limited Units instead
+    of treating them as skipped hardware.
+4. `agent_excellence_result`
+  - records Tool, Skill, and MCP plan-quality evidence including tool choice,
+    argument validation, unavailable-tool rejection, Skill ground-rule
+    enforcement, governed MCP mode, planner repair, and audit correlation.
+5. `release_safety_result`
+  - records activate, rollback, cleanup, approval, lease, and operator next
+    action evidence.
+6. `signing_provenance_result`
+  - records artifact identity, source manifest identity, build provenance,
+    signing state, target policy, and admission decision.
+7. `diagnosis_result`
+  - records degraded, unreachable, relay-failed, stale-route,
+    rollback-required, compatibility-rejected, signing-rejected, and
+    resource-budget-rejected states in closure-summary-consumable form.
+8. `real_scene_e2e_result`
+  - records deterministic Core/Unit E2E, single real Unit, multi-Core
+    federation, relay-assisted Unit access, live event, rollback, restart, and
+    Agent Tool/Skill/MCP-assisted operation scenarios.
+
+Rules:
+
+1. Release-2.0.0 entry is blocked until all implementation-bearing release-1.2.7
+   acceptance records are green or explicitly reclassified out of HLD-critical
+   scope.
+2. Hardware evidence must be capability-class driven first and board-family
+   mapped second. Core contracts must not depend on lab router endpoints, Wi-Fi
+   settings, PSRAM size, SD-card paths, or board names.
+3. Agent Tool/Skill/MCP quality must remain Core-governed. Provider-backed
+   Agents may propose actions, but tool execution, MCP side effects, approval,
+   policy, lease, and audit boundaries remain Core-owned.
+4. Hermes AI Agent and qwenpaw may inform tool-calling and MCP UX quality only
+   through available source or design details. Core contracts must not copy
+   external code or depend on unavailable implementation details.
+5. Real neuro_core plus neuro_unit scenario harnesses must be implemented during
+   release-1.2.7 and rerun after release-2.0.0 freeze before promotion.
+
+UT anchors: `UT-CORE-HLD127-*`, `UT-CORE-HWCAP-*`, `UT-CORE-AGENTQ-*`,
+`UT-CORE-E2E-*`
+
 ## 10. Unit-Test Design
 
 ### 10.1 Test Families
@@ -955,6 +1013,12 @@ Critical counters:
   - delegated execution contract, topology merge, trust metadata checks.
 10. `UT-CORE-HWCAP-*`
   - capability descriptor parsing, artifact compatibility rejection, relay route mismatch.
+11. `UT-CORE-HLD127-*`
+  - release-1.2.7 HLD closure map, release-2.0.0 entry blocking, and acceptance matrix reporting.
+12. `UT-CORE-AGENTQ-*`
+  - Tool/Skill/MCP plan quality, planner repair, governed MCP mode, and audit correlation.
+13. `UT-CORE-E2E-*`
+  - deterministic and real-scenario Core/Unit acceptance harness contracts.
 
 ### 10.2 Mandatory Traceability Rules
 
@@ -974,6 +1038,10 @@ Critical counters:
 8. Implement inference profile routing and health checks.
 9. Implement release-1.2.6 federation topology and delegated execution contracts.
 10. Implement capability-driven route planning and artifact compatibility checks.
+11. Implement release-1.2.7 HLD closure map and acceptance matrix contracts.
+12. Implement Agent Tool/Skill/MCP excellence evidence and planner repair checks.
+13. Implement release safety, signing/provenance, and diagnosis acceptance records.
+14. Implement deterministic and real-scenario Core/Unit E2E harness reporting.
 
 ## 12. Traceability Prefixes
 

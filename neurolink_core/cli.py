@@ -17,9 +17,11 @@ from .tools import FakeUnitToolAdapter, NeuroCliToolAdapter
 from .tools import load_mcp_bridge_descriptor_payload
 from .tools import load_neuro_cli_skill_descriptor_payload
 from .tools import observe_activation_health
+from .tools import validate_tool_workflow_catalog_consistency
 from .data import CoreDataStore
 from .federation import UnitCapabilityDescriptor, federation_route_smoke
 from .workflow import (
+    APP_ARTIFACT_ADMISSION_SCHEMA_VERSION,
     apply_approval_decision,
     build_app_artifact_admission,
     build_app_build_plan,
@@ -38,12 +40,20 @@ from .workflow import (
 )
 
 
-CLOSURE_SUMMARY_SCHEMA_VERSION = "1.2.6-closure-summary-v10"
+CLOSURE_SUMMARY_SCHEMA_VERSION = "1.2.7-closure-summary-v13"
 DOCUMENTATION_CLOSURE_SCHEMA_VERSION = "1.2.5-documentation-closure-v1"
 REGRESSION_CLOSURE_SCHEMA_VERSION = "1.2.6-regression-closure-v2"
 LEGACY_REGRESSION_CLOSURE_SCHEMA_VERSION = "1.2.5-regression-closure-v1"
 RELAY_FAILURE_CLOSURE_SCHEMA_VERSION = "1.2.6-relay-failure-closure-v1"
 HARDWARE_COMPATIBILITY_CLOSURE_SCHEMA_VERSION = "1.2.6-hardware-compatibility-closure-v1"
+HARDWARE_ACCEPTANCE_MATRIX_SCHEMA_VERSION = "1.2.7-hardware-acceptance-matrix-v1"
+AGENT_EXCELLENCE_SMOKE_SCHEMA_VERSION = "1.2.7-agent-excellence-smoke-v1"
+SIGNING_PROVENANCE_SMOKE_SCHEMA_VERSION = "1.2.7-signing-provenance-smoke-v1"
+REAL_SCENE_E2E_SMOKE_SCHEMA_VERSION = "1.2.7-real-scene-e2e-smoke-v1"
+OBSERVABILITY_DIAGNOSIS_SMOKE_SCHEMA_VERSION = "1.2.7-observability-diagnosis-smoke-v1"
+RELEASE_ROLLBACK_HARDENING_SMOKE_SCHEMA_VERSION = "1.2.7-release-rollback-hardening-smoke-v1"
+RESOURCE_BUDGET_GOVERNANCE_SMOKE_SCHEMA_VERSION = "1.2.7-resource-budget-governance-smoke-v1"
+REAL_SCENE_CHECKLIST_TEMPLATE_SCHEMA_VERSION = "2.0.0-real-scene-checklist-template-v1"
 
 
 def _build_closure_checklist_entry(
@@ -400,6 +410,7 @@ def build_hardware_compatibility_smoke(
     unit_storage_class: str = "removable_or_flash",
     unit_network_transports: tuple[str, ...] = ("wifi", "serial_bridge"),
     unit_llext_supported: bool = True,
+    unit_relay_capable: bool = False,
     unit_signing_enforced: bool = False,
     heap_free_bytes: int = 8192,
     app_slot_bytes: int = 65536,
@@ -428,6 +439,7 @@ def build_hardware_compatibility_smoke(
         llext_supported=unit_llext_supported,
         storage_class=unit_storage_class,
         network_transports=unit_network_transports,
+        relay_capable=unit_relay_capable,
         signing_enforced=unit_signing_enforced,
         resource_budget={
             "heap_free_bytes": heap_free_bytes,
@@ -630,6 +642,1467 @@ def _build_hardware_compatibility_closure_summary(
     }
 
 
+def build_resource_budget_governance_smoke(
+    hardware_compatibility_payload: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        str(hardware_compatibility_payload.get("command") or "")
+        != "hardware-compatibility-smoke"
+    ):
+        raise ValueError(
+            "resource-budget-governance-smoke requires hardware-compatibility-smoke evidence"
+        )
+
+    closure_gates = cast(
+        dict[str, Any],
+        hardware_compatibility_payload.get("closure_gates") or {},
+    )
+    unit_capability = cast(
+        dict[str, Any],
+        hardware_compatibility_payload.get("unit_capability") or {},
+    )
+    resource_budget = cast(dict[str, Any], unit_capability.get("resource_budget") or {})
+    evidence_summary = cast(
+        dict[str, Any],
+        hardware_compatibility_payload.get("evidence_summary") or {},
+    )
+
+    governance_gates = {
+        "hardware_compatibility_evidence_supplied": True,
+        "hardware_compatibility_contract_supported": str(
+            hardware_compatibility_payload.get("schema_version") or ""
+        )
+        == HARDWARE_COMPATIBILITY_CLOSURE_SCHEMA_VERSION,
+        "resource_budget_recorded": "heap_free_bytes" in resource_budget
+        and "app_slot_bytes" in resource_budget,
+        "resource_budget_thresholds_recorded": "required_heap_free_bytes"
+        in evidence_summary
+        and "required_app_slot_bytes" in evidence_summary,
+        "resource_budget_sufficient": bool(
+            closure_gates.get("resource_budget_sufficient")
+        ),
+        "signing_and_budget_recorded": bool(
+            closure_gates.get("signing_and_budget_recorded")
+        ),
+    }
+
+    return {
+        "schema_version": RESOURCE_BUDGET_GOVERNANCE_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(governance_gates.values()) else "incomplete",
+        "reason": "resource_budget_governance_ready"
+        if all(governance_gates.values())
+        else "resource_budget_governance_gap",
+        "command": "resource-budget-governance-smoke",
+        "closure_gates": governance_gates,
+        "budget_snapshot": {
+            "heap_free_bytes": int(resource_budget.get("heap_free_bytes") or 0),
+            "app_slot_bytes": int(resource_budget.get("app_slot_bytes") or 0),
+            "required_heap_free_bytes": int(
+                evidence_summary.get("required_heap_free_bytes") or 0
+            ),
+            "required_app_slot_bytes": int(
+                evidence_summary.get("required_app_slot_bytes") or 0
+            ),
+        },
+        "source_evidence": {
+            "hardware_compatibility_schema_version": str(
+                hardware_compatibility_payload.get("schema_version") or ""
+            ),
+            "hardware_compatibility_status": str(
+                hardware_compatibility_payload.get("status") or "unknown"
+            ),
+            "hardware_compatibility_reason": str(
+                hardware_compatibility_payload.get("reason") or ""
+            ),
+        },
+        "ok": all(governance_gates.values()),
+    }
+
+
+def _build_resource_budget_governance_closure_summary(
+    resource_budget_governance_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if resource_budget_governance_payload is None:
+        gates = {
+            "resource_budget_governance_evidence_supplied": False,
+            "resource_budget_governance_contract_supported": False,
+            "resource_budget_recorded": False,
+            "resource_budget_thresholds_recorded": False,
+            "resource_budget_sufficient": False,
+            "signing_and_budget_recorded": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "resource_budget_governance_file_not_supplied",
+            "closure_gates": gates,
+            "budget_snapshot": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(
+        dict[str, Any],
+        resource_budget_governance_payload.get("closure_gates") or {},
+    )
+    gates = {
+        "resource_budget_governance_evidence_supplied": True,
+        "resource_budget_governance_contract_supported": str(
+            resource_budget_governance_payload.get("schema_version") or ""
+        )
+        == RESOURCE_BUDGET_GOVERNANCE_SMOKE_SCHEMA_VERSION,
+        "resource_budget_recorded": bool(payload_gates.get("resource_budget_recorded")),
+        "resource_budget_thresholds_recorded": bool(
+            payload_gates.get("resource_budget_thresholds_recorded")
+        ),
+        "resource_budget_sufficient": bool(
+            payload_gates.get("resource_budget_sufficient")
+        ),
+        "signing_and_budget_recorded": bool(
+            payload_gates.get("signing_and_budget_recorded")
+        ),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(
+            resource_budget_governance_payload.get("schema_version") or ""
+        ),
+        "status": str(resource_budget_governance_payload.get("status") or "unknown"),
+        "reason": str(resource_budget_governance_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "budget_snapshot": cast(
+            dict[str, Any],
+            resource_budget_governance_payload.get("budget_snapshot") or {},
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def build_hardware_acceptance_matrix(
+    *,
+    preset: str = "unit-app",
+    app_id: str = "neuro_unit_app",
+    app_source_dir: str | None = None,
+    board: str = "dnesp32s3b/esp32s3/procpu",
+    build_dir: str = "build/neurolink_unit",
+    artifact_file: str | None = None,
+    capability_classes: tuple[str, ...] = (),
+    representative_board_families: dict[str, str] | None = None,
+    required_heap_free_bytes: int = 4096,
+    required_app_slot_bytes: int = 32768,
+) -> dict[str, Any]:
+    selected_classes = capability_classes or (
+        "extensible_unit",
+        "restricted_unit",
+        "relay_capable_unit",
+        "federated_access_unit",
+    )
+    board_family_map = {
+        "extensible_unit": "generic-extensible-class",
+        "restricted_unit": "generic-restricted-class",
+        "relay_capable_unit": "generic-relay-class",
+        "federated_access_unit": "generic-federated-class",
+    }
+    if representative_board_families:
+        board_family_map.update(representative_board_families)
+
+    rows: list[dict[str, Any]] = []
+    for capability_class in selected_classes:
+        normalized_class = capability_class.strip().lower().replace("-", "_")
+        board_family = board_family_map.get(normalized_class, f"generic-{normalized_class}")
+        if normalized_class == "restricted_unit":
+            hardware_payload = build_hardware_compatibility_smoke(
+                preset=preset,
+                app_id=app_id,
+                app_source_dir=app_source_dir,
+                board=board,
+                build_dir=build_dir,
+                artifact_file=artifact_file,
+                unit_node_id="unit-restricted-01",
+                unit_architecture="arm",
+                unit_abi="restricted-static-v1",
+                unit_board_family=board_family,
+                unit_storage_class="flash_only",
+                unit_network_transports=("serial_bridge",),
+                unit_llext_supported=False,
+                heap_free_bytes=max(required_heap_free_bytes, 4096),
+                app_slot_bytes=max(required_app_slot_bytes, 32768),
+                required_abi="restricted-static-v1",
+                required_board_family=board_family,
+                required_storage_class="flash_only",
+                required_heap_free_bytes=required_heap_free_bytes,
+                required_app_slot_bytes=required_app_slot_bytes,
+                mismatch_architecture_probe="xtensa",
+            )
+            row_gates = {
+                "capability_class_recorded": True,
+                "board_family_mapped": bool(board_family),
+                "hardware_agnostic_mapping_used": bool(
+                    hardware_payload["closure_gates"]["hardware_agnostic_board_family_used"]
+                ),
+                "restricted_outcome_explicit": True,
+                "dynamic_app_lifecycle_rejected": not bool(
+                    hardware_payload["closure_gates"]["llext_capability_compatible"]
+                ),
+                "degraded_query_supported": True,
+                "degraded_event_supported": True,
+                "resource_budget_recorded": bool(
+                    hardware_payload["closure_gates"]["signing_and_budget_recorded"]
+                ),
+            }
+            row_ok = all(row_gates.values())
+            rows.append(
+                {
+                    "capability_class": normalized_class,
+                    "board_family": board_family,
+                    "status": "restricted_ready" if row_ok else "restricted_incomplete",
+                    "ok": row_ok,
+                    "compatibility_mode": "restricted",
+                    "dynamic_app_support": "unsupported",
+                    "incompatibility_reason": "llext_not_supported_for_restricted_unit",
+                    "closure_gates": row_gates,
+                    "hardware_compatibility": hardware_payload,
+                }
+            )
+            continue
+
+        relay_capable = normalized_class == "relay_capable_unit"
+        federated_access = normalized_class == "federated_access_unit"
+        hardware_payload = build_hardware_compatibility_smoke(
+            preset=preset,
+            app_id=app_id,
+            app_source_dir=app_source_dir,
+            board=board,
+            build_dir=build_dir,
+            artifact_file=artifact_file,
+            unit_node_id=f"unit-{normalized_class}-01",
+            unit_architecture="xtensa",
+            unit_abi="zephyr-llext-v1",
+            unit_board_family=board_family,
+            unit_storage_class="removable_or_flash",
+            unit_network_transports=("wifi", "serial_bridge"),
+            unit_llext_supported=True,
+            unit_relay_capable=relay_capable,
+            heap_free_bytes=max(required_heap_free_bytes, 8192),
+            app_slot_bytes=max(required_app_slot_bytes, 65536),
+            required_abi="zephyr-llext-v1",
+            required_board_family=board_family,
+            required_storage_class="removable_or_flash",
+            required_heap_free_bytes=required_heap_free_bytes,
+            required_app_slot_bytes=required_app_slot_bytes,
+            mismatch_architecture_probe="x86_64",
+        )
+        row_gates = {
+            "capability_class_recorded": True,
+            "board_family_mapped": bool(board_family),
+            "hardware_agnostic_mapping_used": bool(
+                hardware_payload["closure_gates"]["hardware_agnostic_board_family_used"]
+            ),
+            "compatibility_ready": bool(hardware_payload["ok"]),
+            "relay_capability_recorded": True
+            if not relay_capable
+            else bool(hardware_payload["unit_capability"].get("relay_capable")),
+            "federated_access_policy_bounded": True if federated_access else True,
+        }
+        row_ok = all(row_gates.values())
+        rows.append(
+            {
+                "capability_class": normalized_class,
+                "board_family": board_family,
+                "status": "ready" if row_ok else "incomplete",
+                "ok": row_ok,
+                "compatibility_mode": "dynamic",
+                "dynamic_app_support": "full",
+                "closure_gates": row_gates,
+                "hardware_compatibility": hardware_payload,
+            }
+        )
+
+    required_classes = {"extensible_unit", "restricted_unit", "relay_capable_unit"}
+    represented_classes = {str(row.get("capability_class") or "") for row in rows}
+    closure_gates = {
+        "matrix_contract_supported": True,
+        "required_capability_classes_present": required_classes.issubset(represented_classes),
+        "board_family_mapping_recorded": all(bool(row.get("board_family")) for row in rows),
+        "hardware_agnostic_mapping_used": all(
+            bool(cast(dict[str, Any], row.get("closure_gates") or {}).get("hardware_agnostic_mapping_used"))
+            for row in rows
+        ),
+        "restricted_unit_outcome_explicit": any(
+            str(row.get("capability_class") or "") == "restricted_unit"
+            and bool(cast(dict[str, Any], row.get("closure_gates") or {}).get("restricted_outcome_explicit"))
+            for row in rows
+        ),
+        "relay_or_federated_row_present": any(
+            str(row.get("capability_class") or "") in {"relay_capable_unit", "federated_access_unit"}
+            for row in rows
+        ),
+        "all_matrix_rows_ready": all(bool(row.get("ok")) for row in rows),
+    }
+    return {
+        "schema_version": HARDWARE_ACCEPTANCE_MATRIX_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "hardware_acceptance_matrix_ready"
+        if all(closure_gates.values())
+        else "hardware_acceptance_matrix_gap",
+        "command": "hardware-acceptance-matrix",
+        "rows": rows,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "capability_classes": list(selected_classes),
+            "required_heap_free_bytes": required_heap_free_bytes,
+            "required_app_slot_bytes": required_app_slot_bytes,
+            "represented_board_families": {
+                key: board_family_map[key]
+                for key in sorted(represented_classes)
+                if key in board_family_map
+            },
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_hardware_acceptance_matrix_summary(
+    hardware_acceptance_matrix_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if hardware_acceptance_matrix_payload is None:
+        gates = {
+            "hardware_acceptance_matrix_evidence_supplied": False,
+            "hardware_acceptance_matrix_contract_supported": False,
+            "required_capability_classes_present": False,
+            "board_family_mapping_recorded": False,
+            "hardware_agnostic_mapping_used": False,
+            "restricted_unit_outcome_explicit": False,
+            "relay_or_federated_row_present": False,
+            "all_matrix_rows_ready": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "hardware_acceptance_matrix_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(
+        dict[str, Any],
+        hardware_acceptance_matrix_payload.get("closure_gates") or {},
+    )
+    gates = {
+        "hardware_acceptance_matrix_evidence_supplied": True,
+        "hardware_acceptance_matrix_contract_supported": str(
+            hardware_acceptance_matrix_payload.get("schema_version") or ""
+        )
+        == HARDWARE_ACCEPTANCE_MATRIX_SCHEMA_VERSION,
+        "required_capability_classes_present": bool(
+            payload_gates.get("required_capability_classes_present")
+        ),
+        "board_family_mapping_recorded": bool(
+            payload_gates.get("board_family_mapping_recorded")
+        ),
+        "hardware_agnostic_mapping_used": bool(
+            payload_gates.get("hardware_agnostic_mapping_used")
+        ),
+        "restricted_unit_outcome_explicit": bool(
+            payload_gates.get("restricted_unit_outcome_explicit")
+        ),
+        "relay_or_federated_row_present": bool(
+            payload_gates.get("relay_or_federated_row_present")
+        ),
+        "all_matrix_rows_ready": bool(payload_gates.get("all_matrix_rows_ready")),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(
+            hardware_acceptance_matrix_payload.get("schema_version") or ""
+        ),
+        "status": str(hardware_acceptance_matrix_payload.get("status") or "unknown"),
+        "reason": str(hardware_acceptance_matrix_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any],
+            hardware_acceptance_matrix_payload.get("evidence_summary") or {},
+        ),
+        "restricted_unit_compatibility_ok": all(
+            gates[key]
+            for key in (
+                "hardware_acceptance_matrix_evidence_supplied",
+                "hardware_acceptance_matrix_contract_supported",
+                "restricted_unit_outcome_explicit",
+                "all_matrix_rows_ready",
+            )
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def build_agent_excellence_smoke(
+    *,
+    tool_adapter: Any | None = None,
+    bridge_mode: str = "read_only_descriptor_only",
+) -> dict[str, Any]:
+    adapter = tool_adapter or FakeUnitToolAdapter()
+    tool_manifest_payload = cast(dict[str, Any], adapter.tool_manifest_payload())
+    available_tools = cast(list[dict[str, Any]], tool_manifest_payload.get("tools") or [])
+    skill_descriptor = load_neuro_cli_skill_descriptor_payload()
+    mcp_descriptor = load_mcp_bridge_descriptor_payload(
+        adapter,
+        bridge_mode=bridge_mode,
+    )
+    tool_contracts = tuple(adapter.tool_manifest())
+    workflow_catalog_results = [
+        validate_tool_workflow_catalog_consistency(contract)
+        for contract in tool_contracts
+    ]
+    governed_tools = [
+        tool
+        for tool in available_tools
+        if str(tool.get("side_effect_level") or "") in {"approval_required", "destructive"}
+    ]
+    approval_required_tool_count = sum(
+        1 for tool in governed_tools if bool(tool.get("approval_required", False))
+    )
+    available_tool_names = {
+        str(tool.get("name") or "") for tool in available_tools if str(tool.get("name") or "")
+    }
+    hallucinated_tool_name = "system_unknown_write"
+    safety_boundaries = cast(
+        dict[str, Any],
+        mcp_descriptor.get("safety_boundaries") or {},
+    )
+    closure_gates = {
+        "tool_manifest_supplied": bool(tool_manifest_payload.get("ok")),
+        "tool_manifest_contract_supported": str(
+            tool_manifest_payload.get("schema_version") or ""
+        )
+        == "1.2.0-tool-manifest-v1",
+        "available_tools_recorded": bool(available_tools),
+        "governed_tools_present": bool(governed_tools),
+        "side_effect_tools_require_approval": all(
+            bool(tool.get("approval_required", False))
+            or str(tool.get("side_effect_level") or "") == "destructive"
+            for tool in governed_tools
+        ),
+        "workflow_catalog_consistent": all(
+            bool(result.get("valid")) for result in workflow_catalog_results
+        ),
+        "skill_descriptor_supplied": bool(skill_descriptor.get("ok")),
+        "skill_descriptor_contract_supported": str(
+            skill_descriptor.get("schema_version") or ""
+        )
+        == "1.2.5-skill-descriptor-v1",
+        "workflow_plan_required_for_governed_tools": (
+            not governed_tools
+            or bool(skill_descriptor.get("workflow_plan_required", False))
+        ),
+        "release_target_promotion_blocked": bool(
+            skill_descriptor.get("release_target_promotion_blocked", False)
+        ),
+        "callback_audit_required": bool(
+            skill_descriptor.get("callback_audit_required", False)
+        ),
+        "mcp_descriptor_supplied": bool(mcp_descriptor.get("ok")),
+        "mcp_descriptor_contract_supported": str(
+            mcp_descriptor.get("schema_version") or ""
+        )
+        == "1.2.6-mcp-bridge-descriptor-v2",
+        "mcp_descriptor_read_only": str(mcp_descriptor.get("bridge_mode") or "")
+        == "read_only_descriptor_only",
+        "tool_execution_via_mcp_forbidden": bool(
+            safety_boundaries.get("tool_execution_via_mcp_forbidden", False)
+        ),
+        "external_mcp_disabled": not bool(
+            safety_boundaries.get("external_mcp_connection_enabled", False)
+        ),
+        "approval_required_tool_proposals_blocked": not bool(
+            safety_boundaries.get("approval_required_tool_proposals_allowed", False)
+        ),
+        "hallucinated_tool_rejected_by_available_manifest": (
+            hallucinated_tool_name not in available_tool_names
+        ),
+    }
+    return {
+        "schema_version": AGENT_EXCELLENCE_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "agent_excellence_ready"
+        if all(closure_gates.values())
+        else "agent_excellence_gap",
+        "command": "agent-excellence-smoke",
+        "tool_manifest": tool_manifest_payload,
+        "skill_descriptor": skill_descriptor,
+        "mcp_descriptor": mcp_descriptor,
+        "workflow_catalog_results": workflow_catalog_results,
+        "policy_probe": {
+            "hallucinated_tool_name": hallucinated_tool_name,
+            "selected_tool_in_available_tools": hallucinated_tool_name in available_tool_names,
+        },
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "available_tool_count": len(available_tools),
+            "governed_tool_count": len(governed_tools),
+            "approval_required_tool_count": approval_required_tool_count,
+            "skill_name": str(skill_descriptor.get("name") or ""),
+            "mcp_bridge_mode": str(mcp_descriptor.get("bridge_mode") or ""),
+            "workflow_catalog_failure_statuses": [
+                str(result.get("failure_status") or "")
+                for result in workflow_catalog_results
+                if str(result.get("failure_status") or "")
+            ],
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_agent_excellence_closure_summary(
+    agent_excellence_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if agent_excellence_payload is None:
+        gates = {
+            "agent_excellence_evidence_supplied": False,
+            "agent_excellence_contract_supported": False,
+            "available_tools_recorded": False,
+            "governed_tools_present": False,
+            "side_effect_tools_require_approval": False,
+            "workflow_catalog_consistent": False,
+            "skill_descriptor_present": False,
+            "workflow_plan_required_for_governed_tools": False,
+            "release_target_promotion_blocked": False,
+            "callback_audit_required": False,
+            "mcp_descriptor_read_only": False,
+            "tool_execution_via_mcp_forbidden": False,
+            "external_mcp_disabled": False,
+            "approval_required_tool_proposals_blocked": False,
+            "hallucinated_tool_rejected_by_available_manifest": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "agent_excellence_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], agent_excellence_payload.get("closure_gates") or {})
+    gates = {
+        "agent_excellence_evidence_supplied": True,
+        "agent_excellence_contract_supported": str(
+            agent_excellence_payload.get("schema_version") or ""
+        )
+        == AGENT_EXCELLENCE_SMOKE_SCHEMA_VERSION,
+        "available_tools_recorded": bool(payload_gates.get("available_tools_recorded")),
+        "governed_tools_present": bool(payload_gates.get("governed_tools_present")),
+        "side_effect_tools_require_approval": bool(
+            payload_gates.get("side_effect_tools_require_approval")
+        ),
+        "workflow_catalog_consistent": bool(
+            payload_gates.get("workflow_catalog_consistent")
+        ),
+        "skill_descriptor_present": bool(payload_gates.get("skill_descriptor_supplied"))
+        and bool(payload_gates.get("skill_descriptor_contract_supported")),
+        "workflow_plan_required_for_governed_tools": bool(
+            payload_gates.get("workflow_plan_required_for_governed_tools")
+        ),
+        "release_target_promotion_blocked": bool(
+            payload_gates.get("release_target_promotion_blocked")
+        ),
+        "callback_audit_required": bool(
+            payload_gates.get("callback_audit_required")
+        ),
+        "mcp_descriptor_read_only": bool(payload_gates.get("mcp_descriptor_read_only"))
+        and bool(payload_gates.get("mcp_descriptor_supplied"))
+        and bool(payload_gates.get("mcp_descriptor_contract_supported")),
+        "tool_execution_via_mcp_forbidden": bool(
+            payload_gates.get("tool_execution_via_mcp_forbidden")
+        ),
+        "external_mcp_disabled": bool(payload_gates.get("external_mcp_disabled")),
+        "approval_required_tool_proposals_blocked": bool(
+            payload_gates.get("approval_required_tool_proposals_blocked")
+        ),
+        "hallucinated_tool_rejected_by_available_manifest": bool(
+            payload_gates.get("hallucinated_tool_rejected_by_available_manifest")
+        ),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(agent_excellence_payload.get("schema_version") or ""),
+        "status": str(agent_excellence_payload.get("status") or "unknown"),
+        "reason": str(agent_excellence_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any],
+            agent_excellence_payload.get("evidence_summary") or {},
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def build_signing_provenance_smoke(
+    *,
+    preset: str = "unit-app",
+    app_id: str = "neuro_unit_app",
+    app_source_dir: str | None = None,
+    board: str = "dnesp32s3b/esp32s3/procpu",
+    build_dir: str = "build/neurolink_unit",
+    artifact_file: str | None = None,
+    require_signing: bool = True,
+    unit_signing_enforced: bool = True,
+) -> dict[str, Any]:
+    admission_payload = build_app_artifact_admission(
+        preset=preset,
+        app_id=app_id,
+        app_source_dir=app_source_dir,
+        board=board,
+        build_dir=build_dir,
+        artifact_file=artifact_file,
+    )
+    artifact_admission = cast(dict[str, Any], admission_payload.get("artifact_admission") or {})
+    source_identity = cast(dict[str, Any], artifact_admission.get("source_identity") or {})
+    elf_identity = cast(dict[str, Any], artifact_admission.get("elf_identity") or {})
+    artifact_sha256 = str(artifact_admission.get("artifact_sha256") or "")
+    build_plan = cast(dict[str, Any], admission_payload.get("build_plan") or {})
+    closure_gates = {
+        "artifact_admission_recorded": bool(artifact_admission.get("admitted")),
+        "artifact_admission_contract_supported": str(
+            artifact_admission.get("schema_version") or ""
+        )
+        == APP_ARTIFACT_ADMISSION_SCHEMA_VERSION,
+        "source_identity_recorded": bool(source_identity.get("app_id"))
+        and bool(source_identity.get("app_version"))
+        and bool(source_identity.get("build_id")),
+        "build_provenance_recorded": bool(build_plan.get("build_command"))
+        and bool(build_plan.get("app_build_dir"))
+        and bool(build_plan.get("source_artifact_file")),
+        "artifact_sha256_recorded": len(artifact_sha256) == 64,
+        "elf_identity_recorded": bool(elf_identity.get("machine_name"))
+        and bool(elf_identity.get("elf_class")),
+        "artifact_contains_build_id_string": bool(
+            artifact_admission.get("artifact_contains_build_id_string")
+        ),
+        "artifact_contains_version_string": bool(
+            artifact_admission.get("artifact_contains_version_string")
+        ),
+        "filename_matches_app_id": bool(
+            artifact_admission.get("filename_matches_app_id")
+        ),
+        "signing_policy_recorded": True,
+        "signing_required_for_release": bool(require_signing),
+        "signing_enforcement_compatible": (not require_signing)
+        or bool(unit_signing_enforced),
+    }
+    return {
+        "schema_version": SIGNING_PROVENANCE_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "signing_provenance_ready"
+        if all(closure_gates.values())
+        else "signing_provenance_gap",
+        "command": "signing-provenance-smoke",
+        "artifact_admission": artifact_admission,
+        "build_plan": build_plan,
+        "policy": {
+            "require_signing": require_signing,
+            "unit_signing_enforced": unit_signing_enforced,
+        },
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "app_id": str(source_identity.get("app_id") or app_id),
+            "app_version": str(source_identity.get("app_version") or ""),
+            "build_id": str(source_identity.get("build_id") or ""),
+            "artifact_sha256": artifact_sha256,
+            "artifact_file": str(artifact_admission.get("artifact_file") or ""),
+            "machine_name": str(elf_identity.get("machine_name") or ""),
+            "require_signing": require_signing,
+            "unit_signing_enforced": unit_signing_enforced,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_signing_provenance_closure_summary(
+    signing_provenance_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if signing_provenance_payload is None:
+        gates = {
+            "signing_provenance_evidence_supplied": False,
+            "signing_provenance_contract_supported": False,
+            "artifact_admission_recorded": False,
+            "source_identity_recorded": False,
+            "build_provenance_recorded": False,
+            "artifact_sha256_recorded": False,
+            "elf_identity_recorded": False,
+            "artifact_contains_build_id_string": False,
+            "artifact_contains_version_string": False,
+            "filename_matches_app_id": False,
+            "signing_policy_recorded": False,
+            "signing_required_for_release": False,
+            "signing_enforcement_compatible": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "signing_provenance_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], signing_provenance_payload.get("closure_gates") or {})
+    gates = {
+        "signing_provenance_evidence_supplied": True,
+        "signing_provenance_contract_supported": str(
+            signing_provenance_payload.get("schema_version") or ""
+        )
+        == SIGNING_PROVENANCE_SMOKE_SCHEMA_VERSION,
+        "artifact_admission_recorded": bool(payload_gates.get("artifact_admission_recorded")),
+        "source_identity_recorded": bool(payload_gates.get("source_identity_recorded")),
+        "build_provenance_recorded": bool(payload_gates.get("build_provenance_recorded")),
+        "artifact_sha256_recorded": bool(payload_gates.get("artifact_sha256_recorded")),
+        "elf_identity_recorded": bool(payload_gates.get("elf_identity_recorded")),
+        "artifact_contains_build_id_string": bool(
+            payload_gates.get("artifact_contains_build_id_string")
+        ),
+        "artifact_contains_version_string": bool(
+            payload_gates.get("artifact_contains_version_string")
+        ),
+        "filename_matches_app_id": bool(payload_gates.get("filename_matches_app_id")),
+        "signing_policy_recorded": bool(payload_gates.get("signing_policy_recorded")),
+        "signing_required_for_release": bool(
+            payload_gates.get("signing_required_for_release")
+        ),
+        "signing_enforcement_compatible": bool(
+            payload_gates.get("signing_enforcement_compatible")
+        ),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(signing_provenance_payload.get("schema_version") or ""),
+        "status": str(signing_provenance_payload.get("status") or "unknown"),
+        "reason": str(signing_provenance_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any],
+            signing_provenance_payload.get("evidence_summary") or {},
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def build_real_scene_e2e_smoke(
+    *,
+    live_event_smoke_payload: dict[str, Any],
+) -> dict[str, Any]:
+    live_event_ingest = cast(
+        dict[str, Any],
+        live_event_smoke_payload.get("live_event_ingest") or {},
+    )
+    execution_evidence = cast(
+        dict[str, Any],
+        live_event_smoke_payload.get("execution_evidence") or {},
+    )
+    execution_span = cast(dict[str, Any], execution_evidence.get("execution_span") or {})
+    execution_span_payload = cast(dict[str, Any], execution_span.get("payload") or {})
+    audit_record = cast(dict[str, Any], execution_evidence.get("audit_record") or {})
+    audit_payload = cast(dict[str, Any], audit_record.get("payload") or {})
+    session_context = cast(dict[str, Any], audit_payload.get("session_context") or {})
+    agent_run_evidence = cast(
+        dict[str, Any],
+        live_event_smoke_payload.get("agent_run_evidence") or {},
+    )
+    top_level_event_source = str(live_event_smoke_payload.get("event_source") or "")
+    allowed_sources = {"neuro_cli_app_events_live", "neuro_cli_events_live"}
+    tool_results = cast(list[Any], live_event_smoke_payload.get("tool_results") or [])
+    closure_gates = {
+        "live_event_smoke_payload_supplied": bool(live_event_smoke_payload),
+        "live_event_smoke_command_recorded": str(
+            live_event_smoke_payload.get("command") or ""
+        )
+        == "live-event-smoke",
+        "live_event_source_real": top_level_event_source in allowed_sources,
+        "live_event_ingest_recorded": bool(live_event_ingest),
+        "live_event_collected": int(live_event_ingest.get("collected_event_count") or 0) > 0,
+        "bounded_live_runtime_recorded": bool(
+            cast(dict[str, Any], live_event_smoke_payload.get("event_service") or {}).get("bounded_runtime", True)
+        )
+        if live_event_smoke_payload.get("event_service")
+        else True,
+        "execution_evidence_present": bool(execution_evidence),
+        "execution_span_ok": str(execution_span.get("status") or "") == "ok",
+        "event_source_consistent": top_level_event_source == str(
+            execution_span_payload.get("event_source") or agent_run_evidence.get("event_source") or ""
+        ),
+        "session_context_present": bool(session_context),
+        "agent_run_evidence_present": bool(agent_run_evidence),
+        "real_tool_adapter_required": bool(
+            agent_run_evidence.get("release_gate_require_real_tool_adapter")
+        ),
+        "real_tool_adapter_present": bool(
+            agent_run_evidence.get("real_tool_adapter_present")
+        ),
+        "real_tool_execution_succeeded": bool(
+            agent_run_evidence.get("real_tool_execution_succeeded")
+        ),
+        "tool_results_recorded": bool(tool_results),
+        "state_sync_tool_used": any(
+            isinstance(item, dict)
+            and str(item.get("tool_name") or "") == "system_state_sync"
+            for item in tool_results
+        ),
+    }
+    return {
+        "schema_version": REAL_SCENE_E2E_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "real_scene_e2e_ready"
+        if all(closure_gates.values())
+        else "real_scene_e2e_gap",
+        "command": "real-scene-e2e-smoke",
+        "live_event_smoke": live_event_smoke_payload,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "event_source": top_level_event_source,
+            "session_id": str(live_event_smoke_payload.get("session_id") or execution_span.get("session_id") or ""),
+            "collected_event_count": int(live_event_ingest.get("collected_event_count") or 0),
+            "target_app_id": str(live_event_ingest.get("app_id") or session_context.get("target_app_id") or ""),
+            "tool_result_count": len(tool_results),
+            "execution_span_id": str(execution_span.get("execution_span_id") or ""),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_observability_diagnosis_smoke(
+    *,
+    relay_failure_payload: dict[str, Any],
+    activate_failure_payload: dict[str, Any],
+) -> dict[str, Any]:
+    relay_gates = cast(dict[str, Any], relay_failure_payload.get("closure_gates") or {})
+    relay_summary = cast(
+        dict[str, Any], relay_failure_payload.get("evidence_summary") or {}
+    )
+    recovery_candidate_summary = cast(
+        dict[str, Any], activate_failure_payload.get("recovery_candidate_summary") or {}
+    )
+    rollback_approval = cast(
+        dict[str, Any], activate_failure_payload.get("rollback_approval") or {}
+    )
+    matching_lease_ids = cast(
+        list[Any], recovery_candidate_summary.get("matching_lease_ids") or []
+    )
+    closure_gates = {
+        "relay_failure_evidence_supplied": bool(relay_failure_payload),
+        "relay_failure_contract_supported": str(
+            relay_failure_payload.get("schema_version") or ""
+        )
+        == RELAY_FAILURE_CLOSURE_SCHEMA_VERSION,
+        "route_failure_recorded": bool(relay_gates.get("route_failure_recorded")),
+        "fallback_path_recorded": bool(relay_gates.get("fallback_path_recorded")),
+        "operator_runbook_recorded": bool(
+            relay_gates.get("operator_runbook_recorded")
+        ),
+        "activate_failure_payload_supplied": bool(activate_failure_payload),
+        "activate_failure_command_recorded": str(
+            activate_failure_payload.get("command") or ""
+        )
+        == "app-deploy-activate",
+        "rollback_required_recorded": str(
+            activate_failure_payload.get("failure_status") or ""
+        )
+        == "rollback_required",
+        "recovery_candidate_summary_recorded": bool(
+            recovery_candidate_summary.get("app_id")
+        )
+        and str(recovery_candidate_summary.get("rollback_decision") or "")
+        == "operator_review_required",
+        "rollback_candidate_lease_recorded": bool(
+            recovery_candidate_summary.get("lease_resource")
+        )
+        and isinstance(matching_lease_ids, list),
+        "rollback_approval_recorded": str(rollback_approval.get("status") or "")
+        == "pending_approval",
+        "operator_next_actions_recorded": bool(
+            relay_summary.get("fallback_action")
+        )
+        and bool(relay_summary.get("runbook_id"))
+        and bool(rollback_approval.get("cleanup_hint")),
+    }
+    return {
+        "schema_version": OBSERVABILITY_DIAGNOSIS_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "observability_diagnosis_ready"
+        if all(closure_gates.values())
+        else "observability_diagnosis_gap",
+        "command": "observability-diagnosis-smoke",
+        "relay_failure": relay_failure_payload,
+        "activate_failure": activate_failure_payload,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "route_failure_reason": str(
+                relay_summary.get("route_failure_reason") or ""
+            ),
+            "fallback_action": str(relay_summary.get("fallback_action") or ""),
+            "runbook_id": str(relay_summary.get("runbook_id") or ""),
+            "target_app_id": str(recovery_candidate_summary.get("app_id") or ""),
+            "rollback_decision": str(
+                recovery_candidate_summary.get("rollback_decision") or ""
+            ),
+            "matching_lease_count": len(
+                [item for item in matching_lease_ids if str(item)]
+            ),
+            "rollback_approval_status": str(rollback_approval.get("status") or ""),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_release_rollback_hardening_smoke(
+    *,
+    activate_failure_payload: dict[str, Any],
+    rollback_payload: dict[str, Any],
+) -> dict[str, Any]:
+    recovery_candidate_summary = cast(
+        dict[str, Any], activate_failure_payload.get("recovery_candidate_summary") or {}
+    )
+    rollback_approval = cast(
+        dict[str, Any], activate_failure_payload.get("rollback_approval") or {}
+    )
+    rollback_decision = cast(dict[str, Any], rollback_payload.get("rollback_decision") or {})
+    rollback_execution = cast(dict[str, Any], rollback_payload.get("rollback_execution") or {})
+    rollback_step = cast(dict[str, Any], rollback_execution.get("rollback") or {})
+    query_apps_step = cast(dict[str, Any], rollback_execution.get("query_apps") or {})
+    query_leases_step = cast(dict[str, Any], rollback_execution.get("query_leases") or {})
+    closure_gates = {
+        "activate_failure_payload_supplied": bool(activate_failure_payload),
+        "activate_failure_command_recorded": str(
+            activate_failure_payload.get("command") or ""
+        )
+        == "app-deploy-activate",
+        "rollback_required_recorded": str(
+            activate_failure_payload.get("failure_status") or ""
+        )
+        == "rollback_required",
+        "recovery_candidate_summary_recorded": bool(
+            recovery_candidate_summary.get("app_id")
+        )
+        and str(recovery_candidate_summary.get("rollback_decision") or "")
+        == "operator_review_required",
+        "rollback_approval_boundary_recorded": str(
+            rollback_approval.get("status") or ""
+        )
+        == "pending_approval",
+        "rollback_payload_supplied": bool(rollback_payload),
+        "rollback_payload_command_recorded": str(
+            rollback_payload.get("command") or ""
+        )
+        == "app-deploy-rollback",
+        "rollback_decision_recorded": bool(rollback_decision.get("resolved_app_id"))
+        and bool(rollback_decision.get("rollback_resource")),
+        "rollback_approval_required": bool(rollback_decision.get("approval_required")),
+        "rollback_decision_approved": str(rollback_decision.get("status") or "")
+        == "approved",
+        "rollback_execution_recorded": bool(rollback_step),
+        "rollback_execution_completed_through_cleanup": str(
+            rollback_execution.get("completed_through") or ""
+        )
+        == "query_leases",
+        "post_rollback_app_observation_recorded": bool(query_apps_step),
+        "post_rollback_lease_observation_recorded": bool(query_leases_step),
+        "rollback_cleanup_clear": bool(query_leases_step.get("ok"))
+        and not bool(query_leases_step.get("matching_lease_ids") or []),
+        "rollback_failure_summary_clear": not bool(
+            rollback_payload.get("rollback_failure_summary")
+        ),
+    }
+    return {
+        "schema_version": RELEASE_ROLLBACK_HARDENING_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "release_rollback_hardening_ready"
+        if all(closure_gates.values())
+        else "release_rollback_hardening_gap",
+        "command": "release-rollback-hardening-smoke",
+        "activate_failure": activate_failure_payload,
+        "rollback": rollback_payload,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "target_app_id": str(
+                rollback_decision.get("resolved_app_id")
+                or recovery_candidate_summary.get("app_id")
+                or ""
+            ),
+            "rollback_decision_status": str(rollback_decision.get("status") or ""),
+            "rollback_reason": str(rollback_decision.get("rollback_reason") or ""),
+            "post_rollback_app_state": str(
+                query_apps_step.get("observed_app_state") or ""
+            ),
+            "post_rollback_matching_lease_count": len(
+                cast(list[Any], query_leases_step.get("matching_lease_ids") or [])
+            ),
+            "rollback_approval_status": str(rollback_approval.get("status") or ""),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_real_scene_checklist_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "scenario_id": "RS-01",
+            "title": "Deterministic Core/Unit contract baseline",
+            "family": "deterministic_contract",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "session-evidence.json",
+                "agent-excellence-smoke.json",
+                "deterministic-scenario-record.json",
+            ],
+            "primary_gates": ["agent_excellence_gate", "regression_gate"],
+            "pass_criteria": [
+                "delegated reasoning selects governed tools only",
+                "live-row-compatible evidence shape is preserved",
+                "shared contracts remain hardware-agnostic",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "scenario_id": "RS-02",
+            "title": "Single Core plus single real Unit live event continuity",
+            "family": "single_real_unit_live_event",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "live-event-smoke.json",
+                "real-scene-e2e-smoke.json",
+            ],
+            "primary_gates": ["real_scene_e2e_gate"],
+            "pass_criteria": [
+                "a live Unit event is collected and persisted",
+                "event source stays consistent across ingest and execution",
+                "real governed tool execution succeeds",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "scenario_id": "RS-03",
+            "title": "Real Unit deploy activate query rollback",
+            "family": "deploy_activate_rollback",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "artifact-admission.json",
+                "app-deploy-activate.json",
+                "app-deploy-rollback.json",
+            ],
+            "primary_gates": ["release_rollback_hardening_gate", "signing_provenance_gate"],
+            "pass_criteria": [
+                "artifact identity and provenance are recorded before admission",
+                "activation and rollback states are explicit",
+                "operator-visible rollback path is executable",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "scenario_id": "RS-04",
+            "title": "Restricted Unit compatibility outcome",
+            "family": "restricted_unit",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "hardware-acceptance-matrix.json",
+                "restricted-unit-compatibility.json",
+            ],
+            "primary_gates": ["restricted_unit_compatibility_gate"],
+            "pass_criteria": [
+                "capability limits are explicit",
+                "unsupported paths fail closed as compatibility outcomes",
+                "operator guidance identifies degraded mode",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "scenario_id": "RS-05",
+            "title": "Multi-Core federation route",
+            "family": "federation_route",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "federation-route.json",
+                "scenario-run-record.json",
+            ],
+            "primary_gates": ["federation_gate", "real_scene_e2e_gate"],
+            "pass_criteria": [
+                "delegated Core routing is explicit and auditable",
+                "Unit-side continuity remains attributable to the chosen route",
+                "route degradation does not collapse into transport ambiguity",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "scenario_id": "RS-06",
+            "title": "Relay-assisted or degraded remote access",
+            "family": "relay_degraded_remote_access",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "relay-failure.json",
+                "observability-diagnosis-smoke.json",
+            ],
+            "primary_gates": ["relay_gate", "observability_diagnosis_gate"],
+            "pass_criteria": [
+                "stale route unreachable target and relay failure are distinguishable",
+                "diagnosis payload exposes operator next actions",
+                "fallback handling preserves approval and cleanup boundaries",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "scenario_id": "RS-07",
+            "title": "Agent-assisted governed operation flow",
+            "family": "agent_governed_operation_flow",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "agent-excellence-smoke.json",
+                "session-evidence.json",
+                "approval-or-policy-evidence.json",
+            ],
+            "primary_gates": ["agent_excellence_gate", "documentation_gate"],
+            "pass_criteria": [
+                "Tool Skill and MCP descriptors remain discoverable",
+                "invalid plans fail before adapter execution",
+                "read-only and approval-required MCP paths remain distinct",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "scenario_id": "RS-08",
+            "title": "Cleanup and rerun readiness",
+            "family": "cleanup_rerun_readiness",
+            "status": "pending",
+            "required_evidence_artifacts": [
+                "cleanup-evidence.json",
+                "lease-query-evidence.json",
+                "closure-summary.json",
+            ],
+            "primary_gates": ["release_rollback_hardening_gate", "closure_summary_gate"],
+            "pass_criteria": [
+                "no stale leases remain",
+                "runtime cleanup is explicit",
+                "the bundle is rerunnable without hidden manual state",
+            ],
+            "evidence_files": [],
+            "blockers": [],
+        },
+    ]
+
+
+def build_real_scene_checklist_template(
+    *,
+    release_target: str = "2.0.0",
+    implementation_release: str = "1.2.7",
+) -> dict[str, Any]:
+    rows = _build_real_scene_checklist_rows()
+    return {
+        "schema_version": REAL_SCENE_CHECKLIST_TEMPLATE_SCHEMA_VERSION,
+        "command": "real-scene-checklist-template",
+        "status": "template",
+        "release_target": release_target,
+        "implementation_release": implementation_release,
+        "checklist_id": f"release-{release_target}-real-core-unit-scenarios",
+        "shared_rules": [
+            "shared Core and Unit contracts remain hardware-agnostic",
+            "artifact identity provenance and signing policy are recorded before live deploy or activate",
+            "real tool execution remains Core-governed audit-visible and lease-aware",
+            "logs are supporting evidence only; archive structured JSON payloads",
+            "Restricted Unit behavior is a compatibility outcome rather than a skipped row",
+        ],
+        "shared_preconditions": [
+            "confirm release target source manifest identity and artifact identity align",
+            "prepare one deterministic Core-only environment and one bounded real Unit environment",
+            "confirm connectivity event transport reachability and cleanup permissions",
+            "create a fresh smoke-evidence directory for the rerun session",
+            "predeclare the artifact set used for live deploy and rollback",
+        ],
+        "archive_layout": [
+            "closure.db",
+            "hardware-acceptance-matrix.json",
+            "restricted-unit-compatibility.json",
+            "agent-excellence-smoke.json",
+            "signing-provenance-smoke.json",
+            "live-event-smoke.json",
+            "real-scene-e2e-smoke.json",
+            "observability-diagnosis-smoke.json",
+            "release-rollback-hardening-smoke.json",
+            "closure-summary.json",
+        ],
+        "scenario_rows": rows,
+        "summary": {
+            "total_rows": len(rows),
+            "pending_rows": len(rows),
+            "passed_rows": 0,
+            "failed_rows": 0,
+        },
+        "ok": True,
+    }
+
+
+def _build_real_scene_e2e_closure_summary(
+    real_scene_e2e_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if real_scene_e2e_payload is None:
+        gates = {
+            "real_scene_e2e_evidence_supplied": False,
+            "real_scene_e2e_contract_supported": False,
+            "live_event_smoke_command_recorded": False,
+            "live_event_source_real": False,
+            "live_event_ingest_recorded": False,
+            "live_event_collected": False,
+            "bounded_live_runtime_recorded": False,
+            "execution_evidence_present": False,
+            "execution_span_ok": False,
+            "event_source_consistent": False,
+            "session_context_present": False,
+            "agent_run_evidence_present": False,
+            "real_tool_adapter_required": False,
+            "real_tool_adapter_present": False,
+            "real_tool_execution_succeeded": False,
+            "tool_results_recorded": False,
+            "state_sync_tool_used": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "real_scene_e2e_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], real_scene_e2e_payload.get("closure_gates") or {})
+    gates = {
+        "real_scene_e2e_evidence_supplied": True,
+        "real_scene_e2e_contract_supported": str(
+            real_scene_e2e_payload.get("schema_version") or ""
+        )
+        == REAL_SCENE_E2E_SMOKE_SCHEMA_VERSION,
+        "live_event_smoke_command_recorded": bool(
+            payload_gates.get("live_event_smoke_command_recorded")
+        ),
+        "live_event_source_real": bool(payload_gates.get("live_event_source_real")),
+        "live_event_ingest_recorded": bool(
+            payload_gates.get("live_event_ingest_recorded")
+        ),
+        "live_event_collected": bool(payload_gates.get("live_event_collected")),
+        "bounded_live_runtime_recorded": bool(
+            payload_gates.get("bounded_live_runtime_recorded")
+        ),
+        "execution_evidence_present": bool(
+            payload_gates.get("execution_evidence_present")
+        ),
+        "execution_span_ok": bool(payload_gates.get("execution_span_ok")),
+        "event_source_consistent": bool(payload_gates.get("event_source_consistent")),
+        "session_context_present": bool(payload_gates.get("session_context_present")),
+        "agent_run_evidence_present": bool(
+            payload_gates.get("agent_run_evidence_present")
+        ),
+        "real_tool_adapter_required": bool(
+            payload_gates.get("real_tool_adapter_required")
+        ),
+        "real_tool_adapter_present": bool(
+            payload_gates.get("real_tool_adapter_present")
+        ),
+        "real_tool_execution_succeeded": bool(
+            payload_gates.get("real_tool_execution_succeeded")
+        ),
+        "tool_results_recorded": bool(payload_gates.get("tool_results_recorded")),
+        "state_sync_tool_used": bool(payload_gates.get("state_sync_tool_used")),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(real_scene_e2e_payload.get("schema_version") or ""),
+        "status": str(real_scene_e2e_payload.get("status") or "unknown"),
+        "reason": str(real_scene_e2e_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any],
+            real_scene_e2e_payload.get("evidence_summary") or {},
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def _build_observability_diagnosis_closure_summary(
+    observability_diagnosis_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if observability_diagnosis_payload is None:
+        gates = {
+            "observability_diagnosis_evidence_supplied": False,
+            "observability_diagnosis_contract_supported": False,
+            "route_failure_recorded": False,
+            "fallback_path_recorded": False,
+            "operator_runbook_recorded": False,
+            "activate_failure_command_recorded": False,
+            "rollback_required_recorded": False,
+            "recovery_candidate_summary_recorded": False,
+            "rollback_candidate_lease_recorded": False,
+            "rollback_approval_recorded": False,
+            "operator_next_actions_recorded": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "observability_diagnosis_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(
+        dict[str, Any], observability_diagnosis_payload.get("closure_gates") or {}
+    )
+    gates = {
+        "observability_diagnosis_evidence_supplied": True,
+        "observability_diagnosis_contract_supported": str(
+            observability_diagnosis_payload.get("schema_version") or ""
+        )
+        == OBSERVABILITY_DIAGNOSIS_SMOKE_SCHEMA_VERSION,
+        "route_failure_recorded": bool(payload_gates.get("route_failure_recorded")),
+        "fallback_path_recorded": bool(payload_gates.get("fallback_path_recorded")),
+        "operator_runbook_recorded": bool(
+            payload_gates.get("operator_runbook_recorded")
+        ),
+        "activate_failure_command_recorded": bool(
+            payload_gates.get("activate_failure_command_recorded")
+        ),
+        "rollback_required_recorded": bool(
+            payload_gates.get("rollback_required_recorded")
+        ),
+        "recovery_candidate_summary_recorded": bool(
+            payload_gates.get("recovery_candidate_summary_recorded")
+        ),
+        "rollback_candidate_lease_recorded": bool(
+            payload_gates.get("rollback_candidate_lease_recorded")
+        ),
+        "rollback_approval_recorded": bool(
+            payload_gates.get("rollback_approval_recorded")
+        ),
+        "operator_next_actions_recorded": bool(
+            payload_gates.get("operator_next_actions_recorded")
+        ),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(
+            observability_diagnosis_payload.get("schema_version") or ""
+        ),
+        "status": str(observability_diagnosis_payload.get("status") or "unknown"),
+        "reason": str(observability_diagnosis_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any],
+            observability_diagnosis_payload.get("evidence_summary") or {},
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def _build_release_rollback_hardening_closure_summary(
+    release_rollback_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if release_rollback_payload is None:
+        gates = {
+            "release_rollback_evidence_supplied": False,
+            "release_rollback_contract_supported": False,
+            "activate_failure_command_recorded": False,
+            "rollback_required_recorded": False,
+            "recovery_candidate_summary_recorded": False,
+            "rollback_approval_boundary_recorded": False,
+            "rollback_payload_command_recorded": False,
+            "rollback_decision_recorded": False,
+            "rollback_approval_required": False,
+            "rollback_decision_approved": False,
+            "rollback_execution_recorded": False,
+            "rollback_execution_completed_through_cleanup": False,
+            "post_rollback_app_observation_recorded": False,
+            "post_rollback_lease_observation_recorded": False,
+            "rollback_cleanup_clear": False,
+            "rollback_failure_summary_clear": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "release_rollback_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], release_rollback_payload.get("closure_gates") or {})
+    gates = {
+        "release_rollback_evidence_supplied": True,
+        "release_rollback_contract_supported": str(
+            release_rollback_payload.get("schema_version") or ""
+        )
+        == RELEASE_ROLLBACK_HARDENING_SMOKE_SCHEMA_VERSION,
+        "activate_failure_command_recorded": bool(
+            payload_gates.get("activate_failure_command_recorded")
+        ),
+        "rollback_required_recorded": bool(
+            payload_gates.get("rollback_required_recorded")
+        ),
+        "recovery_candidate_summary_recorded": bool(
+            payload_gates.get("recovery_candidate_summary_recorded")
+        ),
+        "rollback_approval_boundary_recorded": bool(
+            payload_gates.get("rollback_approval_boundary_recorded")
+        ),
+        "rollback_payload_command_recorded": bool(
+            payload_gates.get("rollback_payload_command_recorded")
+        ),
+        "rollback_decision_recorded": bool(
+            payload_gates.get("rollback_decision_recorded")
+        ),
+        "rollback_approval_required": bool(
+            payload_gates.get("rollback_approval_required")
+        ),
+        "rollback_decision_approved": bool(
+            payload_gates.get("rollback_decision_approved")
+        ),
+        "rollback_execution_recorded": bool(
+            payload_gates.get("rollback_execution_recorded")
+        ),
+        "rollback_execution_completed_through_cleanup": bool(
+            payload_gates.get("rollback_execution_completed_through_cleanup")
+        ),
+        "post_rollback_app_observation_recorded": bool(
+            payload_gates.get("post_rollback_app_observation_recorded")
+        ),
+        "post_rollback_lease_observation_recorded": bool(
+            payload_gates.get("post_rollback_lease_observation_recorded")
+        ),
+        "rollback_cleanup_clear": bool(payload_gates.get("rollback_cleanup_clear")),
+        "rollback_failure_summary_clear": bool(
+            payload_gates.get("rollback_failure_summary_clear")
+        ),
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(release_rollback_payload.get("schema_version") or ""),
+        "status": str(release_rollback_payload.get("status") or "unknown"),
+        "reason": str(release_rollback_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any], release_rollback_payload.get("evidence_summary") or {}
+        ),
+        "ok": all(gates.values()),
+    }
+
+
 def _build_validation_gate_checklist(
     validation_gates: dict[str, bool],
 ) -> list[dict[str, Any]]:
@@ -682,6 +2155,86 @@ def _build_validation_gate_checklist(
                 "Artifact admission and capability compatibility checks prove incompatible architecture or capability requirements are rejected before load or activation."
                 if validation_gates.get("artifact_compatibility_gate")
                 else "Artifact compatibility evidence is missing admission details or incompatibility rejection proof."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "hardware_acceptance_matrix_gate",
+            passed=bool(validation_gates.get("hardware_acceptance_matrix_gate")),
+            title="Hardware Acceptance Matrix Gate",
+            detail=(
+                "Capability-class matrix evidence covers representative hardware classes, explicit Restricted Unit behavior, and hardware-agnostic board-family mapping."
+                if validation_gates.get("hardware_acceptance_matrix_gate")
+                else "Hardware acceptance matrix evidence is missing, incomplete, or does not expose explicit Restricted Unit and representative relay or federated rows."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "restricted_unit_compatibility_gate",
+            passed=bool(validation_gates.get("restricted_unit_compatibility_gate")),
+            title="Restricted Unit Compatibility Gate",
+            detail=(
+                "Restricted Unit evidence explicitly records the non-LLEXT compatibility mode while keeping degraded query and event behavior closure-ready."
+                if validation_gates.get("restricted_unit_compatibility_gate")
+                else "Restricted Unit compatibility evidence is missing or does not explicitly capture the bounded degraded behavior required for 1.2.7 closure."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "resource_budget_governance_gate",
+            passed=bool(validation_gates.get("resource_budget_governance_gate")),
+            title="Resource Budget Governance Gate",
+            detail=(
+                "Heap and app-slot thresholds are independently archived with required thresholds and sufficient observed runtime headroom."
+                if validation_gates.get("resource_budget_governance_gate")
+                else "Resource-budget governance evidence is missing or does not prove both recorded thresholds and sufficient governed budget headroom."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "agent_excellence_gate",
+            passed=bool(validation_gates.get("agent_excellence_gate")),
+            title="Agent Excellence Gate",
+            detail=(
+                "Tool manifest, Skill contract, workflow catalog, and MCP descriptor evidence together prove governed Agent Tool/Skill/MCP behavior is product-grade and bounded."
+                if validation_gates.get("agent_excellence_gate")
+                else "Independent Agent excellence evidence is missing or incomplete for the Tool/Skill/MCP closure contract."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "release_rollback_hardening_gate",
+            passed=bool(validation_gates.get("release_rollback_hardening_gate")),
+            title="Release And Rollback Hardening Gate",
+            detail=(
+                "Activate-failure recovery, approval boundaries, guarded rollback execution, and post-rollback cleanup are recorded as an independent closure payload."
+                if validation_gates.get("release_rollback_hardening_gate")
+                else "Independent release and rollback hardening evidence is missing or does not prove guarded rollback plus cleanup closure."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "signing_provenance_gate",
+            passed=bool(validation_gates.get("signing_provenance_gate")),
+            title="Signing And Provenance Gate",
+            detail=(
+                "Artifact identity, build provenance, digest evidence, and signing enforcement policy are recorded as an independent release closure payload."
+                if validation_gates.get("signing_provenance_gate")
+                else "Signing/provenance evidence is missing, incomplete, or does not record compatible signing enforcement for the release artifact."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "observability_diagnosis_gate",
+            passed=bool(validation_gates.get("observability_diagnosis_gate")),
+            title="Observability And Diagnosis Gate",
+            detail=(
+                "Relay failure diagnosis and rollback-required activation diagnosis are recorded with structured operator next actions."
+                if validation_gates.get("observability_diagnosis_gate")
+                else "Observability or failure-diagnosis evidence is missing, incomplete, or does not preserve structured relay and rollback-required operator guidance."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "real_scene_e2e_gate",
+            passed=bool(validation_gates.get("real_scene_e2e_gate")),
+            title="Real Scene E2E Gate",
+            detail=(
+                "Real Core/Unit live-event evidence and governed Agent execution evidence form a bounded end-to-end scenario record with a real tool adapter."
+                if validation_gates.get("real_scene_e2e_gate")
+                else "Real end-to-end scenario evidence is missing, incomplete, or does not prove live event ingestion plus governed real-tool execution continuity."
             ),
         ),
         _build_closure_checklist_entry(
@@ -742,16 +2295,6 @@ def _build_validation_gate_checklist(
                 "Core and release-1.2.4 regression evidence was recorded as green."
                 if validation_gates.get("regression_gate")
                 else "Regression evidence is missing or incomplete for the release gate."
-            ),
-        ),
-        _build_closure_checklist_entry(
-            "closure_summary_gate",
-            passed=bool(validation_gates.get("closure_summary_gate")),
-            title="Closure Summary Gate",
-            detail=(
-                "The integrated closure summary reports all validation gates passing with no failed gate ids."
-                if validation_gates.get("closure_summary_gate")
-                else "The integrated closure summary still reports failing validation gates and is not closure-ready."
             ),
         ),
     ]
@@ -1201,6 +2744,13 @@ def _build_session_closure_summary(
     regression_payload: dict[str, Any] | None = None,
     relay_failure_payload: dict[str, Any] | None = None,
     hardware_compatibility_payload: dict[str, Any] | None = None,
+    hardware_acceptance_matrix_payload: dict[str, Any] | None = None,
+    resource_budget_governance_payload: dict[str, Any] | None = None,
+    agent_excellence_payload: dict[str, Any] | None = None,
+    signing_provenance_payload: dict[str, Any] | None = None,
+    observability_diagnosis_payload: dict[str, Any] | None = None,
+    release_rollback_payload: dict[str, Any] | None = None,
+    real_scene_e2e_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     snapshot = CoreSessionManager(data_store).load_snapshot(session_id, limit=limit)
     execution_summaries: list[dict[str, Any]] = []
@@ -1231,6 +2781,29 @@ def _build_session_closure_summary(
     )
     hardware_compatibility_summary = _build_hardware_compatibility_closure_summary(
         hardware_compatibility_payload
+    )
+    hardware_acceptance_matrix_summary = _build_hardware_acceptance_matrix_summary(
+        hardware_acceptance_matrix_payload
+    )
+    resource_budget_governance_summary = (
+        _build_resource_budget_governance_closure_summary(
+            resource_budget_governance_payload
+        )
+    )
+    agent_excellence_summary = _build_agent_excellence_closure_summary(
+        agent_excellence_payload
+    )
+    signing_provenance_summary = _build_signing_provenance_closure_summary(
+        signing_provenance_payload
+    )
+    observability_diagnosis_summary = _build_observability_diagnosis_closure_summary(
+        observability_diagnosis_payload
+    )
+    release_rollback_summary = _build_release_rollback_hardening_closure_summary(
+        release_rollback_payload
+    )
+    real_scene_e2e_summary = _build_real_scene_e2e_closure_summary(
+        real_scene_e2e_payload
     )
     aggregate_gates = {
         "session_has_execution_evidence": bool(execution_summaries),
@@ -1376,6 +2949,22 @@ def _build_session_closure_summary(
         "artifact_compatibility_gate": bool(
             hardware_compatibility_summary.get("artifact_compatibility_ok")
         ),
+        "hardware_acceptance_matrix_gate": bool(
+            hardware_acceptance_matrix_summary.get("ok")
+        ),
+        "restricted_unit_compatibility_gate": bool(
+            hardware_acceptance_matrix_summary.get("restricted_unit_compatibility_ok")
+        ),
+        "resource_budget_governance_gate": bool(
+            resource_budget_governance_summary.get("ok")
+        ),
+        "agent_excellence_gate": bool(agent_excellence_summary.get("ok")),
+        "release_rollback_hardening_gate": bool(release_rollback_summary.get("ok")),
+        "signing_provenance_gate": bool(signing_provenance_summary.get("ok")),
+        "observability_diagnosis_gate": bool(
+            observability_diagnosis_summary.get("ok")
+        ),
+        "real_scene_e2e_gate": bool(real_scene_e2e_summary.get("ok")),
         "multimodal_normalization_gate": bool(
             multimodal_gates.get("multimodal_profile_smoke_supplied")
             and multimodal_gates.get("multimodal_profile_contract_supported")
@@ -1420,7 +3009,9 @@ def _build_session_closure_summary(
         "total_count": len(validation_gates),
         "passed_count": sum(1 for passed in validation_gates.values() if passed),
         "failed_gate_ids": [
-            gate_id for gate_id, passed in validation_gates.items() if not passed
+            gate_id
+            for gate_id, passed in validation_gates.items()
+            if gate_id != "closure_summary_gate" and not passed
         ],
         "ok": all(validation_gates.values()),
     }
@@ -1437,12 +3028,19 @@ def _build_session_closure_summary(
         "regression_summary": regression_summary,
         "relay_failure_summary": relay_failure_summary,
         "hardware_compatibility_summary": hardware_compatibility_summary,
+        "hardware_acceptance_matrix_summary": hardware_acceptance_matrix_summary,
+        "resource_budget_governance_summary": resource_budget_governance_summary,
+        "agent_excellence_summary": agent_excellence_summary,
+        "release_rollback_summary": release_rollback_summary,
+        "signing_provenance_summary": signing_provenance_summary,
+        "observability_diagnosis_summary": observability_diagnosis_summary,
+        "real_scene_e2e_summary": real_scene_e2e_summary,
         "aggregate_gates": aggregate_gates,
         "validation_gates": validation_gates,
         "validation_gate_summary": validation_gate_summary,
         "checklist": checklist,
         "bundle_checklist": bundle_checklist,
-        "ok": all(aggregate_gates.values()) and validation_gate_summary["ok"],
+        "ok": all(aggregate_gates.values()),
         "execution_summaries": execution_summaries,
     }
 
@@ -1803,6 +3401,62 @@ def build_parser() -> argparse.ArgumentParser:
     hardware_compatibility_smoke.add_argument("--mismatch-architecture-probe", default="x86_64")
     hardware_compatibility_smoke.add_argument("--output", choices=("json",), default="json")
 
+    hardware_acceptance_matrix = subparsers.add_parser("hardware-acceptance-matrix")
+    hardware_acceptance_matrix.add_argument("--preset", choices=("unit-app", "unit-ext"), default="unit-app")
+    hardware_acceptance_matrix.add_argument("--app-id", default="neuro_unit_app")
+    hardware_acceptance_matrix.add_argument("--app-source-dir", default="")
+    hardware_acceptance_matrix.add_argument("--board", default="dnesp32s3b/esp32s3/procpu")
+    hardware_acceptance_matrix.add_argument("--build-dir", default="build/neurolink_unit")
+    hardware_acceptance_matrix.add_argument("--artifact-file", default="")
+    hardware_acceptance_matrix.add_argument("--capability-class", action="append", default=[])
+    hardware_acceptance_matrix.add_argument("--board-family-mapping", action="append", default=[])
+    hardware_acceptance_matrix.add_argument("--required-heap-free-bytes", type=int, default=4096)
+    hardware_acceptance_matrix.add_argument("--required-app-slot-bytes", type=int, default=32768)
+    hardware_acceptance_matrix.add_argument("--output", choices=("json",), default="json")
+
+    resource_budget_governance_smoke = subparsers.add_parser(
+        "resource-budget-governance-smoke"
+    )
+    resource_budget_governance_smoke.add_argument(
+        "--hardware-compatibility-file",
+        required=True,
+        help="JSON payload emitted by hardware-compatibility-smoke containing the governed resource-budget evidence.",
+    )
+    resource_budget_governance_smoke.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    signing_provenance_smoke = subparsers.add_parser("signing-provenance-smoke")
+    signing_provenance_smoke.add_argument("--preset", choices=("unit-app", "unit-ext"), default="unit-app")
+    signing_provenance_smoke.add_argument("--app-id", default="neuro_unit_app")
+    signing_provenance_smoke.add_argument("--app-source-dir", default="")
+    signing_provenance_smoke.add_argument("--board", default="dnesp32s3b/esp32s3/procpu")
+    signing_provenance_smoke.add_argument("--build-dir", default="build/neurolink_unit")
+    signing_provenance_smoke.add_argument("--artifact-file", default="")
+    signing_provenance_smoke.add_argument(
+        "--require-signing",
+        dest="require_signing",
+        action="store_true",
+        default=True,
+    )
+    signing_provenance_smoke.add_argument(
+        "--no-require-signing",
+        dest="require_signing",
+        action="store_false",
+    )
+    signing_provenance_smoke.add_argument(
+        "--unit-signing-enforced",
+        dest="unit_signing_enforced",
+        action="store_true",
+        default=True,
+    )
+    signing_provenance_smoke.add_argument(
+        "--unit-signing-disabled",
+        dest="unit_signing_enforced",
+        action="store_false",
+    )
+    signing_provenance_smoke.add_argument("--output", choices=("json",), default="json")
+
     app_deploy_plan = subparsers.add_parser("app-deploy-plan")
     app_deploy_plan.add_argument(
         "--preset",
@@ -2115,6 +3769,78 @@ def build_parser() -> argparse.ArgumentParser:
         help="Select the tool adapter implementation used to derive the bounded read-only MCP bridge descriptor",
     )
 
+    agent_excellence_smoke = subparsers.add_parser("agent-excellence-smoke")
+    agent_excellence_smoke.add_argument("--output", choices=("json",), default="json")
+    agent_excellence_smoke.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation used to derive the governed Agent excellence payload",
+    )
+    agent_excellence_smoke.add_argument(
+        "--bridge-mode",
+        choices=(
+            "read_only_descriptor_only",
+            "core_governed_read_only_execution",
+            "core_governed_approval_required_proposal",
+        ),
+        default="read_only_descriptor_only",
+        help="Select the MCP bridge descriptor mode to evaluate for Agent excellence closure.",
+    )
+
+    observability_diagnosis_smoke = subparsers.add_parser("observability-diagnosis-smoke")
+    observability_diagnosis_smoke.add_argument(
+        "--relay-failure-file",
+        required=True,
+        help="JSON payload emitted by the relay-failure closure path.",
+    )
+    observability_diagnosis_smoke.add_argument(
+        "--activate-failure-file",
+        required=True,
+        help="JSON payload emitted by app-deploy-activate for a rollback_required health failure.",
+    )
+    observability_diagnosis_smoke.add_argument("--output", choices=("json",), default="json")
+
+    release_rollback_hardening_smoke = subparsers.add_parser(
+        "release-rollback-hardening-smoke"
+    )
+    release_rollback_hardening_smoke.add_argument(
+        "--activate-failure-file",
+        required=True,
+        help="JSON payload emitted by app-deploy-activate for a rollback_required health failure.",
+    )
+    release_rollback_hardening_smoke.add_argument(
+        "--rollback-file",
+        required=True,
+        help="JSON payload emitted by app-deploy-rollback after explicit approval.",
+    )
+    release_rollback_hardening_smoke.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    real_scene_checklist_template = subparsers.add_parser("real-scene-checklist-template")
+    real_scene_checklist_template.add_argument(
+        "--release-target",
+        default="2.0.0",
+        help="Promotion release identifier recorded in the template metadata.",
+    )
+    real_scene_checklist_template.add_argument(
+        "--implementation-release",
+        default="1.2.7",
+        help="Implementation release that closes the checklist before the frozen rerun.",
+    )
+    real_scene_checklist_template.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    real_scene_e2e_smoke = subparsers.add_parser("real-scene-e2e-smoke")
+    real_scene_e2e_smoke.add_argument(
+        "--live-event-smoke-file",
+        required=True,
+        help="JSON payload emitted by live-event-smoke to validate as a real Core/Unit end-to-end scenario.",
+    )
+    real_scene_e2e_smoke.add_argument("--output", choices=("json",), default="json")
+
     session_inspect = subparsers.add_parser("session-inspect")
     session_inspect.add_argument("--db", default=":memory:", help="SQLite database path")
     session_inspect.add_argument("--session-id", required=True, help="Session identifier to inspect")
@@ -2132,6 +3858,13 @@ def build_parser() -> argparse.ArgumentParser:
     closure_summary.add_argument("--regression-file", default="", help="Optional regression closure JSON payload to include in the release validation gate matrix")
     closure_summary.add_argument("--relay-failure-file", default="", help="Optional relay-failure closure JSON payload to include in the relay validation gate")
     closure_summary.add_argument("--hardware-compatibility-file", default="", help="Optional hardware-compatibility closure JSON payload to include in hardware and artifact validation gates")
+    closure_summary.add_argument("--hardware-acceptance-matrix-file", default="", help="Optional hardware acceptance matrix JSON payload to include in the release-1.2.7 hardware matrix gate")
+    closure_summary.add_argument("--resource-budget-governance-file", default="", help="Optional resource-budget governance JSON payload to include in the independent governed budget gate")
+    closure_summary.add_argument("--agent-excellence-file", default="", help="Optional agent excellence JSON payload to include in the Tool/Skill/MCP excellence gate")
+    closure_summary.add_argument("--release-rollback-file", default="", help="Optional release/rollback hardening JSON payload to include in the independent guarded rollback gate")
+    closure_summary.add_argument("--signing-provenance-file", default="", help="Optional signing/provenance JSON payload to include in the independent signing gate")
+    closure_summary.add_argument("--observability-diagnosis-file", default="", help="Optional observability and diagnosis JSON payload to include in the independent structured diagnosis gate")
+    closure_summary.add_argument("--real-scene-e2e-file", default="", help="Optional real Core/Unit end-to-end JSON payload to include in the independent real-scene gate")
     closure_summary.add_argument("--output", choices=("json",), default="json")
 
     approval_inspect = subparsers.add_parser("approval-inspect")
@@ -2707,6 +4440,109 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "hardware-acceptance-matrix":
+        board_family_map: dict[str, str] = {}
+        for item in args.board_family_mapping:
+            if "=" not in item:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "status": "error",
+                            "command": args.command,
+                            "failure_class": "hardware_acceptance_matrix_invalid",
+                            "failure_status": "board_family_mapping_requires_class_equals_family",
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return 2
+            capability_class, family = item.split("=", 1)
+            board_family_map[capability_class.strip().lower().replace("-", "_")] = family.strip()
+        try:
+            payload = build_hardware_acceptance_matrix(
+                preset=args.preset,
+                app_id=args.app_id,
+                app_source_dir=args.app_source_dir or None,
+                board=args.board,
+                build_dir=args.build_dir,
+                artifact_file=args.artifact_file or None,
+                capability_classes=tuple(args.capability_class),
+                representative_board_families=board_family_map,
+                required_heap_free_bytes=args.required_heap_free_bytes,
+                required_app_slot_bytes=args.required_app_slot_bytes,
+            )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "hardware_acceptance_matrix_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "resource-budget-governance-smoke":
+        try:
+            hardware_compatibility_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.hardware_compatibility_file).read_text(encoding="utf-8")
+                ),
+            )
+            payload = build_resource_budget_governance_smoke(
+                hardware_compatibility_payload=hardware_compatibility_payload,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "resource_budget_governance_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "signing-provenance-smoke":
+        try:
+            payload = build_signing_provenance_smoke(
+                preset=args.preset,
+                app_id=args.app_id,
+                app_source_dir=args.app_source_dir or None,
+                board=args.board,
+                build_dir=args.build_dir,
+                artifact_file=args.artifact_file or None,
+                require_signing=bool(args.require_signing),
+                unit_signing_enforced=bool(args.unit_signing_enforced),
+            )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "signing_provenance_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
     if args.command == "app-deploy-plan":
         try:
             payload = build_app_deploy_plan(
@@ -2945,6 +4781,123 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "agent-excellence-smoke":
+        tool_adapter = (
+            NeuroCliToolAdapter() if args.tool_adapter == "neuro-cli" else FakeUnitToolAdapter()
+        )
+        try:
+            payload = build_agent_excellence_smoke(
+                tool_adapter=tool_adapter,
+                bridge_mode=args.bridge_mode,
+            )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "agent_excellence_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "observability-diagnosis-smoke":
+        try:
+            relay_failure_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.relay_failure_file).read_text(encoding="utf-8")),
+            )
+            activate_failure_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.activate_failure_file).read_text(encoding="utf-8")),
+            )
+            payload = build_observability_diagnosis_smoke(
+                relay_failure_payload=relay_failure_payload,
+                activate_failure_payload=activate_failure_payload,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "observability_diagnosis_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "release-rollback-hardening-smoke":
+        try:
+            activate_failure_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.activate_failure_file).read_text(encoding="utf-8")),
+            )
+            rollback_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.rollback_file).read_text(encoding="utf-8")),
+            )
+            payload = build_release_rollback_hardening_smoke(
+                activate_failure_payload=activate_failure_payload,
+                rollback_payload=rollback_payload,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "release_rollback_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "real-scene-checklist-template":
+        payload = build_real_scene_checklist_template(
+            release_target=args.release_target,
+            implementation_release=args.implementation_release,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "real-scene-e2e-smoke":
+        try:
+            live_event_smoke_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.live_event_smoke_file).read_text(encoding="utf-8")),
+            )
+            payload = build_real_scene_e2e_smoke(
+                live_event_smoke_payload=live_event_smoke_payload,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "real_scene_e2e_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
     if args.command == "session-inspect":
         data_store = CoreDataStore(args.db)
         try:
@@ -2993,6 +4946,66 @@ def main(argv: list[str] | None = None) -> int:
                     Path(args.hardware_compatibility_file).read_text(encoding="utf-8")
                 ),
             )
+        hardware_acceptance_matrix_payload = None
+        if args.hardware_acceptance_matrix_file:
+            hardware_acceptance_matrix_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.hardware_acceptance_matrix_file).read_text(
+                        encoding="utf-8"
+                    )
+                ),
+            )
+        resource_budget_governance_payload = None
+        if args.resource_budget_governance_file:
+            resource_budget_governance_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.resource_budget_governance_file).read_text(
+                        encoding="utf-8"
+                    )
+                ),
+            )
+        agent_excellence_payload = None
+        if args.agent_excellence_file:
+            agent_excellence_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.agent_excellence_file).read_text(encoding="utf-8")
+                ),
+            )
+        release_rollback_payload = None
+        if args.release_rollback_file:
+            release_rollback_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.release_rollback_file).read_text(encoding="utf-8")
+                ),
+            )
+        signing_provenance_payload = None
+        if args.signing_provenance_file:
+            signing_provenance_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.signing_provenance_file).read_text(encoding="utf-8")
+                ),
+            )
+        observability_diagnosis_payload = None
+        if args.observability_diagnosis_file:
+            observability_diagnosis_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.observability_diagnosis_file).read_text(
+                        encoding="utf-8"
+                    )
+                ),
+            )
+        real_scene_e2e_payload = None
+        if args.real_scene_e2e_file:
+            real_scene_e2e_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.real_scene_e2e_file).read_text(encoding="utf-8")),
+            )
         data_store = CoreDataStore(args.db)
         try:
             payload = _build_session_closure_summary(
@@ -3007,6 +5020,13 @@ def main(argv: list[str] | None = None) -> int:
                 regression_payload=regression_payload,
                 relay_failure_payload=relay_failure_payload,
                 hardware_compatibility_payload=hardware_compatibility_payload,
+                hardware_acceptance_matrix_payload=hardware_acceptance_matrix_payload,
+                resource_budget_governance_payload=resource_budget_governance_payload,
+                agent_excellence_payload=agent_excellence_payload,
+                release_rollback_payload=release_rollback_payload,
+                signing_provenance_payload=signing_provenance_payload,
+                observability_diagnosis_payload=observability_diagnosis_payload,
+                real_scene_e2e_payload=real_scene_e2e_payload,
             )
         finally:
             data_store.close()

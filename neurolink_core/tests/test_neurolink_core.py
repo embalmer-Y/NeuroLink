@@ -260,7 +260,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(run_code, 0)
         self.assertEqual(summary_code, 0)
         payload = json.loads(summary_out.getvalue())
-        self.assertEqual(payload["schema_version"], "1.2.6-closure-summary-v10")
+        self.assertEqual(payload["schema_version"], "1.2.7-closure-summary-v13")
         self.assertEqual(payload["session_id"], "closure-summary-session-001")
         self.assertEqual(payload["execution_count"], 1)
         self.assertTrue(payload["ok"])
@@ -280,6 +280,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "relay_gate",
                 "hardware_abstraction_gate",
                 "artifact_compatibility_gate",
+                "hardware_acceptance_matrix_gate",
+                "restricted_unit_compatibility_gate",
+                "resource_budget_governance_gate",
+                "agent_excellence_gate",
+                "release_rollback_hardening_gate",
+                "signing_provenance_gate",
+                "observability_diagnosis_gate",
+                "real_scene_e2e_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -291,6 +299,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertFalse(payload["validation_gates"]["relay_gate"])
         self.assertFalse(payload["validation_gates"]["hardware_abstraction_gate"])
         self.assertFalse(payload["validation_gates"]["artifact_compatibility_gate"])
+        self.assertFalse(payload["validation_gates"]["hardware_acceptance_matrix_gate"])
+        self.assertFalse(payload["validation_gates"]["restricted_unit_compatibility_gate"])
+        self.assertFalse(payload["validation_gates"]["resource_budget_governance_gate"])
+        self.assertFalse(payload["validation_gates"]["agent_excellence_gate"])
+        self.assertFalse(payload["validation_gates"]["release_rollback_hardening_gate"])
+        self.assertFalse(payload["validation_gates"]["signing_provenance_gate"])
+        self.assertFalse(payload["validation_gates"]["observability_diagnosis_gate"])
+        self.assertFalse(payload["validation_gates"]["real_scene_e2e_gate"])
         self.assertTrue(payload["validation_gates"]["memory_governance_gate"])
         self.assertTrue(payload["validation_gates"]["tool_skill_mcp_gate"])
         self.assertEqual(
@@ -301,6 +317,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "relay_gate",
                 "hardware_abstraction_gate",
                 "artifact_compatibility_gate",
+                "hardware_acceptance_matrix_gate",
+                "restricted_unit_compatibility_gate",
+                "resource_budget_governance_gate",
+                "agent_excellence_gate",
+                "release_rollback_hardening_gate",
+                "signing_provenance_gate",
+                "observability_diagnosis_gate",
+                "real_scene_e2e_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -549,6 +573,1013 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["hardware_compatibility_summary"]["hardware_abstraction_ok"])
         self.assertTrue(payload["hardware_compatibility_summary"]["artifact_compatibility_ok"])
 
+    def test_cli_resource_budget_governance_smoke_reports_independent_budget_threshold_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            hardware_file = Path(tmpdir) / "hardware-compatibility.json"
+
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+
+            hardware_out = io.StringIO()
+            with redirect_stdout(hardware_out):
+                hardware_code = core_cli_main(
+                    [
+                        "hardware-compatibility-smoke",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                        "--required-heap-free-bytes",
+                        "4096",
+                        "--required-app-slot-bytes",
+                        "32768",
+                    ]
+                )
+            hardware_file.write_text(hardware_out.getvalue(), encoding="utf-8")
+
+            budget_out = io.StringIO()
+            with redirect_stdout(budget_out):
+                budget_code = core_cli_main(
+                    [
+                        "resource-budget-governance-smoke",
+                        "--hardware-compatibility-file",
+                        str(hardware_file),
+                    ]
+                )
+
+        self.assertEqual(hardware_code, 0)
+        self.assertEqual(budget_code, 0)
+        payload = json.loads(budget_out.getvalue())
+        self.assertEqual(
+            payload["schema_version"],
+            "1.2.7-resource-budget-governance-smoke-v1",
+        )
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["resource_budget_recorded"])
+        self.assertTrue(payload["closure_gates"]["resource_budget_thresholds_recorded"])
+        self.assertTrue(payload["closure_gates"]["resource_budget_sufficient"])
+
+    def test_cli_closure_summary_can_pass_resource_budget_governance_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            hardware_file = Path(tmpdir) / "hardware-compatibility.json"
+            budget_file = Path(tmpdir) / "resource-budget-governance.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-resource-budget-001")
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+
+            hardware_out = io.StringIO()
+            with redirect_stdout(hardware_out):
+                hardware_code = core_cli_main(
+                    [
+                        "hardware-compatibility-smoke",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                        "--required-heap-free-bytes",
+                        "4096",
+                        "--required-app-slot-bytes",
+                        "32768",
+                    ]
+                )
+            hardware_file.write_text(hardware_out.getvalue(), encoding="utf-8")
+
+            budget_out = io.StringIO()
+            with redirect_stdout(budget_out):
+                budget_code = core_cli_main(
+                    [
+                        "resource-budget-governance-smoke",
+                        "--hardware-compatibility-file",
+                        str(hardware_file),
+                    ]
+                )
+            budget_file.write_text(budget_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-resource-budget-001",
+                        "--resource-budget-governance-file",
+                        str(budget_file),
+                    ]
+                )
+
+        self.assertEqual(hardware_code, 0)
+        self.assertEqual(budget_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["resource_budget_governance_gate"])
+        self.assertTrue(payload["resource_budget_governance_summary"]["ok"])
+
+    def test_cli_hardware_acceptance_matrix_reports_capability_classes_without_board_lock_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+
+            matrix_out = io.StringIO()
+            with redirect_stdout(matrix_out):
+                matrix_code = core_cli_main(
+                    [
+                        "hardware-acceptance-matrix",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+
+        self.assertEqual(matrix_code, 0)
+        payload = json.loads(matrix_out.getvalue())
+        self.assertEqual(payload["schema_version"], "1.2.7-hardware-acceptance-matrix-v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["required_capability_classes_present"])
+        self.assertTrue(payload["closure_gates"]["restricted_unit_outcome_explicit"])
+        self.assertTrue(payload["closure_gates"]["relay_or_federated_row_present"])
+        represented = {row["capability_class"] for row in payload["rows"]}
+        self.assertIn("extensible_unit", represented)
+        self.assertIn("restricted_unit", represented)
+        self.assertIn("relay_capable_unit", represented)
+        restricted_row = next(
+            row for row in payload["rows"] if row["capability_class"] == "restricted_unit"
+        )
+        self.assertEqual(restricted_row["status"], "restricted_ready")
+        self.assertEqual(restricted_row["dynamic_app_support"], "unsupported")
+
+    def test_cli_closure_summary_can_pass_hardware_acceptance_matrix_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            matrix_file = Path(tmpdir) / "hardware-acceptance-matrix.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-hardware-matrix-001")
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-cbor-v2",
+            )
+
+            matrix_out = io.StringIO()
+            with redirect_stdout(matrix_out):
+                matrix_code = core_cli_main(
+                    [
+                        "hardware-acceptance-matrix",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+            matrix_file.write_text(matrix_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-hardware-matrix-001",
+                        "--hardware-acceptance-matrix-file",
+                        str(matrix_file),
+                    ]
+                )
+
+        self.assertEqual(matrix_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["hardware_acceptance_matrix_gate"])
+        self.assertTrue(payload["hardware_acceptance_matrix_summary"]["ok"])
+        self.assertTrue(payload["validation_gates"]["restricted_unit_compatibility_gate"])
+        self.assertTrue(
+            payload["hardware_acceptance_matrix_summary"]["restricted_unit_compatibility_ok"]
+        )
+
+    def test_cli_agent_excellence_smoke_reports_independent_closure_payload(self) -> None:
+        excellence_out = io.StringIO()
+        with redirect_stdout(excellence_out):
+            excellence_code = core_cli_main([
+                "agent-excellence-smoke",
+            ])
+
+        self.assertEqual(excellence_code, 0)
+        payload = json.loads(excellence_out.getvalue())
+        self.assertEqual(payload["schema_version"], "1.2.7-agent-excellence-smoke-v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["tool_manifest_supplied"])
+        self.assertTrue(payload["closure_gates"]["workflow_catalog_consistent"])
+        self.assertTrue(payload["closure_gates"]["mcp_descriptor_read_only"])
+        self.assertTrue(payload["closure_gates"]["hallucinated_tool_rejected_by_available_manifest"])
+
+    def test_cli_closure_summary_can_pass_agent_excellence_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            excellence_file = Path(tmpdir) / "agent-excellence.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-agent-excellence-001")
+            excellence_out = io.StringIO()
+            with redirect_stdout(excellence_out):
+                excellence_code = core_cli_main([
+                    "agent-excellence-smoke",
+                ])
+            excellence_file.write_text(excellence_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-agent-excellence-001",
+                        "--agent-excellence-file",
+                        str(excellence_file),
+                    ]
+                )
+
+        self.assertEqual(excellence_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["agent_excellence_gate"])
+        self.assertTrue(payload["agent_excellence_summary"]["ok"])
+
+    def test_cli_signing_provenance_smoke_reports_identity_digest_and_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-signing-v1",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-signing-v1",
+            )
+
+            signing_out = io.StringIO()
+            with redirect_stdout(signing_out):
+                signing_code = core_cli_main(
+                    [
+                        "signing-provenance-smoke",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+
+        self.assertEqual(signing_code, 0)
+        payload = json.loads(signing_out.getvalue())
+        self.assertEqual(payload["schema_version"], "1.2.7-signing-provenance-smoke-v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["artifact_sha256_recorded"])
+        self.assertTrue(payload["closure_gates"]["signing_required_for_release"])
+        self.assertTrue(payload["closure_gates"]["signing_enforcement_compatible"])
+        self.assertEqual(len(payload["evidence_summary"]["artifact_sha256"]), 64)
+
+    def test_cli_closure_summary_can_pass_signing_provenance_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            source_dir = Path(tmpdir) / "source"
+            artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
+            signing_file = Path(tmpdir) / "signing-provenance.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-signing-001")
+            self._write_fake_app_source(
+                source_dir,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-signing-v1",
+            )
+            self._write_fake_llext(
+                artifact_path,
+                app_id="neuro_unit_app",
+                app_version="1.2.7",
+                build_id="neuro_unit_app-1.2.7-signing-v1",
+            )
+
+            signing_out = io.StringIO()
+            with redirect_stdout(signing_out):
+                signing_code = core_cli_main(
+                    [
+                        "signing-provenance-smoke",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+            signing_file.write_text(signing_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-signing-001",
+                        "--signing-provenance-file",
+                        str(signing_file),
+                    ]
+                )
+
+        self.assertEqual(signing_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["signing_provenance_gate"])
+        self.assertTrue(payload["signing_provenance_summary"]["ok"])
+
+    def test_cli_observability_diagnosis_smoke_reports_structured_operator_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            relay_failure_file = Path(tmpdir) / "relay-failure.json"
+            activate_failure_file = Path(tmpdir) / "activate-failure.json"
+
+            relay_failure_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.6-relay-failure-closure-v1",
+                        "status": "ready",
+                        "reason": "route_failure_runbook_reviewed",
+                        "closure_gates": {
+                            "route_failure_recorded": True,
+                            "fallback_path_recorded": True,
+                            "operator_runbook_recorded": True,
+                            "deterministic_validation_recorded": True,
+                        },
+                        "evidence_summary": {
+                            "route_failure_reason": "peer_unreachable",
+                            "fallback_action": "direct_local_retry_then_manual_operator_review",
+                            "runbook_id": "relay-route-failure-v1",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            activate_failure_file.write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": "app-deploy-activate",
+                        "failure_class": "app_deploy_activate_failed",
+                        "failure_status": "rollback_required",
+                        "recovery_candidate_summary": {
+                            "app_id": "neuro_demo_gpio",
+                            "rollback_decision": "operator_review_required",
+                            "lease_resource": "update/app/neuro_demo_gpio/rollback",
+                            "matching_lease_ids": ["lease-gpio-rollback-obs-001"],
+                        },
+                        "rollback_approval": {
+                            "status": "pending_approval",
+                            "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "observability-diagnosis-smoke",
+                        "--relay-failure-file",
+                        str(relay_failure_file),
+                        "--activate-failure-file",
+                        str(activate_failure_file),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "1.2.7-observability-diagnosis-smoke-v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["route_failure_recorded"])
+        self.assertTrue(payload["closure_gates"]["rollback_required_recorded"])
+        self.assertTrue(payload["closure_gates"]["operator_next_actions_recorded"])
+
+    def test_cli_closure_summary_can_pass_observability_diagnosis_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            relay_failure_file = Path(tmpdir) / "relay-failure.json"
+            activate_failure_file = Path(tmpdir) / "activate-failure.json"
+            observability_file = Path(tmpdir) / "observability-diagnosis.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-observability-001")
+            relay_failure_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.2.6-relay-failure-closure-v1",
+                        "status": "ready",
+                        "reason": "route_failure_runbook_reviewed",
+                        "closure_gates": {
+                            "route_failure_recorded": True,
+                            "fallback_path_recorded": True,
+                            "operator_runbook_recorded": True,
+                            "deterministic_validation_recorded": True,
+                        },
+                        "evidence_summary": {
+                            "route_failure_reason": "peer_unreachable",
+                            "fallback_action": "direct_local_retry_then_manual_operator_review",
+                            "runbook_id": "relay-route-failure-v1",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            activate_failure_file.write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": "app-deploy-activate",
+                        "failure_class": "app_deploy_activate_failed",
+                        "failure_status": "rollback_required",
+                        "recovery_candidate_summary": {
+                            "app_id": "neuro_demo_gpio",
+                            "rollback_decision": "operator_review_required",
+                            "lease_resource": "update/app/neuro_demo_gpio/rollback",
+                            "matching_lease_ids": ["lease-gpio-rollback-obs-001"],
+                        },
+                        "rollback_approval": {
+                            "status": "pending_approval",
+                            "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            observability_out = io.StringIO()
+            with redirect_stdout(observability_out):
+                observability_code = core_cli_main(
+                    [
+                        "observability-diagnosis-smoke",
+                        "--relay-failure-file",
+                        str(relay_failure_file),
+                        "--activate-failure-file",
+                        str(activate_failure_file),
+                    ]
+                )
+            observability_file.write_text(observability_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-observability-001",
+                        "--observability-diagnosis-file",
+                        str(observability_file),
+                    ]
+                )
+
+        self.assertEqual(observability_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["observability_diagnosis_gate"])
+        self.assertTrue(payload["observability_diagnosis_summary"]["ok"])
+
+    def test_cli_release_rollback_hardening_smoke_reports_guarded_rollback_closure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            activate_failure_file = Path(tmpdir) / "activate-failure.json"
+            rollback_file = Path(tmpdir) / "rollback.json"
+
+            activate_failure_file.write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": "app-deploy-activate",
+                        "failure_class": "app_deploy_activate_failed",
+                        "failure_status": "rollback_required",
+                        "recovery_candidate_summary": {
+                            "app_id": "neuro_demo_gpio",
+                            "rollback_decision": "operator_review_required",
+                            "lease_resource": "update/app/neuro_demo_gpio/rollback",
+                            "matching_lease_ids": ["lease-gpio-rollback-hard-001"],
+                        },
+                        "rollback_approval": {
+                            "status": "pending_approval",
+                            "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            rollback_file.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "command": "app-deploy-rollback",
+                        "rollback_decision": {
+                            "approval_required": True,
+                            "status": "approved",
+                            "rollback_resource": "update/app/neuro_demo_gpio/rollback",
+                            "resolved_app_id": "neuro_demo_gpio",
+                            "rollback_reason": "guarded_rollback_after_activation_health_failure",
+                        },
+                        "rollback_execution": {
+                            "completed_through": "query_leases",
+                            "rollback": {"ok": True},
+                            "query_apps": {
+                                "ok": True,
+                                "app_present": False,
+                                "observed_app_state": "missing",
+                            },
+                            "query_leases": {"ok": True, "matching_lease_ids": []},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "release-rollback-hardening-smoke",
+                        "--activate-failure-file",
+                        str(activate_failure_file),
+                        "--rollback-file",
+                        str(rollback_file),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "1.2.7-release-rollback-hardening-smoke-v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["rollback_decision_approved"])
+        self.assertTrue(payload["closure_gates"]["rollback_cleanup_clear"])
+
+    def test_cli_closure_summary_can_pass_release_rollback_hardening_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            activate_failure_file = Path(tmpdir) / "activate-failure.json"
+            rollback_file = Path(tmpdir) / "rollback.json"
+            release_rollback_file = Path(tmpdir) / "release-rollback.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-release-rollback-001")
+            activate_failure_file.write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": "app-deploy-activate",
+                        "failure_class": "app_deploy_activate_failed",
+                        "failure_status": "rollback_required",
+                        "recovery_candidate_summary": {
+                            "app_id": "neuro_demo_gpio",
+                            "rollback_decision": "operator_review_required",
+                            "lease_resource": "update/app/neuro_demo_gpio/rollback",
+                            "matching_lease_ids": ["lease-gpio-rollback-hard-001"],
+                        },
+                        "rollback_approval": {
+                            "status": "pending_approval",
+                            "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            rollback_file.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "command": "app-deploy-rollback",
+                        "rollback_decision": {
+                            "approval_required": True,
+                            "status": "approved",
+                            "rollback_resource": "update/app/neuro_demo_gpio/rollback",
+                            "resolved_app_id": "neuro_demo_gpio",
+                            "rollback_reason": "guarded_rollback_after_activation_health_failure",
+                        },
+                        "rollback_execution": {
+                            "completed_through": "query_leases",
+                            "rollback": {"ok": True},
+                            "query_apps": {
+                                "ok": True,
+                                "app_present": False,
+                                "observed_app_state": "missing",
+                            },
+                            "query_leases": {"ok": True, "matching_lease_ids": []},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            release_rollback_out = io.StringIO()
+            with redirect_stdout(release_rollback_out):
+                release_rollback_code = core_cli_main(
+                    [
+                        "release-rollback-hardening-smoke",
+                        "--activate-failure-file",
+                        str(activate_failure_file),
+                        "--rollback-file",
+                        str(rollback_file),
+                    ]
+                )
+            release_rollback_file.write_text(
+                release_rollback_out.getvalue(), encoding="utf-8"
+            )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-release-rollback-001",
+                        "--release-rollback-file",
+                        str(release_rollback_file),
+                    ]
+                )
+
+        self.assertEqual(release_rollback_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["release_rollback_hardening_gate"])
+        self.assertTrue(payload["release_rollback_summary"]["ok"])
+
+    def test_cli_real_scene_checklist_template_emits_machine_archivable_rows(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["real-scene-checklist-template"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.0.0-real-scene-checklist-template-v1")
+        self.assertEqual(payload["summary"]["total_rows"], 8)
+        self.assertEqual(payload["summary"]["pending_rows"], 8)
+        self.assertEqual(
+            [row["scenario_id"] for row in payload["scenario_rows"]],
+            ["RS-01", "RS-02", "RS-03", "RS-04", "RS-05", "RS-06", "RS-07", "RS-08"],
+        )
+        self.assertEqual(
+            payload["scenario_rows"][5]["primary_gates"],
+            ["relay_gate", "observability_diagnosis_gate"],
+        )
+
+    def test_cli_real_scene_e2e_smoke_reports_live_core_unit_continuity(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "keyexpr": "neuro/unit-01/event/app/neuro_demo_app/callback/value",
+                                    "payload": {
+                                        "semantic_topic": "unit.callback",
+                                        "event_id": "evt-live-app-001",
+                                        "source_kind": "unit_app",
+                                        "source_node": "unit-01",
+                                        "source_app": "neuro_demo_app",
+                                        "event_type": "callback",
+                                        "timestamp_wall": "2026-05-09T00:00:00Z",
+                                        "priority": 20,
+                                    },
+                                    "payload_encoding": "json",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "system",
+                                        "state-sync",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                    "lease_requirements": [],
+                                    "timeout_seconds": 10,
+                                    "retryable": True,
+                                    "approval_required": False,
+                                    "cleanup_hints": [],
+                                    "output_contract": {"format": "json", "top_level_ok": True},
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-state-sync-v1",
+                            "state": {
+                                "device": {"ok": True, "status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "payload": {
+                                        "app_count": 1,
+                                        "apps": [{"app_id": "neuro_demo_app", "state": "running"}],
+                                    },
+                                },
+                                "leases": {"ok": True, "status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            live_event_file = Path(tmpdir) / "live-event-smoke.json"
+            live_out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(live_out):
+                    live_code = core_cli_main(
+                        [
+                            "live-event-smoke",
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+            live_event_file.write_text(live_out.getvalue(), encoding="utf-8")
+
+            e2e_out = io.StringIO()
+            with redirect_stdout(e2e_out):
+                e2e_code = core_cli_main(
+                    [
+                        "real-scene-e2e-smoke",
+                        "--live-event-smoke-file",
+                        str(live_event_file),
+                    ]
+                )
+
+        self.assertEqual(live_code, 0)
+        self.assertEqual(e2e_code, 0)
+        payload = json.loads(e2e_out.getvalue())
+        self.assertEqual(payload["schema_version"], "1.2.7-real-scene-e2e-smoke-v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["live_event_source_real"])
+        self.assertTrue(payload["closure_gates"]["real_tool_execution_succeeded"])
+        self.assertTrue(payload["closure_gates"]["state_sync_tool_used"])
+
+    def test_cli_closure_summary_can_pass_real_scene_e2e_gate(self) -> None:
+        def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "keyexpr": "neuro/unit-01/event/app/neuro_demo_app/callback/value",
+                                    "payload": {
+                                        "semantic_topic": "unit.callback",
+                                        "event_id": "evt-live-app-001",
+                                        "source_kind": "unit_app",
+                                        "source_node": "unit-01",
+                                        "source_app": "neuro_demo_app",
+                                        "event_type": "callback",
+                                        "timestamp_wall": "2026-05-09T00:00:00Z",
+                                        "priority": 20,
+                                    },
+                                    "payload_encoding": "json",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "system",
+                                        "state-sync",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                    "lease_requirements": [],
+                                    "timeout_seconds": 10,
+                                    "retryable": True,
+                                    "approval_required": False,
+                                    "cleanup_hints": [],
+                                    "output_contract": {"format": "json", "top_level_ok": True},
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-state-sync-v1",
+                            "state": {
+                                "device": {"ok": True, "status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "payload": {
+                                        "app_count": 1,
+                                        "apps": [{"app_id": "neuro_demo_app", "state": "running"}],
+                                    },
+                                },
+                                "leases": {"ok": True, "status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        adapter = NeuroCliToolAdapter(runner=runner)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            live_event_file = Path(tmpdir) / "live-event-smoke.json"
+            e2e_file = Path(tmpdir) / "real-scene-e2e.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-real-scene-001")
+            live_out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
+                with redirect_stdout(live_out):
+                    live_code = core_cli_main(
+                        [
+                            "live-event-smoke",
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+            live_event_file.write_text(live_out.getvalue(), encoding="utf-8")
+
+            e2e_out = io.StringIO()
+            with redirect_stdout(e2e_out):
+                e2e_code = core_cli_main(
+                    [
+                        "real-scene-e2e-smoke",
+                        "--live-event-smoke-file",
+                        str(live_event_file),
+                    ]
+                )
+            e2e_file.write_text(e2e_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-real-scene-001",
+                        "--real-scene-e2e-file",
+                        str(e2e_file),
+                    ]
+                )
+
+        self.assertEqual(live_code, 0)
+        self.assertEqual(e2e_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["real_scene_e2e_gate"])
+        self.assertTrue(payload["real_scene_e2e_summary"]["ok"])
+
     def test_cli_closure_summary_includes_memory_governance_bundle_for_local_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "core.db")
@@ -674,6 +1705,100 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(execution_summary["tool_skill_mcp_summary"]["ok"])
 
     def test_cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied(self) -> None:
+        def live_runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
+            del timeout_seconds
+            if "app-events" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "subscription": "neuro/unit-01/event/app/neuro_demo_app/**",
+                            "listener_mode": "callback",
+                            "handler_audit": {"enabled": False, "executed": 0},
+                            "events": [
+                                {
+                                    "keyexpr": "neuro/unit-01/event/app/neuro_demo_app/callback/value",
+                                    "payload": {
+                                        "semantic_topic": "unit.callback",
+                                        "event_id": "evt-live-app-001",
+                                        "source_kind": "unit_app",
+                                        "source_node": "unit-01",
+                                        "source_app": "neuro_demo_app",
+                                        "event_type": "callback",
+                                        "timestamp_wall": "2026-05-09T00:00:00Z",
+                                        "priority": 20,
+                                    },
+                                    "payload_encoding": "json",
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "tool-manifest" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": TOOL_MANIFEST_SCHEMA_VERSION,
+                            "tools": [
+                                {
+                                    "name": "system_state_sync",
+                                    "description": "state sync",
+                                    "argv_template": [
+                                        "python",
+                                        "neuro_cli/scripts/invoke_neuro_cli.py",
+                                        "system",
+                                        "state-sync",
+                                        "--output",
+                                        "json",
+                                    ],
+                                    "resource": "state sync aggregate",
+                                    "required_arguments": ["--node"],
+                                    "side_effect_level": "read_only",
+                                    "lease_requirements": [],
+                                    "timeout_seconds": 10,
+                                    "retryable": True,
+                                    "approval_required": False,
+                                    "cleanup_hints": [],
+                                    "output_contract": {"format": "json", "top_level_ok": True},
+                                }
+                            ],
+                        }
+                    ),
+                )
+            if "state-sync" in argv:
+                return CommandExecutionResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "ok": True,
+                            "status": "ok",
+                            "schema_version": "1.2.0-state-sync-v1",
+                            "state": {
+                                "device": {"ok": True, "status": "ok", "payload": {"network_state": "NETWORK_READY"}},
+                                "apps": {
+                                    "ok": True,
+                                    "status": "ok",
+                                    "payload": {
+                                        "app_count": 1,
+                                        "apps": [{"app_id": "neuro_demo_app", "state": "running"}],
+                                    },
+                                },
+                                "leases": {"ok": True, "status": "ok", "payload": {"leases": []}},
+                            },
+                            "recommended_next_actions": [
+                                "state sync is clean; read-only delegated reasoning may continue"
+                            ],
+                        }
+                    ),
+                )
+            raise AssertionError(f"unexpected argv: {argv}")
+
+        live_adapter = NeuroCliToolAdapter(runner=live_runner)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "core.db")
             documentation_file = Path(tmpdir) / "documentation.json"
@@ -684,6 +1809,16 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             source_dir = Path(tmpdir) / "source"
             artifact_path = Path(tmpdir) / "artifacts" / "neuro_unit_app.llext"
             hardware_file = Path(tmpdir) / "hardware-compatibility.json"
+            matrix_file = Path(tmpdir) / "hardware-acceptance-matrix.json"
+            resource_budget_file = Path(tmpdir) / "resource-budget-governance.json"
+            excellence_file = Path(tmpdir) / "agent-excellence.json"
+            signing_file = Path(tmpdir) / "signing-provenance.json"
+            activate_failure_file = Path(tmpdir) / "activate-failure.json"
+            observability_file = Path(tmpdir) / "observability-diagnosis.json"
+            rollback_file = Path(tmpdir) / "rollback.json"
+            release_rollback_file = Path(tmpdir) / "release-rollback.json"
+            live_event_file = Path(tmpdir) / "live-event-smoke.json"
+            real_scene_file = Path(tmpdir) / "real-scene-e2e.json"
 
             run_payload = run_no_model_dry_run(
                 db_path,
@@ -809,6 +1944,77 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     ]
                 )
             hardware_file.write_text(hardware_out.getvalue(), encoding="utf-8")
+            resource_budget_out = io.StringIO()
+            with redirect_stdout(resource_budget_out):
+                resource_budget_code = core_cli_main(
+                    [
+                        "resource-budget-governance-smoke",
+                        "--hardware-compatibility-file",
+                        str(hardware_file),
+                    ]
+                )
+            resource_budget_file.write_text(
+                resource_budget_out.getvalue(), encoding="utf-8"
+            )
+            matrix_out = io.StringIO()
+            with redirect_stdout(matrix_out):
+                matrix_code = core_cli_main(
+                    [
+                        "hardware-acceptance-matrix",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+            matrix_file.write_text(matrix_out.getvalue(), encoding="utf-8")
+            excellence_out = io.StringIO()
+            with redirect_stdout(excellence_out):
+                excellence_code = core_cli_main([
+                    "agent-excellence-smoke",
+                ])
+            excellence_file.write_text(excellence_out.getvalue(), encoding="utf-8")
+            signing_out = io.StringIO()
+            with redirect_stdout(signing_out):
+                signing_code = core_cli_main(
+                    [
+                        "signing-provenance-smoke",
+                        "--app-id",
+                        "neuro_unit_app",
+                        "--app-source-dir",
+                        str(source_dir),
+                        "--artifact-file",
+                        str(artifact_path),
+                    ]
+                )
+            signing_file.write_text(signing_out.getvalue(), encoding="utf-8")
+            live_event_out = io.StringIO()
+            with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=live_adapter):
+                with redirect_stdout(live_event_out):
+                    live_event_code = core_cli_main(
+                        [
+                            "live-event-smoke",
+                            "--app-id",
+                            "neuro_demo_app",
+                            "--duration",
+                            "1",
+                            "--max-events",
+                            "1",
+                        ]
+                    )
+            live_event_file.write_text(live_event_out.getvalue(), encoding="utf-8")
+            real_scene_out = io.StringIO()
+            with redirect_stdout(real_scene_out):
+                real_scene_code = core_cli_main(
+                    [
+                        "real-scene-e2e-smoke",
+                        "--live-event-smoke-file",
+                        str(live_event_file),
+                    ]
+                )
+            real_scene_file.write_text(real_scene_out.getvalue(), encoding="utf-8")
             relay_failure_file.write_text(
                 json.dumps(
                     {
@@ -829,6 +2035,81 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     }
                 ),
                 encoding="utf-8",
+            )
+            activate_failure_file.write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": "app-deploy-activate",
+                        "failure_class": "app_deploy_activate_failed",
+                        "failure_status": "rollback_required",
+                        "recovery_candidate_summary": {
+                            "app_id": "neuro_demo_gpio",
+                            "rollback_decision": "operator_review_required",
+                            "lease_resource": "update/app/neuro_demo_gpio/rollback",
+                            "matching_lease_ids": ["lease-gpio-rollback-gates-001"],
+                        },
+                        "rollback_approval": {
+                            "status": "pending_approval",
+                            "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            observability_out = io.StringIO()
+            with redirect_stdout(observability_out):
+                observability_code = core_cli_main(
+                    [
+                        "observability-diagnosis-smoke",
+                        "--relay-failure-file",
+                        str(relay_failure_file),
+                        "--activate-failure-file",
+                        str(activate_failure_file),
+                    ]
+                )
+            observability_file.write_text(observability_out.getvalue(), encoding="utf-8")
+            rollback_file.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "status": "ok",
+                        "command": "app-deploy-rollback",
+                        "rollback_decision": {
+                            "approval_required": True,
+                            "status": "approved",
+                            "rollback_resource": "update/app/neuro_demo_gpio/rollback",
+                            "resolved_app_id": "neuro_demo_gpio",
+                            "rollback_reason": "guarded_rollback_after_activation_health_failure",
+                        },
+                        "rollback_execution": {
+                            "completed_through": "query_leases",
+                            "rollback": {"ok": True},
+                            "query_apps": {
+                                "ok": True,
+                                "app_present": False,
+                                "observed_app_state": "missing",
+                            },
+                            "query_leases": {"ok": True, "matching_lease_ids": []},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            release_rollback_out = io.StringIO()
+            with redirect_stdout(release_rollback_out):
+                release_rollback_code = core_cli_main(
+                    [
+                        "release-rollback-hardening-smoke",
+                        "--activate-failure-file",
+                        str(activate_failure_file),
+                        "--rollback-file",
+                        str(rollback_file),
+                    ]
+                )
+            release_rollback_file.write_text(
+                release_rollback_out.getvalue(), encoding="utf-8"
             )
 
             summary_out = io.StringIO()
@@ -852,20 +2133,50 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         str(relay_failure_file),
                         "--hardware-compatibility-file",
                         str(hardware_file),
+                        "--hardware-acceptance-matrix-file",
+                        str(matrix_file),
+                        "--resource-budget-governance-file",
+                        str(resource_budget_file),
+                        "--agent-excellence-file",
+                        str(excellence_file),
+                        "--release-rollback-file",
+                        str(release_rollback_file),
+                        "--signing-provenance-file",
+                        str(signing_file),
+                        "--observability-diagnosis-file",
+                        str(observability_file),
+                        "--real-scene-e2e-file",
+                        str(real_scene_file),
                     ]
                 )
 
         self.assertEqual(run_code, 0)
         self.assertEqual(hardware_code, 0)
+        self.assertEqual(resource_budget_code, 0)
+        self.assertEqual(matrix_code, 0)
+        self.assertEqual(excellence_code, 0)
+        self.assertEqual(observability_code, 0)
+        self.assertEqual(release_rollback_code, 0)
+        self.assertEqual(signing_code, 0)
+        self.assertEqual(live_event_code, 0)
+        self.assertEqual(real_scene_code, 0)
         self.assertEqual(summary_code, 0)
         self.assertEqual(run_payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["federation_route_evidence"]["route_decision"]["route_kind"], "delegated_core")
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 12)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 20)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
         self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
+        self.assertTrue(payload["validation_gates"]["hardware_acceptance_matrix_gate"])
+        self.assertTrue(payload["validation_gates"]["restricted_unit_compatibility_gate"])
+        self.assertTrue(payload["validation_gates"]["resource_budget_governance_gate"])
+        self.assertTrue(payload["validation_gates"]["agent_excellence_gate"])
+        self.assertTrue(payload["validation_gates"]["release_rollback_hardening_gate"])
+        self.assertTrue(payload["validation_gates"]["signing_provenance_gate"])
+        self.assertTrue(payload["validation_gates"]["observability_diagnosis_gate"])
+        self.assertTrue(payload["validation_gates"]["real_scene_e2e_gate"])
         self.assertTrue(all(item["passed"] for item in payload["checklist"]))
         self.assertEqual(
             payload["documentation_summary"]["schema_version"],
