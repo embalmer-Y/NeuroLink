@@ -6,7 +6,7 @@ governed AI Core workflows, and release-grade smoke validation.
 
 ## 🚀 Current Release Line
 
-The project has now entered the promoted release `2.0.0` baseline after closing release `1.2.7` on top of the closed release `1.2.6` baseline. Release `1.2.7` completed the remaining non-stabilization HLD surface, the fresh release-2.0.0 promotion bundle is green, and the canonical host CLI now advertises `RELEASE_TARGET = "2.0.0"`.
+The project has now entered the promoted release `2.1.0` baseline after closing the first post-2.0 autonomous/social AI Core line on top of the promoted release `2.0.0` baseline. The fresh release-2.1.0 promotion bundle is green with the expanded 26-gate closure matrix, and the canonical host CLI now advertises `RELEASE_TARGET = "2.1.0"`.
 
 ## ✨ What NeuroLink Provides
 
@@ -58,7 +58,7 @@ Release `1.2.5` is the closed multimodal Agent runtime and governance slice. It 
 
 Release `1.2.6` is the closed federation, relay, and Agent platform slice. It carried the project to about 94% HLD completion by making Core-to-Core topology sync, delegated execution planning, Gateway Unit relay route evidence, hardware-agnostic capability descriptors, and higher-quality Agent Tool/Skill/MCP governance executable without hardcoding the current validation hardware.
 
-Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is now the promoted baseline after stabilization, API/contract freeze, compatibility review, migration notes, final full real-scene rerun, and explicit promotion evidence passed.
+Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is the closed stabilized product baseline. Release `2.1.0` is now the promoted autonomous/social AI Core baseline after autonomous daemon, Vitality, Persona, social adapter, approval-over-social, self-improvement sandbox, and real-provider integration evidence passed.
 
 ## 📁 Project Layout
 
@@ -320,7 +320,12 @@ Capability map:
 - `docs/project/AI_CORE_RUNBOOK.md` - English AI Core operator runbook and
 	release evidence guide.
 - `docs/project/AI_CORE_RUNBOOK_ZH.md` - Chinese AI Core operator runbook.
-- `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md` - active 2.0.0
+- `docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md` - post-2.0
+	autonomous social AI Core runtime, Vitality, persona, adapter, and
+	self-improvement plan.
+- `docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md` - final release-2.1.0
+	promotion decision, evidence bundle, and validation result.
+- `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md` - historical 2.0.0
 	stabilization, freeze, rerun, and promotion plan.
 - `docs/project/RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.md` - frozen public
 	contracts, schema expectations, compatibility classes, and promotion boundary.
@@ -339,6 +344,8 @@ Capability map:
 Release progress and architecture closure notes live in:
 
 - `PROJECT_PROGRESS.md`
+- `docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md`
+- `docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md`
 - `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md`
 - `docs/project/RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.md`
 - `docs/project/RELEASE_2.0.0_PROMOTION_CHECKLIST.md`
@@ -350,4 +357,4 @@ Release progress and architecture closure notes live in:
 - `docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
 - `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is now also closed as the multimodal Agent runtime and governance baseline. Releases `1.2.6` and `1.2.7` are both now closed, so release `2.0.0` can stay a stabilization and acceptance release rather than turning back into a large feature release.
+Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is closed as the multimodal Agent runtime and governance baseline. Releases `1.2.6`, `1.2.7`, and `2.0.0` are closed, and release `2.1.0` is now the promoted autonomous/social runtime baseline rather than an in-progress branch.

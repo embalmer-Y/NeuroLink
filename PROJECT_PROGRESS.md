@@ -1,3 +1,196 @@
+2026-05-10: Promoted release identity to 2.1.0 after the fresh autonomous/social promotion bundle and real-provider verification both converged. The active promotion bundle `smoke-evidence/release-2.1.0-promotion-20260510T090042Z/` first reached a green `closure-summary-final.json` with `validation_gate_summary.ok=true`, `passed_count=26`, and `failed_gate_ids=[]`. After that green pre-promotion bundle, canonical identity moved to `2.1.0` in the Neuro CLI, workflow catalog, sample Unit app source, README, and AI Core runbooks, the sample Unit app artifact was rebuilt, `system-capabilities-post-promotion.json` reported `release_target=2.1.0`, refreshed hardware/signing/resource evidence recorded `neuro_unit_app-2.1.0-cbor-v2`, and `closure-summary-post-promotion.json` remained green at 26/26. Full regressions passed with `258 passed, 6 subtests passed` for AI Core, `127 passed` for Neuro CLI, and `385 passed, 6 subtests passed` combined. - Copilot
+
+#### EXEC-355 Release 2.1.0 Promotion And Post-Promotion Evidence Refresh
+
+- Status: promoted and regression-green
+- Bundle: `smoke-evidence/release-2.1.0-promotion-20260510T090042Z/`
+- Final pre-promotion closure:
+  - `closure-summary-final.json`
+  - `validation_gate_summary.ok=true`
+  - `passed_count=26`
+- Promotion changes:
+  - promoted `neuro_cli/src/neuro_cli.py` and `neuro_cli/src/neuro_workflow_catalog.py` to `RELEASE_TARGET = "2.1.0"`
+  - promoted `subprojects/neuro_unit_app/src/main.c` to `app_version=2.1.0`, `build_id=neuro_unit_app-2.1.0-cbor-v2`, and manifest `2.1.0`
+  - aligned `README.md`, `docs/project/AI_CORE_RUNBOOK.md`, and `docs/project/AI_CORE_RUNBOOK_ZH.md` to the promoted 2.1.0 baseline
+  - added `docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md` and `.json`
+- Post-promotion closure:
+  - `system-capabilities-post-promotion.json` -> `release_target=2.1.0`
+  - `hardware-compatibility-post-promotion.json` -> source identity `2.1.0`
+  - `signing-provenance-smoke-post-promotion.json` -> source identity `2.1.0`
+  - `closure-summary-post-promotion.json` -> `passed_count=26`, `failed_gate_ids=[]`
+- Validation:
+  - AI Core regression: `258 passed, 6 subtests passed`
+  - Neuro CLI regression: `127 passed`
+  - full Python regression: `385 passed, 6 subtests passed`
+
+2026-05-10: Materialized the release-2.1.0 final promotion bundle before any identity change. Created ignored bundle directory `smoke-evidence/release-2.1.0-promotion-20260510T090042Z/`, generated fresh provider/autonomy/vitality/persona/social/approval/self-improvement evidence from the landed 2.1.0 code path, regenerated hardware/resource/signing evidence against the current sample Unit artifact, carried forward the last green real-scene live evidence from the promoted 2.0.0 baseline, and ran an integrated `closure-summary` over the resulting bundle. The pre-promotion bundle reached `validation_gate_summary.ok=true` with `passed_count=26` and `failed_gate_ids=[]`, which cleared the promotion boundary defined in the plan. - Copilot
+
+#### EXEC-354 Release 2.1.0 Final Promotion Bundle Materialization
+
+- Status: pre-promotion closure green
+- Bundle: `smoke-evidence/release-2.1.0-promotion-20260510T090042Z/`
+- Bundle highlights:
+  - `provider-smoke.json` recorded a successful real provider model call
+  - `autonomy-daemon-smoke.json`, `vitality-smoke.json`, `persona-state-smoke.json`, `social-adapter-smoke.json`, `approval-social-smoke.json`, and `self-improvement-smoke.json` recorded the new 2.1.0 evidence surfaces
+  - `hardware-compatibility.json`, `hardware-acceptance-matrix.json`, `resource-budget-governance-smoke.json`, and `signing-provenance-smoke.json` refreshed the carried hardware-agnostic closure gates
+  - `live-event-smoke.json` and `real-scene-e2e-smoke.json` were preserved from the last green promoted baseline because the release-2.1.0 scope remained AI Core-owned and did not reopen the physical scene contract
+- Integrated summary:
+  - `closure-summary-final.json` -> `validation_gate_summary.ok=true`
+  - `passed_count=26`
+  - `failed_gate_ids=[]`
+
+2026-05-10: Continued release-2.1.0 toward closure by finishing the missing operator-facing and evidence-facing surfaces around social interaction and self-improvement. Added `social-chat` as the first non-JSON mock social chat surface, added `social-adapter-smoke` to prove identity-bound ingress plus affective-only egress, introduced deterministic `self_improvement.py` sandbox proposal contracts with approval/evidence/vitality rules, added `self-improvement-smoke`, and extended `closure-summary` with autonomous, vitality, persona, social adapter, approval-over-social, and self-improvement gates. Focused regressions for the new 2.1.0 surfaces and expanded gate matrix passed. - Copilot
+
+#### EXEC-353 Release 2.1.0 Closure Surface And Sandbox Integration
+
+- Status: WS-5, WS-7, and WS-8 advanced toward release closure
+- Completed this increment:
+  - added `social-chat` as the first non-JSON social chat surface
+  - added `social-adapter-smoke` for persisted ingress and affective-only egress evidence
+  - added `self_improvement.py` deterministic sandbox proposal/review contract
+  - added `self-improvement-smoke` for approval-gated sandbox-only improvement evidence
+  - extended `closure-summary` with `autonomous_daemon_gate`, `vitality_governance_gate`, `persona_persistence_gate`, `social_adapter_gate`, `approval_over_social_gate`, and `self_improvement_sandbox_gate`
+- Next:
+  - run broader release-2.1.0 regression slice
+  - execute one real AI API integration test once environment readiness is confirmed
+
+2026-05-10: Started WS-6 with approval-aware social interaction on top of the mock social adapter. Added social approval inspect/decision CLI paths, human-readable pending approval summaries, and approval metadata binding for social channel, principal, and decision text. Added `approval-social-smoke` so approval-over-social now has a standalone deterministic evidence path. Focused social approval regressions passed. - Copilot
+
+#### EXEC-352 Release 2.1.0 Approval-Aware Social Interaction Slice
+
+- Status: WS-6 started
+- Completed this increment:
+  - added `social-approval-inspect` for identity-bound social review of pending approvals
+  - added `social-approval-decision` for identity-bound deny/approve/expire decisions with social audit metadata
+  - added human-readable approval summaries for mock social channels
+  - added `approval-social-smoke` for deterministic approval-over-social evidence
+- Plan alignment snapshot:
+  - WS-5 has runtime-threaded social ingress
+  - WS-6 has first inspect/decision slice and smoke evidence
+  - WS-7 not started yet
+- Next:
+  - add CLI chat/repl style surface for conversational approval flows
+  - thread social egress through approval-aware presentation path
+
+2026-05-10: Threaded the WS-5 mock social ingress contract into the existing `agent-run` path. The CLI can now synthesize a mock social message into a `user.input.social.*` perception event with adapter/channel/user provenance, then reuse the Core workflow and preserve Affective-only final presentation. Focused social runtime regression passed. - Copilot
+
+#### EXEC-351 Release 2.1.0 Social Ingress Runtime Thread
+
+- Status: WS-5 moved from isolated contract tests to first runtime-threaded mock social ingress
+- Completed this increment:
+  - added `agent-run --social-text` with mock adapter/channel/user arguments
+  - converted mock social envelopes into Core perception events before workflow execution
+  - recorded `mock_social` provenance in agent-run evidence
+  - added a CLI runtime regression proving social ingress reaches Affective final response
+- Next:
+  - add approval-aware social egress gate before any real connector
+  - add standalone `social-adapter-smoke` once ingress and egress gates are both represented
+
+2026-05-10: Started WS-5 for release-2.1.0 with the first social runtime contract slice. Added `neurolink_core/social.py` with a mock adapter, social ingress envelope, event normalization, and affective-only egress records so future QQ/WeChat-style adapters have a stable boundary before any real connector work begins. Focused social contract regression passed. - Copilot
+
+#### EXEC-350 Release 2.1.0 Social Adapter Contract Foundation
+
+- Status: WS-5 started
+- Completed this increment:
+  - added `SocialMessageEnvelope` and `SocialDeliveryRecord` as the social ingress/egress contract
+  - added `MockSocialAdapter` with identity binding, rate-limit classification, ingress event normalization, and affective-only delivery guard
+  - added focused tests for group/direct/admin flows and non-affective delivery rejection
+- Plan alignment snapshot:
+  - WS-1 complete
+  - WS-2 in progress and smoke-backed
+  - WS-3 in progress and smoke-backed
+  - WS-4 in progress and smoke-backed
+  - WS-5 started with mock adapter contract
+  - WS-6 onward not started yet
+- Next:
+  - thread social ingress through daemon/CLI replay path with mock adapter fixtures
+  - add approval-aware social send gate before any real adapter implementation
+
+2026-05-10: Continued the release-2.1.0 evidence line after the first autonomy smoke landed. Added independent `vitality-smoke` and `persona-state-smoke` commands so WS-3 and WS-4 now have standalone closure payloads instead of only unit tests and daemon summaries. Focused smoke regression passed for autonomy, vitality, and persona evidence. - Copilot
+
+#### EXEC-349 Release 2.1.0 Vitality And Persona Smoke
+
+- Status: WS-3 and WS-4 moved from pure-logic-only to standalone smoke evidence
+- Completed this increment:
+  - added `vitality-smoke` for deterministic decay/replenishment and bounded policy-impact evidence
+  - added `persona-state-smoke` for persona summary, relationship memory, rational-summary limits, and privacy redaction evidence
+- Plan alignment snapshot:
+  - WS-1 complete
+  - WS-2 in progress and smoke-backed
+  - WS-3 in progress and smoke-backed
+  - WS-4 in progress and smoke-backed
+  - WS-5 onward not started yet
+- Next:
+  - start WS-5 with `social.py` mock adapter contract and tests
+  - or extend `closure-summary` with the new autonomous, vitality, and persona validation gates
+
+2026-05-10: Aligned the active implementation against `RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md` and confirmed the project is currently between WS-2 and WS-8: autonomous runtime spine is live, Vitality and Persona deterministic state are present, but dedicated smoke evidence had not yet been materialized. Implemented `autonomy-daemon-smoke` as the next planned step, proving initial daemon cycles, heartbeat, restart continuity, pause-state handling, and daemon-state summaries in a standalone closure payload. Focused smoke and daemon regression tests passed. - Copilot
+
+#### EXEC-348 Release 2.1.0 Autonomy Smoke Alignment
+
+- Status: aligned with the release-2.1.0 plan; first dedicated autonomous runtime smoke payload landed
+- Plan alignment snapshot:
+  - WS-1 complete
+  - WS-2 in progress with daemon planner, core-daemon CLI, heartbeat, pause, and restart continuity evidence
+  - WS-3 and WS-4 in progress with deterministic Vitality and Persona state plus daemon evidence summaries
+  - WS-5 onward not started yet
+  - WS-8 started with `autonomy-daemon-smoke`
+- Completed this increment:
+  - added `autonomy-daemon-smoke` CLI command
+  - emitted standalone closure payload for initial run, resumed run, and paused run
+  - validated heartbeat, continuity, pause gating, vitality summary, and persona summary in smoke evidence
+- Next:
+  - add `vitality-smoke`
+  - add `persona-state-smoke`
+  - start extending `closure-summary` with autonomous daemon validation gates
+
+2026-05-10: Continued release-2.1.0 autonomous Core runtime implementation. Landed deterministic `core-daemon` synthetic-cycle CLI entry, attached Vitality and Persona summaries to cycle evidence and daemon state, and extended daemon state with pause, heartbeat, and restart-continuity summaries. Focused daemon regression passed for autonomy planner integration, `core-daemon`, pause-state behavior, and restart continuity using a persisted SQLite session. - Copilot
+
+#### EXEC-347 Release 2.1.0 Autonomous Core Runtime Spine Increment
+
+- Status: runtime spine advancing; supervised daemon evidence now records internal state
+- Completed runtime slices:
+  - deterministic `neurolink_core.motivation` Vitality state transitions
+  - deterministic `neurolink_core.persona` persona state and privacy/redaction helpers
+  - `neurolink_core.autonomy` cycle planner for `time.tick`, `core.maintenance.tick`, and wake decisions
+  - `core-daemon` CLI entry for bounded synthetic daemon cycles
+- New daemon evidence:
+  - cycle-level `persona_summary` and `vitality_summary`
+  - top-level `daemon_state` with `run_state`, `heartbeat`, and restart `continuity`
+  - explicit operator-paused daemon mode without workflow execution
+- Validation:
+  - focused autonomy/core-daemon tests green
+  - neighboring daemon replay/CLI regression green
+  - repository CRLF-aware `git diff --check` green
+- Next:
+  - add explicit autonomy heartbeat/restart smoke payloads or `autonomy-daemon-smoke`
+  - carry daemon state into dedicated closure gates
+  - begin wiring social/mock adapter ingress onto the supervised daemon path
+
+2026-05-10: Started release-2.1.0 autonomous social AI Core implementation. Updated the HLD with long-running Autonomous Agent Runtime, Social Adapter Layer, persistent Affective Persona State, bounded Vitality motivation, and governed Self-Improvement Pipeline. Updated the AI Core LLD with `autonomy`, `social`, `persona`, `motivation`, and `self_improvement` module boundaries, lifecycles, data structures, and safety invariants. Added the release-2.1.0 autonomous social Agent plan. Release-2.0.0 remains the promoted baseline; this is the post-2.0 development line. - Copilot
+
+#### EXEC-346 Release 2.1.0 Autonomous Social AI Core Kickoff
+
+- Status: design contracts landed; runtime implementation next
+- Plan: `docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md`
+- HLD updates:
+  - long-running Autonomous Agent Runtime
+  - QQ/WeChat/CLI/API Social Adapter Layer
+  - persistent Affective Persona State
+  - bounded Vitality homeostatic motivation
+  - governed Self-Improvement Pipeline
+- LLD updates:
+  - new module boundaries for autonomy, social, persona, motivation, and self-improvement
+  - daemon, vitality, social message, and self-improvement lifecycles
+  - data structures for autonomous cycles, social envelopes, persona state, vitality state, and improvement proposals
+- Safety result:
+  - Vitality may influence salience, urgency, maintenance priority, and tone only
+  - Vitality cannot elevate permissions, bypass policy/leases/approvals, block shutdown, hide facts, push commits, flash Unit firmware, or use credentials
+- Next:
+  - implement deterministic Vitality and Persona pure-logic services with UT coverage
+  - add supervised daemon cycle planner and mock social adapter before production QQ/WeChat adapters
+  - extend smoke evidence and closure-summary gates after the runtime spine lands
+
 2026-05-10: Completed release-2.0.0 final promotion. The active promotion bundle `smoke-evidence/release-2.0.0-promotion-20260510T044228Z/` first reached a green `closure-summary-final.json` with `validation_gate_summary.ok=true`, `passed_count=20`, and `failed_gate_ids=[]`. After that green bundle, canonical identity was promoted to `2.0.0` in the Neuro CLI, workflow catalog, and sample Unit app source, the LLEXT artifact was rebuilt, post-promotion hardware/resource/signing evidence was refreshed from the rebuilt artifact, and `closure-summary-post-promotion.json` again reported 20/20 gates green. Full Python regression passed with `367 passed, 6 subtests passed`. Release-2.0.0 is now the promoted baseline; stable 1.2.x evidence schema names remain intentionally frozen per the contract checklist. - Copilot
 
 #### EXEC-345 Release 2.0.0 Final Promotion

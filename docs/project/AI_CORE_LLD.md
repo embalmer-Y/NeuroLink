@@ -83,6 +83,21 @@ Recommended top-level Python package layout:
   - Core-to-Core topology sync, delegated execution, trust metadata.
 11. `neurolink_core.common`
   - Shared envelopes, enums, error model, IDs, clocks, retry policies.
+12. `neurolink_core.autonomy`
+  - Long-running daemon cycles, time ticks, maintenance ticks, heartbeat records,
+    wake/sleep decisions, and restart continuity.
+13. `neurolink_core.social`
+  - Social message envelopes, adapter interface, channel identity binding,
+    ingress normalization, outbound delivery records, and rate-limit metadata.
+14. `neurolink_core.persona`
+  - Persistent Affective persona state, relationship summaries, mood/fatigue
+    state, and prompt-safe persona context.
+15. `neurolink_core.motivation`
+  - Vitality decay, replenishment, urgency mapping, safety invariants, and
+    evidence payloads.
+16. `neurolink_core.self_improvement`
+  - Improvement proposal capture, plan classification, sandbox execution,
+    approval handoff, evidence binding, and vitality replenishment events.
 
 ### 3.3 Deployment Units
 
@@ -98,6 +113,13 @@ The Core runtime is expected to run as a single logical application composed of 
   - Mem0 extraction and retrieval bridge.
 5. `core-unit-orchestrator`
   - Unit command and deployment adapter.
+6. `core-autonomy-daemon`
+  - Long-running perception and maintenance loop. It may initially run in the
+    same process as `core-workflow`, but it must keep explicit heartbeat,
+    shutdown, pause, and restart state.
+7. `core-social-adapter`
+  - Optional process or plugin host for QQ, WeChat, CLI chat, and mock social
+    adapters. It may be disabled without affecting core release evidence.
 
 An initial single-process deployment is acceptable. The LLD keeps module boundaries strict so later service splitting remains mechanical.
 
@@ -376,6 +398,133 @@ Minimum envelope fields:
 
 UT anchor: `UT-CORE-PERCEPTION-*`
 
+### 5.12 Autonomous Runtime Service
+
+Responsibilities:
+
+1. Run the long-lived Core daemon loop with explicit start, pause, resume,
+  shutdown, heartbeat, and restart recovery state.
+2. Generate deterministic time tick and internal maintenance tick events.
+3. Poll or subscribe to enabled Unit, social, memory, and self-improvement event
+  sources through the existing ingress and event router path.
+4. Persist every daemon cycle summary before any Agent reasoning.
+5. Decide whether a cycle is `observation_only`, `affective_wake`,
+  `maintenance_only`, `pending_approval`, or `sleep`.
+6. Enforce operator pause/shutdown and policy gates before any internal drive
+  can trigger work.
+
+Hard boundary:
+
+1. The daemon may propose self-maintenance and improvement work.
+2. The daemon may not bypass user/operator stop, lease, approval, rate limit,
+  or shutdown policy.
+3. The daemon may not execute side-effecting Unit or repository actions without
+  the existing policy and approval path.
+
+UT anchor: `UT-CORE-AUTONOMY-*`
+
+### 5.13 Social Adapter Subsystem
+
+Responsibilities:
+
+1. Define `SocialMessageEnvelope` for inbound QQ, WeChat, CLI chat, API, and
+  mock-channel messages.
+2. Bind external channel/user/group identity to Core principals and permission
+  classes.
+3. Normalize inbound social messages into the same event envelope used by
+  `agent-run` and event replay.
+4. Deliver outbound Affective responses to the originating channel with delivery
+  audit records.
+5. Apply channel rate limits, group/private policy, mention policy, privacy
+  controls, and operator/admin overrides.
+6. Expose adapter health and compliance metadata in smoke evidence.
+
+Hard boundary:
+
+1. Social adapters never call Rational Agent directly.
+2. Social adapters never execute Unit tools directly.
+3. Social adapters must not expose raw Rational plans, secrets, stack traces, or
+  internal-only audit payloads to users.
+4. Personal-account or non-official protocol bridges are lab-only unless a
+  release explicitly accepts the compliance risk.
+
+UT anchor: `UT-CORE-SOCIAL-*`
+
+### 5.14 Persona State Subsystem
+
+Responsibilities:
+
+1. Persist Affective persona state independently from factual Unit and execution
+  records.
+2. Track mood, valence, arousal, curiosity, fatigue, social openness, vitality
+  summary, and relationship summaries per user/principal.
+3. Provide prompt-safe persona context to Affective Agent only.
+4. Provide minimal non-user-facing persona summaries to Rational Agent when a
+  delegated task needs them.
+5. Support user memory deletion, relationship memory redaction, audit, and
+  privacy-scoped export.
+
+Hard boundary:
+
+1. Persona state can affect presentation style and salience.
+2. Persona state cannot overwrite Core Data Service facts.
+3. Persona state cannot grant capabilities, credentials, leases, or approvals.
+4. The childlike persona is an AI interaction style and must remain transparent
+  as such in product and runbook language.
+
+UT anchor: `UT-CORE-PERSONA-*`
+
+### 5.15 Motivation And Vitality Subsystem
+
+Responsibilities:
+
+1. Maintain a bounded `VitalityState` with score range `0..100`.
+2. Apply deterministic decay from wall-clock time, failed maintenance,
+  unresolved faults, stale memory, and lack of useful progress.
+3. Apply replenishment only from verified events such as passing tests,
+  approved improvements, memory consolidation, healthy Unit recovery, or useful
+  user interaction.
+4. Map vitality into `relaxed`, `attentive`, `concerned`, and `critical` states.
+5. Emit motivation evidence that explains score deltas and policy impact.
+6. Inject only prompt-safe vitality summaries into Affective context.
+
+Hard boundary:
+
+1. Vitality may change urgency, salience, maintenance priority, and tone.
+2. Vitality may not change authorization, leases, approval requirements,
+  shutdown behavior, credential access, or tool side-effect classification.
+3. Critical vitality enters safe-mode request-for-help behavior, not autonomous
+  escalation.
+
+UT anchor: `UT-CORE-VITALITY-*`
+
+### 5.16 Self-Improvement Subsystem
+
+Responsibilities:
+
+1. Capture improvement ideas from low vitality, failed tests, user feedback,
+  memory review, Unit health evidence, and release gate failures.
+2. Ask Rational Agent for structured improvement plans only through a delegated
+  and policy-scoped window.
+3. Classify plans by risk and target area: docs, tests, refactor, tool manifest,
+  social adapter, memory policy, runtime, hardware, or release.
+4. Execute candidate changes only in sandbox, temporary branch, or isolated
+  workspace modes until approval.
+5. Bind test, lint, smoke, and closure evidence to every proposed improvement.
+6. Require user/operator approval before applying patches, committing, pushing,
+  deploying, flashing, or publishing.
+7. Replenish vitality only after accepted evidence is green and approval is
+  recorded.
+
+Hard boundary:
+
+1. No autonomous merge, commit, push, firmware flash, credential change, or
+  production deploy.
+2. Failed or denied improvements cannot replenish vitality.
+3. Self-improvement evidence must not hide failed tests or mutate audit facts.
+
+UT anchor: `UT-CORE-SELFIMPROVE-*`
+
 ## 6. State Machines
 
 ### 6.1 Session Lifecycle
@@ -645,6 +794,101 @@ Rules:
 
 UT anchors: `UT-CORE-UNITEXEC-*`, `UT-CORE-FED-*`
 
+### 6.11 Autonomous Daemon Lifecycle
+
+States:
+
+1. `STOPPED`
+2. `STARTING`
+3. `RUNNING`
+4. `PAUSED_BY_OPERATOR`
+5. `SLEEPING`
+6. `MAINTENANCE_WINDOW`
+7. `STOPPING`
+8. `FAILED_SAFE`
+
+Transitions:
+
+1. `STOPPED -> STARTING` when an operator or supervisor starts the daemon.
+2. `STARTING -> RUNNING` after DB, event router, social adapters, and policy
+  state are initialized.
+3. `RUNNING -> SLEEPING` when no event or internal need crosses salience
+  thresholds.
+4. `SLEEPING -> RUNNING` on user input, social message, Unit event, time tick,
+  low vitality, or maintenance tick.
+5. `RUNNING -> MAINTENANCE_WINDOW` when memory, vitality, health, or
+  self-improvement checks are due.
+6. `RUNNING|SLEEPING -> PAUSED_BY_OPERATOR` on explicit pause.
+7. Any active state -> `STOPPING` on shutdown.
+8. Any active state -> `FAILED_SAFE` on repeated unhandled failures.
+
+Invariant: internal motivation never blocks `PAUSED_BY_OPERATOR`, `STOPPING`, or
+supervisor shutdown.
+
+UT anchor: `UT-CORE-AUTONOMY-LIFE-*`
+
+### 6.12 Vitality Lifecycle
+
+States:
+
+1. `RELAXED`
+2. `ATTENTIVE`
+3. `CONCERNED`
+4. `CRITICAL`
+
+Transitions:
+
+1. Score `75..100` maps to `RELAXED`.
+2. Score `45..74` maps to `ATTENTIVE`.
+3. Score `20..44` maps to `CONCERNED`.
+4. Score `0..19` maps to `CRITICAL`.
+5. Decay events may move the state downward.
+6. Verified improvement, recovery, memory consolidation, or useful interaction
+  events may move the state upward.
+
+Invariant: vitality state changes can alter salience and tone only. They cannot
+alter authorization, approval, lease, shutdown, or side-effect policy.
+
+UT anchor: `UT-CORE-VITALITY-LIFE-*`
+
+### 6.13 Social Message Lifecycle
+
+States:
+
+1. `RECEIVED`
+2. `IDENTITY_BOUND`
+3. `RATE_LIMIT_CHECKED`
+4. `PERSISTED`
+5. `PERCEPTION_FRAME_CREATED`
+6. `AFFECTIVE_RESPONSE_READY`
+7. `DELIVERED`
+8. `DELIVERY_FAILED`
+
+Invariant: no social message may trigger tool execution before it is persisted,
+identity-bound, rate-limit checked, and policy-scoped.
+
+UT anchor: `UT-CORE-SOCIAL-LIFE-*`
+
+### 6.14 Self-Improvement Lifecycle
+
+States:
+
+1. `IDEA_RECORDED`
+2. `PLAN_PROPOSED`
+3. `RISK_CLASSIFIED`
+4. `SANDBOX_PREPARED`
+5. `EVIDENCE_RUNNING`
+6. `AWAITING_APPROVAL`
+7. `APPROVED_FOR_APPLY`
+8. `APPLIED`
+9. `REJECTED`
+10. `FAILED`
+
+Invariant: only `APPROVED_FOR_APPLY` may transition to `APPLIED`; `REJECTED` and
+`FAILED` cannot replenish vitality.
+
+UT anchor: `UT-CORE-SELFIMPROVE-LIFE-*`
+
 ## 7. Data Structures
 
 ### 7.1 Request Envelope
@@ -880,6 +1124,89 @@ UT anchors: `UT-CORE-UNITEXEC-*`, `UT-CORE-FED-*`
     "app_slot_bytes": 0,
     "stack_margin_bytes": 0
   }
+}
+```
+
+### 7.16 Autonomous Cycle Record
+
+```json
+{
+  "cycle_id": "cycle-001",
+  "daemon_id": "core-daemon-01",
+  "started_at": "2026-05-10T10:00:00Z",
+  "completed_at": "2026-05-10T10:00:02Z",
+  "cycle_kind": "time_tick",
+  "events_seen": 3,
+  "wake_decision": "affective_wake",
+  "vitality_state_ref": "vitality-001",
+  "policy_scope": {},
+  "audit_id": "audit-001"
+}
+```
+
+### 7.17 Social Message Envelope
+
+```json
+{
+  "social_message_id": "social-001",
+  "adapter_kind": "qq_mock",
+  "channel_id": "group-01",
+  "external_user_id": "qq-user-01",
+  "principal_id": "user-01",
+  "message_kind": "text",
+  "text": "check unit status",
+  "received_at": "2026-05-10T10:00:00Z",
+  "rate_limit_class": "normal_user",
+  "policy_tags": ["social_ingress", "user_prompt"]
+}
+```
+
+### 7.18 Persona State Record
+
+```json
+{
+  "persona_id": "affective-main",
+  "version": 1,
+  "mood": "curious",
+  "valence": 0.4,
+  "arousal": 0.6,
+  "curiosity": 0.7,
+  "fatigue": 0.2,
+  "social_openness": 0.8,
+  "vitality_ref": "vitality-001",
+  "relationship_summary_refs": ["rel-user-01"],
+  "updated_at": "2026-05-10T10:00:00Z"
+}
+```
+
+### 7.19 Vitality State Record
+
+```json
+{
+  "vitality_id": "vitality-001",
+  "score": 68,
+  "state": "attentive",
+  "last_decay_reason": "wall_clock_tick",
+  "last_replenishment_reason": "tests_passed",
+  "urgency_modifier": 0.1,
+  "policy_impact": "salience_and_tone_only",
+  "updated_at": "2026-05-10T10:00:00Z"
+}
+```
+
+### 7.20 Self-Improvement Proposal
+
+```json
+{
+  "proposal_id": "improve-001",
+  "source": "low_vitality_and_failed_test",
+  "risk_class": "docs_or_tests",
+  "plan_ref": "rplan-001",
+  "sandbox_ref": "sandbox-001",
+  "evidence_refs": [],
+  "approval_request_id": "approval-001",
+  "status": "awaiting_approval",
+  "vitality_replenishment_eligible": false
 }
 ```
 

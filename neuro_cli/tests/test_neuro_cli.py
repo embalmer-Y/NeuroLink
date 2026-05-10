@@ -470,7 +470,7 @@ class TestNeuroCliParserAndPlaceholders(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["release_target"], "2.0.0")
+        self.assertEqual(payload["release_target"], neuro_cli.RELEASE_TARGET)
         self.assertEqual(payload["protocol"]["version"], "2.0")
         self.assertEqual(payload["protocol"]["wire_encoding"], "cbor-v2")
         self.assertEqual(payload["protocol"]["supported_wire_encodings"], ["cbor-v2"])
@@ -1981,6 +1981,7 @@ class TestNeuroCliResultClassification(unittest.TestCase):
             project_root / "subprojects" / "neuro_unit_app" / "src" / "main.c"
         )
         source_text = sample_app_source.read_text(encoding="utf-8")
+        major, minor, patch = neuro_cli.RELEASE_TARGET.split(".")
 
         self.assertIn(
             f'static const char app_version[] = "{neuro_cli.RELEASE_TARGET}";',
@@ -1990,9 +1991,9 @@ class TestNeuroCliResultClassification(unittest.TestCase):
             f'static const char app_build_id[] = "neuro_unit_app-{neuro_cli.RELEASE_TARGET}-cbor-v2";',
             source_text,
         )
-        self.assertIn(".major = 2,", source_text)
-        self.assertIn(".minor = 0,", source_text)
-        self.assertIn(".patch = 0,", source_text)
+        self.assertIn(f".major = {major},", source_text)
+        self.assertIn(f".minor = {minor},", source_text)
+        self.assertIn(f".patch = {patch},", source_text)
 
     def test_canonical_skill_package_contains_required_resources(self) -> None:
         project_root = NEURO_CLI_DIR.parent
@@ -3279,7 +3280,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
         self.assertIn("event_stream", names)
         self.assertIn("app_event_stream", names)
 
-    def test_capabilities_reports_release_1_2_6(self) -> None:
+    def test_capabilities_reports_current_release_target(self) -> None:
         args = Namespace(output="json")
         out = io.StringIO()
         with redirect_stdout(out):
@@ -3287,7 +3288,7 @@ class TestNeuroCliQueryResults(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(out.getvalue())
-        self.assertEqual(payload["release_target"], "2.0.0")
+        self.assertEqual(payload["release_target"], neuro_cli.RELEASE_TARGET)
 
     def test_open_session_with_retry_retries_once(self) -> None:
         args = Namespace(

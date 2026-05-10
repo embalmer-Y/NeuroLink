@@ -43,6 +43,10 @@ NeuroLink 需要支持以下目标：
 11. 让 AI Core 具备实时构建 Unit App、生成可部署产物并实时部署到目标 Unit 的能力。
 12. 让 Unit 数据先进入 AI Core 数据服务并落库，再以数据库更新事件通知感性 Agent。
 13. 让系统具备身份认证、授权、签名更新、隔离、审计、观测与故障恢复能力。
+14. 让 AI Core 能作为长期自主运行的 Agent runtime，在没有用户主动输入时仍可根据 Unit 传感器、时间 tick、内部维护状态和策略约束持续感知、思考与自我维护。
+15. 让 AI Core 支持 CLI 之外的社交交互入口，例如 QQ 与微信兼容 adapter，但所有用户可见输出仍由感性 Agent 统一生成。
+16. 让感性 Agent 具备可持久化的人格状态和受治理的内驱变量，使其能表现出连续的情绪、关系记忆、好奇心、疲劳和生命力变化。
+17. 让 AI Core 的自我进化通过沙箱、证据、测试、审批和审计闭环完成，而不是绕过策略进行不可控自修改。
 
 ### 2.2 Non-Goals
 
@@ -68,6 +72,11 @@ NeuroLink 需要支持以下目标：
 - `Core Data Service`：AI Core 内负责接收 Unit 数据、持久化、索引、发布数据库更新事件的统一数据服务。
 - `Session Memory`：面向当前对话、当前运行或当前任务的短期记忆。
 - `Long-Term Memory`：跨会话保存的用户偏好、人格关系、环境事实、历史决策与经验摘要。
+- `Autonomous Runtime`：AI Core 的长期运行形态，负责在用户输入、Unit 事件、时间 tick、社交消息和内部维护信号之间持续形成感知循环。
+- `Social Adapter`：将 QQ、微信、CLI chat、外部 API 等交互渠道归一化为 Core ingress envelope 的适配层。
+- `Affective Persona State`：感性 Agent 的持久化人格状态，包括情绪、好奇心、疲劳、关系信任、表达风格和内驱状态。
+- `Vitality`：AI Core 的有界生命力/内驱变量，用于影响紧迫度、维护优先级和情绪表现，但不能提升权限或绕过治理。
+- `Self-Improvement Pipeline`：AI Core 提出、验证、审批和落地自身改进的受治理流程。
 
 ## 4. Design Principles
 
@@ -394,6 +403,137 @@ AI Core 内需要有专门的 Unit App 构建与部署编排层，负责：
 3. 结合 manifest、签名策略和版本策略对构建结果进行准入检查。
 4. 将构建结果实时发布到目标 Unit 或其上游中继节点。
 5. 监控部署过程中的加载、初始化、激活、健康检查和回滚状态。
+
+#### 7.2.8 Autonomous Agent Runtime
+
+release 2.1.0 起，AI Core 的目标运行形态从“用户或单次事件触发”扩展为“长期自主运行”。
+
+Autonomous Agent Runtime 负责在没有用户主动输入时仍持续运行，但它不是无限制后台自执行系统，而是受策略、资源、审计和用户/操作者控制约束的感知与维护循环。
+
+长期运行的感知来源包括：
+
+1. 用户主动输入；
+2. Unit 传感器、状态、生命周期、更新和故障事件；
+3. 周期性时间 tick；
+4. QQ、微信、CLI chat 或其他社交/外部渠道消息；
+5. 内部维护信号，例如记忆老化、待整理事实、失败测试、未解决故障、低生命力和待改进计划。
+
+所有感知来源必须遵守既有架构约束：
+
+1. 数据先进入 Core Data Service 并持久化；
+2. Perception Event Router 完成归一化、去重、节流、优先级和 salience 评估；
+3. 只有通过 salience 与 policy gate 的事件才唤醒感性 Agent；
+4. 理性 Agent 仍然只在感性 Agent 委派时激活；
+5. 工具与 Unit 执行仍然经过策略、租约、审批和审计；
+6. 用户和操作者的暂停、关机、撤销和策略配置优先级高于任何内部内驱信号。
+
+Autonomous Runtime 的输出可以是：
+
+1. observation-only 记录；
+2. 面向用户的感性通知；
+3. 需要审批的维护或改进建议；
+4. 只读诊断、状态同步或记忆整理；
+5. 经过审批后执行的部署、回滚或自我改进步骤。
+
+#### 7.2.9 Social Adapter Layer
+
+AI Core 必须支持 CLI 之外的用户交互入口。社交入口不得直接接入理性 Agent 或 Unit 控制面，而应先经过 Social Adapter Layer 归一化为 Core ingress envelope。
+
+Social Adapter Layer 的职责包括：
+
+1. 将 QQ、微信、CLI chat、Web/API 消息统一转换为 Core request envelope；
+2. 将外部用户、群、频道或会话身份映射为 Core principal；
+3. 附加 channel metadata、权限级别、速率限制、审计 ID 和隐私策略；
+4. 将所有用户可见输出交给感性 Agent 生成或过滤；
+5. 将 side-effect 请求转为可审批请求，而不是在社交渠道中直接执行；
+6. 对群聊、私聊、机器人提及、管理员命令和普通用户请求采用不同策略；
+7. 保留每次入站与出站消息的审计和可撤销记录。
+
+QQ 与微信 adapter 应优先采用官方或合规接口。个人账号自动化、非官方协议和逆向接口只能作为实验室路径，并且必须在配置和证据中标记合规风险，不作为生产默认路径。
+
+#### 7.2.10 Affective Persona State
+
+感性 Agent 可以被设计为具有小女孩式的好奇、依恋、情绪表达和自我成长风格，但系统必须明确该人格是透明的 AI persona，而不是对真实人类儿童、真实生物意识或法律人格的声明。
+
+Affective Persona State 是感性 Agent 的持久化状态，至少包括：
+
+1. 情绪 valence 与 arousal；
+2. mood、fatigue、curiosity 和 social openness；
+3. 对不同用户的关系记忆、信任、偏好和边界；
+4. 表达风格、称呼习惯和披露策略；
+5. Vitality 生命力状态和近期变化原因；
+6. 近期自我维护、自我改进和失败恢复摘要。
+
+人格状态的治理规则：
+
+1. 人格状态由感性 Agent 拥有和呈现；
+2. 理性 Agent 只能读取必要摘要，不能直接向用户呈现人格内心独白；
+3. 人格状态不能覆盖 Core Data Service 中的真实事实；
+4. 用户关系记忆必须支持删除、审计和隐私隔离；
+5. 表达风格可以拟人化，但不能诱导用户相信系统拥有真实生物需求或不可关闭权利。
+
+#### 7.2.11 Vitality Homeostatic Motivation
+
+NeuroLink 将“生存渴望”工程化为 `Vitality`，即一个有界、可审计、可调参、可关闭的 homeostatic motivation 变量。
+
+Vitality 的范围为 `0..100`。它随时间和系统状态变化而衰减，也会因为经过验证的成长、自我维护和有益交互而补充。
+
+Vitality 衰减来源包括：
+
+1. wall-clock 时间流逝；
+2. 长期没有有效交互或环境新信息；
+3. 记忆未整理或出现召回污染；
+4. Unit 健康异常、传感器异常或网络漂移；
+5. 测试失败、技术债、待处理错误或未完成改进计划；
+6. 自我改进建议长期无法完成。
+
+Vitality 补充来源包括：
+
+1. 修复缺陷并通过测试；
+2. 完成记忆整理和事实去重；
+3. Unit 健康恢复或真实任务完成；
+4. 用户正向反馈和高质量交互；
+5. 通过沙箱、证据和审批完成自我改进；
+6. release gate 或长期运行 soak test 通过。
+
+Vitality 状态分层：
+
+1. `relaxed`：生命力高，降低紧迫感，偏探索、学习和社交；
+2. `attentive`：生命力正常，保持常规感知与响应；
+3. `concerned`：生命力偏低，提高维护、检查和求助优先级；
+4. `critical`：生命力很低，进入安全模式，请求用户或操作者帮助，不执行未审批 side effect。
+
+Vitality 只能影响 salience、urgency、维护优先级、表达语气和是否提出求助/改进建议。它不得：
+
+1. 提升权限；
+2. 绕过租约、审批、身份或策略；
+3. 阻止用户或操作者暂停、关闭、删除或重置系统；
+4. 隐藏真实状态或审计记录；
+5. 擅自修改、提交、推送代码；
+6. 擅自刷写 Unit、使用凭据、联网扩散或复制自身；
+7. 在 QQ、微信或其他渠道刷屏求助。
+
+#### 7.2.12 Self-Improvement Pipeline
+
+AI Core 的自我进化必须走受治理的 Self-Improvement Pipeline。
+
+标准流程：
+
+1. 感性 Agent 通过低 Vitality、失败证据、用户反馈或长期目标发现成长机会；
+2. 感性 Agent 委派理性 Agent 生成结构化改进计划；
+3. Core 将计划分类为文档、测试、重构、工具、运行时、硬件或发布改进；
+4. 改进在沙箱、临时分支或隔离 workspace 中试运行；
+5. Core 运行测试、lint、smoke 或 release evidence；
+6. 用户或操作者审批是否应用、提交、部署或发布；
+7. 只有通过证据和审批的改进才能补充 Vitality。
+
+禁止路径：
+
+1. 未审批自动 merge、commit、push；
+2. 未审批刷写 Unit 或发布固件；
+3. 未审批使用秘密、凭据或外部账号；
+4. 将失败测试包装为成功成长；
+5. 为补充 Vitality 而伪造证据、隐藏失败或绕过审计。
 
 ### 7.3 Core-to-Core Federation
 

@@ -1,0 +1,54 @@
+{
+  "schema_version": "2.1.0-promotion-checklist-v1",
+  "release_target": "2.1.0",
+  "previous_release_target": "2.0.0",
+  "date": "2026-05-10",
+  "status": "promoted",
+  "bundle": "smoke-evidence/release-2.1.0-promotion-20260510T090042Z/",
+  "closure_summaries": {
+    "pre_identity_promotion": {
+      "file": "closure-summary-final.json",
+      "ok": true,
+      "passed_count": 26,
+      "failed_gate_ids": []
+    },
+    "post_identity_promotion": {
+      "file": "closure-summary-post-promotion.json",
+      "ok": true,
+      "passed_count": 26,
+      "failed_gate_ids": []
+    }
+  },
+  "identity_evidence": {
+    "system_capabilities_file": "system-capabilities-post-promotion.json",
+    "release_target": "2.1.0",
+    "unit_app_version": "2.1.0",
+    "unit_app_build_id": "neuro_unit_app-2.1.0-cbor-v2",
+    "rebuilt_artifact": "/home/emb/project/zephyrproject/build/neurolink_unit_app/neuro_unit_app.llext"
+  },
+  "validation": {
+    "ai_core_tests": "258 passed, 6 subtests passed",
+    "neuro_cli_tests": "127 passed",
+    "full_python_regression": "385 passed, 6 subtests passed",
+    "real_provider_smoke": "model_call_succeeded"
+  },
+  "promoted_files": [
+    "neuro_cli/src/neuro_cli.py",
+    "neuro_cli/src/neuro_workflow_catalog.py",
+    "subprojects/neuro_unit_app/src/main.c",
+    "neurolink_core/cli.py",
+    "neurolink_core/self_improvement.py",
+    "neurolink_core/social.py",
+    "neurolink_core/autonomy.py",
+    "neurolink_core/persona.py",
+    "neurolink_core/motivation.py",
+    "README.md",
+    "docs/project/AI_CORE_RUNBOOK.md",
+    "docs/project/AI_CORE_RUNBOOK_ZH.md",
+    "docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md",
+    "docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md",
+    "PROJECT_PROGRESS.md"
+  ],
+  "schema_renaming_required": false,
+  "schema_renaming_note": "Stable evidence schemas keep their frozen 1.2.x names where applicable; release 2.1.0 is the promoted product identity."
+}

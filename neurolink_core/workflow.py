@@ -10,6 +10,13 @@ import sys
 from typing import Any, Callable, cast
 
 from .agents import AffectiveDecision
+from .autonomy import (
+    AutonomousDaemonPolicy,
+    build_daemon_state,
+    build_persona_summary,
+    build_vitality_summary,
+    plan_autonomous_cycle,
+)
 from .common import PerceptionEvent, PerceptionFrame, WorkflowResult, new_id, utc_now_iso
 from .data import CoreDataStore
 from .events import PerceptionEventRouter
@@ -23,6 +30,7 @@ from .maf import (
     build_rational_agent_adapter,
 )
 from .memory import FakeLongTermMemory, LongTermMemory, build_memory_backend
+from .persona import PersonaState
 from .policy import ReadOnlyToolPolicy
 from .session import CoreSessionManager, build_prompt_safe_context
 from .tools import (
@@ -3874,6 +3882,11 @@ def run_event_daemon_replay(
     require_real_tool_adapter: bool = False,
     replay_label: str | None = None,
     federation_route_provider: Callable[[PerceptionFrame, dict[str, Any]], dict[str, Any] | None] | None = None,
+    autonomy_enabled: bool = False,
+    autonomy_policy: AutonomousDaemonPolicy | None = None,
+    vitality_state: Any | None = None,
+    persona_state: PersonaState | None = None,
+    operator_paused: bool = False,
 ) -> dict[str, Any]:
     batches = [[dict(event) for event in batch] for batch in event_batches]
     data_store = CoreDataStore(db_path)
@@ -3910,18 +3923,81 @@ def run_event_daemon_replay(
         seeded_dedupe_keys = data_store.get_recent_dedupe_keys(limit=1000)
         shared_router.seed_dedupe_keys(seeded_dedupe_keys)
         resolved_session_id = session_id
+        previous_execution_count = 0
+        if resolved_session_id:
+            previous_execution_count = len(
+                data_store.get_execution_spans_for_session(resolved_session_id, limit=1000)
+            )
         cycle_results: list[dict[str, Any]] = []
         total_provided_events = 0
+        total_planned_events = 0
         total_normalized_events = 0
         observed_topics: set[str] = set()
+        last_maintenance_cycle: int | None = None
+        last_cycle_timestamp: str | None = None
         for index, batch in enumerate(batches, start=1):
             total_provided_events += len(batch)
-            for event in batch:
+            planned_batch = [dict(event) for event in batch]
+            autonomy_plan_payload: dict[str, Any] | None = None
+            cycle_timestamp = (
+                str(planned_batch[-1].get("timestamp_wall"))
+                if planned_batch and planned_batch[-1].get("timestamp_wall")
+                else utc_now_iso()
+            )
+            if autonomy_enabled:
+                cycle_plan = plan_autonomous_cycle(
+                    batch,
+                    cycle_index=index,
+                    timestamp_wall=cycle_timestamp,
+                    policy=autonomy_policy,
+                    vitality_state=cast(Any, vitality_state),
+                    last_maintenance_cycle=last_maintenance_cycle,
+                    operator_paused=operator_paused,
+                )
+                planned_batch = [dict(event) for event in cycle_plan.planned_events]
+                autonomy_plan_payload = cycle_plan.to_dict()
+                if planned_batch and planned_batch[-1].get("timestamp_wall"):
+                    cycle_timestamp = str(planned_batch[-1].get("timestamp_wall"))
+                if any(
+                    str(event.get("semantic_topic") or event.get("event_type") or "")
+                    == "core.maintenance.tick"
+                    for event in planned_batch
+                ):
+                    last_maintenance_cycle = index
+            last_cycle_timestamp = cycle_timestamp
+            total_planned_events += len(planned_batch)
+            for event in planned_batch:
                 observed_topics.add(
                     str(event.get("semantic_topic") or event.get("event_type") or "unknown")
                 )
+            if autonomy_plan_payload is not None and not bool(
+                autonomy_plan_payload.get("should_run_workflow", False)
+            ):
+                cycle_results.append(
+                    {
+                        "cycle_index": index,
+                        "provided_event_count": len(batch),
+                        "planned_event_count": len(planned_batch),
+                        "synthetic_event_count": max(0, len(planned_batch) - len(batch)),
+                        "normalized_event_count": 0,
+                        "duplicate_event_count": 0,
+                        "execution_span_id": "",
+                        "audit_id": "",
+                        "status": str(autonomy_plan_payload.get("wake_decision") or "sleep"),
+                        "delegated": False,
+                        "steps": [],
+                        "tool_result_count": 0,
+                        "final_response": {},
+                        "autonomy": {
+                            **autonomy_plan_payload,
+                            "vitality_summary": build_vitality_summary(cast(Any, vitality_state)),
+                            "persona_summary": build_persona_summary(persona_state),
+                        },
+                    }
+                )
+                continue
             result = workflow.run(
-                batch,
+                planned_batch,
                 session_id=resolved_session_id,
                 event_source="daemon_replay_file",
             )
@@ -3931,8 +4007,10 @@ def run_event_daemon_replay(
                 {
                     "cycle_index": index,
                     "provided_event_count": len(batch),
+                    "planned_event_count": len(planned_batch),
+                    "synthetic_event_count": max(0, len(planned_batch) - len(batch)),
                     "normalized_event_count": result.events_persisted,
-                    "duplicate_event_count": max(0, len(batch) - result.events_persisted),
+                    "duplicate_event_count": max(0, len(planned_batch) - result.events_persisted),
                     "execution_span_id": result.execution_span_id,
                     "audit_id": result.audit_id,
                     "status": result.status,
@@ -3940,8 +4018,24 @@ def run_event_daemon_replay(
                     "steps": list(result.steps),
                     "tool_result_count": len(result.tool_results),
                     "final_response": dict(result.final_response),
+                    "autonomy": {
+                        **(autonomy_plan_payload or {}),
+                        "vitality_summary": build_vitality_summary(cast(Any, vitality_state)),
+                        "persona_summary": build_persona_summary(persona_state),
+                    },
                 }
             )
+        daemon_state = build_daemon_state(
+            autonomy_enabled=autonomy_enabled,
+            operator_paused=operator_paused,
+            cycle_count=len(cycle_results),
+            last_maintenance_cycle=last_maintenance_cycle,
+            previous_execution_count=previous_execution_count,
+            seeded_dedupe_key_count=len(seeded_dedupe_keys),
+            last_cycle_timestamp=last_cycle_timestamp,
+            vitality_state=cast(Any, vitality_state),
+            persona_state=persona_state,
+        )
         payload: dict[str, Any] = {
             "ok": True,
             "status": "ok",
@@ -3972,11 +4066,14 @@ def run_event_daemon_replay(
                 "replay_label": replay_label or "inline",
                 "cycle_count": len(cycle_results),
                 "provided_event_count": total_provided_events,
+                "planned_event_count": total_planned_events,
                 "normalized_event_count": total_normalized_events,
-                "duplicate_event_count": max(0, total_provided_events - total_normalized_events),
+                "duplicate_event_count": max(0, total_planned_events - total_normalized_events),
                 "seeded_dedupe_key_count": len(seeded_dedupe_keys),
                 "dedupe_key_count": len(shared_router.seen_dedupe_keys),
                 "observed_topics": sorted(observed_topics),
+                "autonomy_enabled": autonomy_enabled,
+                "daemon_state": daemon_state.to_dict(),
                 "cycles": cycle_results,
             },
             "release_gate_require_real_tool_adapter": require_real_tool_adapter,
@@ -4573,6 +4670,7 @@ def apply_approval_decision(
     approval_request_id: str,
     decision: str,
     tool_adapter: Any | None = None,
+    approval_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if decision not in {"approve", "deny", "expire"}:
         raise ValueError("approval_decision_must_be_approve_deny_or_expire")
@@ -4594,6 +4692,8 @@ def apply_approval_decision(
             "tool_name": approval_request["tool_name"],
             "source_execution_span_id": approval_request["source_execution_span_id"],
         }
+        if approval_metadata:
+            decision_payload["approval_metadata"] = dict(approval_metadata)
         resumed_execution: dict[str, Any] | None = None
         updated_status = "denied"
 
@@ -4650,6 +4750,9 @@ def apply_approval_decision(
                     "approval_decisions": data_store.get_approval_decisions(
                         approval_request_id
                     ),
+                    "approval_metadata": dict(approval_metadata)
+                    if approval_metadata
+                    else None,
                     "resumed_execution": None,
                     "approval_context": build_approval_context(
                         data_store,
@@ -4714,6 +4817,11 @@ def apply_approval_decision(
                 {
                     "approval_request_id": approval_request_id,
                     "approval_decision": decision,
+                    **(
+                        {"approval_metadata": dict(approval_metadata)}
+                        if approval_metadata
+                        else {}
+                    ),
                     "resumed_execution": result.to_dict(),
                     "final_response": final_response,
                 },
@@ -4774,6 +4882,7 @@ def apply_approval_decision(
             "status": updated_status,
             "approval_request": updated_request,
             "approval_decisions": data_store.get_approval_decisions(approval_request_id),
+            "approval_metadata": dict(approval_metadata) if approval_metadata else None,
             "resumed_execution": resumed_execution,
             "approval_context": build_approval_context(
                 data_store,

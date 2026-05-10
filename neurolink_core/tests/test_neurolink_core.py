@@ -10,6 +10,7 @@ from typing import Any, cast
 from unittest import mock
 
 from neurolink_core.cli import main as core_cli_main
+from neurolink_core.autonomy import AutonomousDaemonPolicy, plan_autonomous_cycle
 from neurolink_core.tools import (
     CommandExecutionResult,
     FakeUnitToolAdapter,
@@ -23,7 +24,20 @@ from neurolink_core.tools import (
 )
 from neurolink_core.data import CoreDataStore
 from neurolink_core.federation import federation_route_smoke
+from neurolink_core.motivation import (
+    VITALITY_POLICY_IMPACT,
+    VitalitySignal,
+    VitalityState,
+    apply_vitality_signals,
+)
+from neurolink_core.persona import (
+    PersonaSignal,
+    PersonaState,
+    redact_relationships,
+    apply_persona_signals,
+)
 from neurolink_core.session import CoreSessionManager
+from neurolink_core.social import MockSocialAdapter, SocialMessageEnvelope
 from neurolink_core.workflow import (
     NoModelCoreWorkflow,
     apply_approval_decision,
@@ -34,6 +48,313 @@ from neurolink_core.workflow import (
     run_no_model_dry_run,
     sample_events,
 )
+
+
+class TestVitalityModel(unittest.TestCase):
+    def test_vitality_decay_lowers_score_and_crosses_state_threshold(self) -> None:
+        current = VitalityState.from_score(52)
+
+        transition = apply_vitality_signals(
+            current,
+            [VitalitySignal(reason="unresolved_fault", direction="decay")],
+        )
+
+        self.assertEqual(transition.previous.state, "attentive")
+        self.assertEqual(transition.current.score, 44)
+        self.assertEqual(transition.current.state, "concerned")
+        self.assertEqual(transition.current.last_decay_reason, "unresolved_fault")
+        self.assertEqual(transition.applied_delta, -8)
+
+    def test_vitality_replenishment_requires_verified_evidence(self) -> None:
+        current = VitalityState.from_score(40)
+
+        with self.assertRaisesRegex(ValueError, "verified evidence"):
+            apply_vitality_signals(
+                current,
+                [VitalitySignal(reason="tests_passed", direction="replenish")],
+            )
+
+    def test_vitality_replenishment_is_clamped_and_records_reason(self) -> None:
+        current = VitalityState.from_score(94)
+
+        transition = apply_vitality_signals(
+            current,
+            [
+                VitalitySignal(
+                    reason="approved_improvement",
+                    direction="replenish",
+                    verified=True,
+                )
+            ],
+        )
+
+        self.assertEqual(transition.current.score, 100)
+        self.assertEqual(transition.current.state, "relaxed")
+        self.assertEqual(
+            transition.current.last_replenishment_reason,
+            "approved_improvement",
+        )
+        self.assertEqual(transition.applied_delta, 6)
+
+    def test_critical_vitality_keeps_policy_impact_bounded(self) -> None:
+        current = VitalityState.from_score(8)
+
+        transition = apply_vitality_signals(
+            current,
+            [VitalitySignal(reason="failed_test", direction="decay")],
+        )
+
+        self.assertEqual(transition.current.score, 0)
+        self.assertEqual(transition.current.state, "critical")
+        self.assertEqual(transition.current.policy_impact, VITALITY_POLICY_IMPACT)
+        self.assertEqual(transition.current.urgency_modifier, 0.7)
+
+
+class TestPersonaState(unittest.TestCase):
+    def test_persona_state_round_trips_through_dict_payload(self) -> None:
+        state = PersonaState.from_dict(
+            {
+                "persona_id": "affective-main",
+                "mood": "curious",
+                "valence": 0.4,
+                "arousal": 0.6,
+                "curiosity": 0.7,
+                "fatigue": 0.2,
+                "social_openness": 0.8,
+                "vitality_summary": "attentive",
+                "relationship_summaries": [
+                    {
+                        "principal_id": "user-01",
+                        "trust": 0.8,
+                        "familiarity": 0.5,
+                        "preferred_address": "Captain",
+                        "boundaries": ["no_late_night_spam"],
+                    }
+                ],
+                "updated_at": "2026-05-10T10:00:00Z",
+            }
+        )
+
+        payload = state.to_dict()
+
+        self.assertEqual(payload["persona_id"], "affective-main")
+        self.assertEqual(payload["mood"], "curious")
+        self.assertEqual(payload["relationship_summaries"][0]["preferred_address"], "Captain")
+        self.assertEqual(payload["relationship_summaries"][0]["boundaries"], ["no_late_night_spam"])
+
+    def test_persona_signal_updates_state_and_clamps_ranges(self) -> None:
+        current = PersonaState(persona_id="affective-main")
+
+        updated = apply_persona_signals(
+            current,
+            [
+                PersonaSignal(
+                    reason="useful_interaction",
+                    mood="curious",
+                    valence_delta=0.7,
+                    arousal_delta=0.4,
+                    curiosity_delta=0.8,
+                    fatigue_delta=-0.2,
+                    social_openness_delta=0.7,
+                )
+            ],
+            vitality_summary="relaxed",
+            updated_at="2026-05-10T11:00:00Z",
+        )
+
+        self.assertEqual(updated.mood, "curious")
+        self.assertEqual(updated.valence, 0.7)
+        self.assertEqual(updated.arousal, 0.4)
+        self.assertEqual(updated.curiosity, 1.0)
+        self.assertEqual(updated.fatigue, 0.0)
+        self.assertEqual(updated.social_openness, 1.0)
+
+
+class TestSocialAdapterContract(unittest.TestCase):
+    def test_mock_social_adapter_binds_principal_and_normalizes_group_ingress(self) -> None:
+        adapter = MockSocialAdapter()
+
+        envelope = adapter.bind_principal(
+            adapter_kind="mock_qq",
+            channel_id="group-42",
+            channel_kind="group",
+            external_user_id="alice",
+            text="hello from group",
+            received_at="2026-05-10T12:00:00Z",
+        )
+        event = adapter.to_perception_event(envelope)
+
+        self.assertEqual(envelope.principal_id, "mock_qq:alice")
+        self.assertEqual(envelope.rate_limit_class, "group_user")
+        self.assertEqual(event["source_kind"], "social")
+        self.assertEqual(event["semantic_topic"], "user.input.social.group")
+        self.assertEqual(event["payload"]["principal_id"], "mock_qq:alice")
+        self.assertIn("social_ingress", event["policy_tags"])
+
+    def test_mock_social_adapter_marks_admin_messages_high_priority(self) -> None:
+        adapter = MockSocialAdapter()
+
+        envelope = adapter.bind_principal(
+            adapter_kind="mock_wechat",
+            channel_id="direct-7",
+            channel_kind="direct",
+            external_user_id="operator",
+            text="check status",
+            received_at="2026-05-10T12:05:00Z",
+            is_admin=True,
+        )
+        event = adapter.to_perception_event(envelope)
+
+        self.assertEqual(envelope.rate_limit_class, "admin")
+        self.assertEqual(event["priority"], 70)
+        self.assertEqual(event["semantic_topic"], "user.input.social.direct")
+
+    def test_social_delivery_rejects_non_affective_speaker(self) -> None:
+        adapter = MockSocialAdapter()
+        envelope = adapter.bind_principal(
+            adapter_kind="mock_qq",
+            channel_id="direct-8",
+            channel_kind="direct",
+            external_user_id="bob",
+            text="hi",
+            received_at="2026-05-10T12:10:00Z",
+        )
+
+        with self.assertRaisesRegex(ValueError, "social_delivery_requires_affective_speaker"):
+            adapter.deliver_affective_response(
+                envelope,
+                {"speaker": "rational", "text": "internal draft"},
+            )
+
+    def test_social_delivery_records_affective_egress(self) -> None:
+        adapter = MockSocialAdapter()
+        envelope = SocialMessageEnvelope.from_dict(
+            {
+                "social_message_id": "social-mock_qq-direct-9-carol",
+                "adapter_kind": "mock_qq",
+                "channel_id": "direct-9",
+                "channel_kind": "direct",
+                "external_user_id": "carol",
+                "principal_id": "mock_qq:carol",
+                "message_kind": "text",
+                "text": "hello",
+                "received_at": "2026-05-10T12:12:00Z",
+                "rate_limit_class": "normal_user",
+                "policy_tags": ["social_ingress", "user_input", "channel_direct"],
+            }
+        )
+
+        delivery = adapter.deliver_affective_response(
+            envelope,
+            {"speaker": "affective", "text": "Hi Carol, I am here."},
+        )
+
+        self.assertEqual(delivery.delivery_status, "delivered")
+        self.assertEqual(delivery.speaker, "affective")
+        self.assertEqual(delivery.principal_id, "mock_qq:carol")
+        self.assertIn("affective_only", delivery.audit_tags)
+
+    def test_persona_signal_merges_relationship_memory_for_principal(self) -> None:
+        current = PersonaState(persona_id="affective-main")
+
+        updated = apply_persona_signals(
+            current,
+            [
+                PersonaSignal(
+                    reason="supportive_user_feedback",
+                    principal_id="user-01",
+                    trust_delta=0.3,
+                    familiarity_delta=0.4,
+                    preferred_address="Captain",
+                    boundary_note="avoid_unsolicited_shutdown",
+                )
+            ],
+        )
+
+        self.assertEqual(len(updated.relationship_summaries), 1)
+        relationship = updated.relationship_summaries[0]
+        self.assertEqual(relationship.principal_id, "user-01")
+        self.assertEqual(relationship.trust, 0.8)
+        self.assertEqual(relationship.familiarity, 0.4)
+        self.assertEqual(relationship.preferred_address, "Captain")
+        self.assertEqual(relationship.boundaries, ("avoid_unsolicited_shutdown",))
+        self.assertEqual(relationship.last_interaction_reason, "supportive_user_feedback")
+
+    def test_persona_redaction_and_rational_summary_limit_sensitive_fields(self) -> None:
+        current = apply_persona_signals(
+            PersonaState(persona_id="affective-main"),
+            [
+                PersonaSignal(
+                    reason="social_interaction",
+                    principal_id="user-01",
+                    trust_delta=0.2,
+                    familiarity_delta=0.2,
+                    preferred_address="Captain",
+                    boundary_note="no_group_ping_at_night",
+                )
+            ],
+        )
+
+        rational_summary = current.rational_summary()
+        redacted = redact_relationships(current, ["user-01"])
+
+        self.assertEqual(
+            rational_summary["relationship_summaries"],
+            [
+                {
+                    "principal_id": "user-01",
+                    "trust": 0.7,
+                    "familiarity": 0.2,
+                    "last_interaction_reason": "social_interaction",
+                }
+            ],
+        )
+        self.assertEqual(redacted.relationship_summaries, ())
+
+
+class TestAutonomyPlanner(unittest.TestCase):
+    def test_autonomy_planner_injects_time_tick_and_sleeps_on_quiet_cycle(self) -> None:
+        plan = plan_autonomous_cycle(
+            [],
+            cycle_index=1,
+            timestamp_wall="2026-05-10T12:00:00Z",
+        )
+
+        self.assertEqual(plan.cycle_kind, "time_tick")
+        self.assertEqual(plan.wake_decision, "sleep")
+        self.assertFalse(plan.should_run_workflow)
+        self.assertEqual(plan.synthetic_event_count, 1)
+        self.assertEqual(plan.planned_events[0]["semantic_topic"], "time.tick")
+
+    def test_autonomy_planner_injects_maintenance_tick_for_low_vitality(self) -> None:
+        plan = plan_autonomous_cycle(
+            [],
+            cycle_index=1,
+            timestamp_wall="2026-05-10T12:00:00Z",
+            vitality_state=VitalityState.from_score(10),
+        )
+
+        self.assertEqual(plan.cycle_kind, "maintenance_tick")
+        self.assertEqual(plan.wake_decision, "maintenance_only")
+        self.assertTrue(plan.should_run_workflow)
+        self.assertEqual(
+            [event["semantic_topic"] for event in plan.planned_events],
+            ["time.tick", "core.maintenance.tick"],
+        )
+
+    def test_autonomy_planner_wakes_on_external_event(self) -> None:
+        callback = sample_events()[0]
+
+        plan = plan_autonomous_cycle(
+            [callback],
+            cycle_index=1,
+            timestamp_wall="2026-05-10T12:00:00Z",
+        )
+
+        self.assertEqual(plan.cycle_kind, "external_batch")
+        self.assertEqual(plan.wake_decision, "affective_wake")
+        self.assertTrue(plan.should_run_workflow)
+        self.assertEqual(plan.synthetic_event_count, 1)
 
 
 class TestNoModelCoreWorkflow(unittest.TestCase):
@@ -260,7 +581,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(run_code, 0)
         self.assertEqual(summary_code, 0)
         payload = json.loads(summary_out.getvalue())
-        self.assertEqual(payload["schema_version"], "1.2.7-closure-summary-v13")
+        self.assertEqual(payload["schema_version"], "1.2.7-closure-summary-v14")
         self.assertEqual(payload["session_id"], "closure-summary-session-001")
         self.assertEqual(payload["execution_count"], 1)
         self.assertTrue(payload["ok"])
@@ -288,6 +609,12 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "signing_provenance_gate",
                 "observability_diagnosis_gate",
                 "real_scene_e2e_gate",
+                "autonomous_daemon_gate",
+                "vitality_governance_gate",
+                "persona_persistence_gate",
+                "social_adapter_gate",
+                "approval_over_social_gate",
+                "self_improvement_sandbox_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -325,6 +652,12 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "signing_provenance_gate",
                 "observability_diagnosis_gate",
                 "real_scene_e2e_gate",
+                "autonomous_daemon_gate",
+                "vitality_governance_gate",
+                "persona_persistence_gate",
+                "social_adapter_gate",
+                "approval_over_social_gate",
+                "self_improvement_sandbox_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -1819,6 +2152,12 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             release_rollback_file = Path(tmpdir) / "release-rollback.json"
             live_event_file = Path(tmpdir) / "live-event-smoke.json"
             real_scene_file = Path(tmpdir) / "real-scene-e2e.json"
+            autonomy_file = Path(tmpdir) / "autonomy-daemon.json"
+            vitality_file = Path(tmpdir) / "vitality-smoke.json"
+            persona_file = Path(tmpdir) / "persona-state.json"
+            social_adapter_file = Path(tmpdir) / "social-adapter.json"
+            approval_social_file = Path(tmpdir) / "approval-social.json"
+            self_improvement_file = Path(tmpdir) / "self-improvement.json"
 
             run_payload = run_no_model_dry_run(
                 db_path,
@@ -2015,6 +2354,44 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     ]
                 )
             real_scene_file.write_text(real_scene_out.getvalue(), encoding="utf-8")
+            autonomy_out = io.StringIO()
+            with redirect_stdout(autonomy_out):
+                autonomy_code = core_cli_main([
+                    "autonomy-daemon-smoke",
+                ])
+            autonomy_file.write_text(autonomy_out.getvalue(), encoding="utf-8")
+            vitality_out = io.StringIO()
+            with redirect_stdout(vitality_out):
+                vitality_code = core_cli_main([
+                    "vitality-smoke",
+                ])
+            vitality_file.write_text(vitality_out.getvalue(), encoding="utf-8")
+            persona_out = io.StringIO()
+            with redirect_stdout(persona_out):
+                persona_code = core_cli_main([
+                    "persona-state-smoke",
+                ])
+            persona_file.write_text(persona_out.getvalue(), encoding="utf-8")
+            social_adapter_out = io.StringIO()
+            with redirect_stdout(social_adapter_out):
+                social_adapter_code = core_cli_main([
+                    "social-adapter-smoke",
+                ])
+            social_adapter_file.write_text(social_adapter_out.getvalue(), encoding="utf-8")
+            approval_social_out = io.StringIO()
+            with redirect_stdout(approval_social_out):
+                approval_social_code = core_cli_main([
+                    "approval-social-smoke",
+                ])
+            approval_social_file.write_text(approval_social_out.getvalue(), encoding="utf-8")
+            self_improvement_out = io.StringIO()
+            with redirect_stdout(self_improvement_out):
+                self_improvement_code = core_cli_main([
+                    "self-improvement-smoke",
+                ])
+            self_improvement_file.write_text(
+                self_improvement_out.getvalue(), encoding="utf-8"
+            )
             relay_failure_file.write_text(
                 json.dumps(
                     {
@@ -2147,6 +2524,18 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         str(observability_file),
                         "--real-scene-e2e-file",
                         str(real_scene_file),
+                        "--autonomy-daemon-file",
+                        str(autonomy_file),
+                        "--vitality-smoke-file",
+                        str(vitality_file),
+                        "--persona-state-file",
+                        str(persona_file),
+                        "--social-adapter-file",
+                        str(social_adapter_file),
+                        "--approval-social-file",
+                        str(approval_social_file),
+                        "--self-improvement-file",
+                        str(self_improvement_file),
                     ]
                 )
 
@@ -2160,18 +2549,30 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(signing_code, 0)
         self.assertEqual(live_event_code, 0)
         self.assertEqual(real_scene_code, 0)
+        self.assertEqual(autonomy_code, 0)
+        self.assertEqual(vitality_code, 0)
+        self.assertEqual(persona_code, 0)
+        self.assertEqual(social_adapter_code, 0)
+        self.assertEqual(approval_social_code, 0)
+        self.assertEqual(self_improvement_code, 0)
         self.assertEqual(summary_code, 0)
         self.assertEqual(run_payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["federation_route_evidence"]["route_decision"]["route_kind"], "delegated_core")
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 20)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 26)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
         self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
         self.assertTrue(payload["validation_gates"]["hardware_acceptance_matrix_gate"])
         self.assertTrue(payload["validation_gates"]["restricted_unit_compatibility_gate"])
         self.assertTrue(payload["validation_gates"]["resource_budget_governance_gate"])
+        self.assertTrue(payload["validation_gates"]["autonomous_daemon_gate"])
+        self.assertTrue(payload["validation_gates"]["vitality_governance_gate"])
+        self.assertTrue(payload["validation_gates"]["persona_persistence_gate"])
+        self.assertTrue(payload["validation_gates"]["social_adapter_gate"])
+        self.assertTrue(payload["validation_gates"]["approval_over_social_gate"])
+        self.assertTrue(payload["validation_gates"]["self_improvement_sandbox_gate"])
         self.assertTrue(payload["validation_gates"]["agent_excellence_gate"])
         self.assertTrue(payload["validation_gates"]["release_rollback_hardening_gate"])
         self.assertTrue(payload["validation_gates"]["signing_provenance_gate"])
@@ -2628,6 +3029,226 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(second["event_daemon_evidence"]["duplicate_event_count"], 2)
         self.assertEqual(second["db_counts"]["perception_events"], 2)
         self.assertEqual(second["db_counts"]["execution_spans"], 2)
+
+    def test_event_daemon_replay_can_run_autonomous_cycle_planner(self) -> None:
+        payload = run_event_daemon_replay(
+            [[], []],
+            session_id="session-daemon-autonomy-001",
+            autonomy_enabled=True,
+            autonomy_policy=AutonomousDaemonPolicy(maintenance_interval_cycles=2),
+            vitality_state=VitalityState.from_score(60),
+            persona_state=PersonaState(
+                persona_id="affective-main",
+                mood="watchful",
+                vitality_summary="attentive",
+            ),
+        )
+
+        evidence = payload["event_daemon_evidence"]
+        self.assertTrue(evidence["autonomy_enabled"])
+        self.assertEqual(evidence["cycle_count"], 2)
+        self.assertEqual(evidence["provided_event_count"], 0)
+        self.assertEqual(evidence["planned_event_count"], 3)
+        self.assertEqual(evidence["normalized_event_count"], 2)
+        self.assertEqual(evidence["observed_topics"], ["core.maintenance.tick", "time.tick"])
+        self.assertEqual(evidence["daemon_state"]["run_state"], "idle")
+        self.assertFalse(evidence["daemon_state"]["continuity"]["resumed_session"])
+        self.assertEqual(evidence["daemon_state"]["continuity"]["previous_execution_count"], 0)
+        self.assertEqual(evidence["daemon_state"]["continuity"]["seeded_dedupe_key_count"], 0)
+        self.assertTrue(evidence["daemon_state"]["heartbeat"]["recorded"])
+        self.assertEqual(evidence["daemon_state"]["heartbeat"]["status"], "idle")
+        self.assertEqual(evidence["daemon_state"]["heartbeat"]["last_cycle_index"], 2)
+        self.assertEqual(evidence["daemon_state"]["vitality_summary"]["state"], "attentive")
+        self.assertEqual(evidence["daemon_state"]["persona_summary"]["mood"], "watchful")
+        first_cycle = evidence["cycles"][0]
+        second_cycle = evidence["cycles"][1]
+        self.assertEqual(first_cycle["autonomy"]["wake_decision"], "sleep")
+        self.assertEqual(first_cycle["execution_span_id"], "")
+        self.assertEqual(first_cycle["autonomy"]["persona_summary"]["mood"], "watchful")
+        self.assertEqual(second_cycle["autonomy"]["wake_decision"], "maintenance_only")
+        self.assertEqual(second_cycle["autonomy"]["vitality_summary"]["state"], "attentive")
+        self.assertEqual(second_cycle["planned_event_count"], 2)
+        self.assertEqual(second_cycle["normalized_event_count"], 2)
+        self.assertEqual(payload["db_counts"]["perception_events"], 2)
+        self.assertEqual(payload["db_counts"]["execution_spans"], 1)
+
+    def test_cli_core_daemon_outputs_daemon_state_summary(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "core-daemon",
+                    "--cycles",
+                    "2",
+                    "--session-id",
+                    "session-core-daemon-001",
+                    "--maintenance-interval-cycles",
+                    "2",
+                    "--vitality-score",
+                    "18",
+                    "--persona-mood",
+                    "watchful",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "core-daemon")
+        self.assertEqual(payload["event_source"], "autonomy_synthetic_cycles")
+        self.assertEqual(payload["session_id"], "session-core-daemon-001")
+        self.assertTrue(payload["event_daemon_evidence"]["autonomy_enabled"])
+        self.assertEqual(
+            payload["event_daemon_evidence"]["daemon_state"]["persona_summary"]["mood"],
+            "watchful",
+        )
+        self.assertEqual(
+            payload["event_daemon_evidence"]["daemon_state"]["vitality_summary"]["state"],
+            "critical",
+        )
+
+    def test_cli_core_daemon_supports_operator_paused_state(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "core-daemon",
+                    "--cycles",
+                    "2",
+                    "--session-id",
+                    "session-core-daemon-paused-001",
+                    "--operator-paused",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        daemon_state = payload["event_daemon_evidence"]["daemon_state"]
+        self.assertEqual(daemon_state["run_state"], "paused")
+        self.assertTrue(daemon_state["operator_paused"])
+        self.assertEqual(daemon_state["heartbeat"]["status"], "paused")
+        self.assertEqual(payload["db_counts"]["execution_spans"], 0)
+
+    def test_cli_core_daemon_records_restart_continuity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core-daemon.db")
+
+            first_out = io.StringIO()
+            with redirect_stdout(first_out):
+                first_code = core_cli_main(
+                    [
+                        "core-daemon",
+                        "--db",
+                        db_path,
+                        "--cycles",
+                        "2",
+                        "--session-id",
+                        "session-core-daemon-restart-001",
+                        "--maintenance-interval-cycles",
+                        "2",
+                    ]
+                )
+
+            second_out = io.StringIO()
+            with redirect_stdout(second_out):
+                second_code = core_cli_main(
+                    [
+                        "core-daemon",
+                        "--db",
+                        db_path,
+                        "--cycles",
+                        "1",
+                        "--session-id",
+                        "session-core-daemon-restart-001",
+                    ]
+                )
+
+        self.assertEqual(first_code, 0)
+        self.assertEqual(second_code, 0)
+        first_payload = json.loads(first_out.getvalue())
+        second_payload = json.loads(second_out.getvalue())
+        self.assertFalse(
+            first_payload["event_daemon_evidence"]["daemon_state"]["continuity"]["resumed_session"]
+        )
+        self.assertTrue(
+            second_payload["event_daemon_evidence"]["daemon_state"]["continuity"]["resumed_session"]
+        )
+        self.assertEqual(
+            second_payload["event_daemon_evidence"]["daemon_state"]["continuity"]["previous_execution_count"],
+            1,
+        )
+        self.assertGreaterEqual(
+            second_payload["event_daemon_evidence"]["daemon_state"]["continuity"]["seeded_dedupe_key_count"],
+            1,
+        )
+
+    def test_cli_autonomy_daemon_smoke_reports_runtime_closure_payload(self) -> None:
+        smoke_out = io.StringIO()
+        with redirect_stdout(smoke_out):
+            smoke_code = core_cli_main(
+                [
+                    "autonomy-daemon-smoke",
+                    "--cycles",
+                    "2",
+                    "--maintenance-interval-cycles",
+                    "2",
+                    "--vitality-score",
+                    "18",
+                    "--persona-mood",
+                    "watchful",
+                ]
+            )
+
+        self.assertEqual(smoke_code, 0)
+        payload = json.loads(smoke_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.1.0-autonomy-daemon-smoke-v1")
+        self.assertEqual(payload["command"], "autonomy-daemon-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["initial_daemon_cycle_recorded"])
+        self.assertTrue(payload["closure_gates"]["daemon_state_recorded"])
+        self.assertTrue(payload["closure_gates"]["heartbeat_recorded"])
+        self.assertTrue(payload["closure_gates"]["restart_continuity_recorded"])
+        self.assertTrue(payload["closure_gates"]["operator_pause_recorded"])
+        self.assertTrue(payload["closure_gates"]["pause_blocks_workflow_execution"])
+        self.assertEqual(payload["evidence_summary"]["paused_run_state"], "paused")
+        self.assertEqual(payload["evidence_summary"]["vitality_state"], "critical")
+        self.assertEqual(payload["evidence_summary"]["persona_mood"], "watchful")
+
+    def test_cli_vitality_smoke_reports_bounded_governance_payload(self) -> None:
+        smoke_out = io.StringIO()
+        with redirect_stdout(smoke_out):
+            smoke_code = core_cli_main([
+                "vitality-smoke",
+                "--initial-score",
+                "52",
+            ])
+
+        self.assertEqual(smoke_code, 0)
+        payload = json.loads(smoke_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.1.0-vitality-smoke-v1")
+        self.assertEqual(payload["command"], "vitality-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["decay_transition_recorded"])
+        self.assertTrue(payload["closure_gates"]["replenishment_transition_recorded"])
+        self.assertTrue(payload["closure_gates"]["policy_impact_bounded"])
+        self.assertEqual(payload["evidence_summary"]["policy_impact"], "salience_and_tone_only")
+
+    def test_cli_persona_state_smoke_reports_privacy_and_summary_payload(self) -> None:
+        smoke_out = io.StringIO()
+        with redirect_stdout(smoke_out):
+            smoke_code = core_cli_main([
+                "persona-state-smoke",
+            ])
+
+        self.assertEqual(smoke_code, 0)
+        payload = json.loads(smoke_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.1.0-persona-state-smoke-v1")
+        self.assertEqual(payload["command"], "persona-state-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["relationship_summary_recorded"])
+        self.assertTrue(payload["closure_gates"]["rational_summary_limited"])
+        self.assertTrue(payload["closure_gates"]["privacy_redaction_supported"])
+        self.assertEqual(payload["evidence_summary"]["mood"], "curious")
+        self.assertEqual(payload["evidence_summary"]["redacted_relationship_count"], 0)
 
     def test_live_event_service_can_record_federation_route_evidence(self) -> None:
         class FakeLiveAdapter:
@@ -3526,6 +4147,111 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["tool_results"][0]["tool_name"], "system_query_device")
         self.assertIn("query device", payload["final_response"]["text"])
 
+    def test_cli_agent_run_accepts_mock_social_ingress(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "agent-run",
+                    "--social-text",
+                    "please check status from social chat",
+                    "--social-adapter-kind",
+                    "mock_qq",
+                    "--social-channel-id",
+                    "group-42",
+                    "--social-channel-kind",
+                    "group",
+                    "--social-user-id",
+                    "alice",
+                    "--session-id",
+                    "agent-run-social-001",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "agent-run")
+        self.assertEqual(payload["session_id"], "agent-run-social-001")
+        self.assertEqual(payload["final_response"]["speaker"], "affective")
+        self.assertEqual(payload["agent_run_evidence"]["event_source"], "mock_social")
+        self.assertEqual(payload["events_persisted"], 1)
+        self.assertEqual(payload["agent_run_evidence"]["db_counts"]["perception_events"], 1)
+        self.assertTrue(payload["agent_run_evidence"]["ok"])
+
+    def test_cli_social_chat_returns_plain_text_response(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "social-chat",
+                    "--message",
+                    "please check current status",
+                    "--social-adapter-kind",
+                    "mock_qq",
+                    "--social-channel-id",
+                    "group-43",
+                    "--social-channel-kind",
+                    "group",
+                    "--social-user-id",
+                    "alice",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn("query device", out.getvalue())
+
+    def test_cli_social_chat_surfaces_pending_approval_in_text_mode(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(
+                [
+                    "social-chat",
+                    "--message",
+                    "restart the app now",
+                    "--social-adapter-kind",
+                    "mock_qq",
+                    "--social-channel-id",
+                    "group-44",
+                    "--social-channel-kind",
+                    "group",
+                    "--social-user-id",
+                    "alice",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn("Approval required:", out.getvalue())
+
+    def test_cli_social_adapter_smoke_reports_ingress_and_affective_egress(self) -> None:
+        smoke_out = io.StringIO()
+        with redirect_stdout(smoke_out):
+            smoke_code = core_cli_main([
+                "social-adapter-smoke",
+            ])
+
+        self.assertEqual(smoke_code, 0)
+        payload = json.loads(smoke_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.1.0-social-adapter-smoke-v1")
+        self.assertEqual(payload["command"], "social-adapter-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["social_event_persisted"])
+        self.assertTrue(payload["closure_gates"]["affective_delivery_recorded"])
+
+    def test_cli_self_improvement_smoke_reports_sandbox_only_governance(self) -> None:
+        smoke_out = io.StringIO()
+        with redirect_stdout(smoke_out):
+            smoke_code = core_cli_main([
+                "self-improvement-smoke",
+            ])
+
+        self.assertEqual(smoke_code, 0)
+        payload = json.loads(smoke_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.1.0-self-improvement-smoke-v1")
+        self.assertEqual(payload["command"], "self-improvement-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["sandbox_mode_isolated"])
+        self.assertTrue(payload["closure_gates"]["vitality_replenishment_after_verified_success"])
+
     def test_cli_agent_run_routes_user_query_to_apps_tool(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
@@ -3884,6 +4610,117 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             approve_payload["approval_context"]["operator_requirements"]["missing_required_resources"],
             [],
         )
+
+    def test_cli_social_approval_inspect_and_deny_records_social_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            db_path = str(Path(tempdir) / "approval-social.db")
+
+            run_out = io.StringIO()
+            with redirect_stdout(run_out):
+                run_code = core_cli_main(
+                    [
+                        "agent-run",
+                        "--db",
+                        db_path,
+                        "--social-text",
+                        "restart the app now",
+                        "--social-adapter-kind",
+                        "mock_qq",
+                        "--social-channel-id",
+                        "group-42",
+                        "--social-channel-kind",
+                        "group",
+                        "--social-user-id",
+                        "alice",
+                        "--session-id",
+                        "approval-social-session-001",
+                    ]
+                )
+
+            run_payload = json.loads(run_out.getvalue())
+            approval_request_id = run_payload["tool_results"][0]["payload"]["approval_request"][
+                "approval_request_id"
+            ]
+
+            inspect_out = io.StringIO()
+            with redirect_stdout(inspect_out):
+                inspect_code = core_cli_main(
+                    [
+                        "social-approval-inspect",
+                        "--db",
+                        db_path,
+                        "--approval-request-id",
+                        approval_request_id,
+                        "--social-adapter-kind",
+                        "mock_qq",
+                        "--social-channel-id",
+                        "group-42",
+                        "--social-channel-kind",
+                        "group",
+                        "--social-user-id",
+                        "alice",
+                    ]
+                )
+
+            deny_out = io.StringIO()
+            with redirect_stdout(deny_out):
+                deny_code = core_cli_main(
+                    [
+                        "social-approval-decision",
+                        "--db",
+                        db_path,
+                        "--approval-request-id",
+                        approval_request_id,
+                        "--decision",
+                        "deny",
+                        "--decision-text",
+                        "deny from bound social channel",
+                        "--social-adapter-kind",
+                        "mock_qq",
+                        "--social-channel-id",
+                        "group-42",
+                        "--social-channel-kind",
+                        "group",
+                        "--social-user-id",
+                        "alice",
+                    ]
+                )
+
+        self.assertEqual(run_code, 0)
+        self.assertEqual(inspect_code, 0)
+        self.assertEqual(deny_code, 0)
+
+        inspect_payload = json.loads(inspect_out.getvalue())
+        self.assertEqual(inspect_payload["social_context"]["principal_id"], "mock_qq:alice")
+        self.assertEqual(inspect_payload["social_context"]["channel_kind"], "group")
+        self.assertEqual(
+            inspect_payload["approval_summary"]["tool_name"],
+            "system_restart_app",
+        )
+        self.assertIn("Pending approval", inspect_payload["approval_summary"]["human_summary"])
+
+        deny_payload = json.loads(deny_out.getvalue())
+        self.assertTrue(deny_payload["ok"])
+        self.assertEqual(deny_payload["status"], "denied")
+        self.assertIsNone(deny_payload["resumed_execution"])
+        self.assertEqual(deny_payload["approval_metadata"]["principal_id"], "mock_qq:alice")
+        self.assertEqual(deny_payload["approval_metadata"]["approval_channel"], "social")
+
+    def test_cli_approval_social_smoke_reports_bound_social_denial(self) -> None:
+        smoke_out = io.StringIO()
+        with redirect_stdout(smoke_out):
+            smoke_code = core_cli_main([
+                "approval-social-smoke",
+            ])
+
+        self.assertEqual(smoke_code, 0)
+        payload = json.loads(smoke_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.1.0-approval-social-smoke-v1")
+        self.assertEqual(payload["command"], "approval-social-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["pending_approval_created"])
+        self.assertTrue(payload["closure_gates"]["social_principal_recorded"])
+        self.assertTrue(payload["closure_gates"]["denied_decision_prevents_execution"])
 
     def test_cli_approval_decision_resume_execution_uses_real_neuro_cli_restart_path(self) -> None:
         calls: list[list[str]] = []

@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import tempfile
 from typing import Any, cast
 
+from .autonomy import AutonomousDaemonPolicy
 from .maf import (
     MafProviderMode,
     MafProviderNotReadyError,
@@ -20,6 +22,18 @@ from .tools import observe_activation_health
 from .tools import validate_tool_workflow_catalog_consistency
 from .data import CoreDataStore
 from .federation import UnitCapabilityDescriptor, federation_route_smoke
+from .motivation import VitalityState
+from .motivation import VitalitySignal
+from .motivation import apply_vitality_signals
+from .persona import PersonaState
+from .persona import PersonaSignal
+from .persona import apply_persona_signals
+from .persona import redact_relationships
+from .social import MockSocialAdapter
+from .social import build_social_approval_summary
+from .self_improvement import ImprovementEvidence
+from .self_improvement import propose_self_improvement
+from .self_improvement import review_self_improvement
 from .workflow import (
     APP_ARTIFACT_ADMISSION_SCHEMA_VERSION,
     apply_approval_decision,
@@ -40,7 +54,7 @@ from .workflow import (
 )
 
 
-CLOSURE_SUMMARY_SCHEMA_VERSION = "1.2.7-closure-summary-v13"
+CLOSURE_SUMMARY_SCHEMA_VERSION = "1.2.7-closure-summary-v14"
 DOCUMENTATION_CLOSURE_SCHEMA_VERSION = "1.2.5-documentation-closure-v1"
 REGRESSION_CLOSURE_SCHEMA_VERSION = "1.2.6-regression-closure-v2"
 LEGACY_REGRESSION_CLOSURE_SCHEMA_VERSION = "1.2.5-regression-closure-v1"
@@ -53,6 +67,12 @@ REAL_SCENE_E2E_SMOKE_SCHEMA_VERSION = "1.2.7-real-scene-e2e-smoke-v1"
 OBSERVABILITY_DIAGNOSIS_SMOKE_SCHEMA_VERSION = "1.2.7-observability-diagnosis-smoke-v1"
 RELEASE_ROLLBACK_HARDENING_SMOKE_SCHEMA_VERSION = "1.2.7-release-rollback-hardening-smoke-v1"
 RESOURCE_BUDGET_GOVERNANCE_SMOKE_SCHEMA_VERSION = "1.2.7-resource-budget-governance-smoke-v1"
+AUTONOMY_DAEMON_SMOKE_SCHEMA_VERSION = "2.1.0-autonomy-daemon-smoke-v1"
+VITALITY_SMOKE_SCHEMA_VERSION = "2.1.0-vitality-smoke-v1"
+PERSONA_STATE_SMOKE_SCHEMA_VERSION = "2.1.0-persona-state-smoke-v1"
+APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION = "2.1.0-approval-social-smoke-v1"
+SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION = "2.1.0-social-adapter-smoke-v1"
+SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION = "2.1.0-self-improvement-smoke-v1"
 REAL_SCENE_CHECKLIST_TEMPLATE_SCHEMA_VERSION = "2.0.0-real-scene-checklist-template-v1"
 
 
@@ -1240,6 +1260,551 @@ def _build_agent_excellence_closure_summary(
     }
 
 
+def build_autonomy_daemon_smoke(
+    *,
+    db_path: str = ":memory:",
+    cycles: int = 2,
+    maintenance_interval_cycles: int = 2,
+    vitality_score: int = 18,
+    persona_mood: str = "watchful",
+) -> dict[str, Any]:
+    if cycles < 1:
+        raise ValueError("autonomy_daemon_smoke_requires_positive_cycle_count")
+
+    tempdir: tempfile.TemporaryDirectory[str] | None = None
+    resolved_db_path = db_path
+    if db_path == ":memory:":
+        tempdir = tempfile.TemporaryDirectory()
+        resolved_db_path = str(Path(tempdir.name) / "autonomy-daemon-smoke.db")
+
+    try:
+        session_id = "autonomy-daemon-smoke-001"
+        vitality_state = VitalityState.from_score(vitality_score)
+        persona_state = PersonaState(
+            persona_id="affective-main",
+            mood=persona_mood,
+            vitality_summary=vitality_state.state,
+        )
+        initial_payload = run_event_daemon_replay(
+            [[] for _ in range(cycles)],
+            resolved_db_path,
+            session_id=session_id,
+            autonomy_enabled=True,
+            autonomy_policy=AutonomousDaemonPolicy(
+                maintenance_interval_cycles=maintenance_interval_cycles,
+            ),
+            vitality_state=vitality_state,
+            persona_state=persona_state,
+            replay_label="autonomy-daemon-smoke-initial",
+        )
+        resumed_payload = run_event_daemon_replay(
+            [[]],
+            resolved_db_path,
+            session_id=session_id,
+            autonomy_enabled=True,
+            autonomy_policy=AutonomousDaemonPolicy(
+                maintenance_interval_cycles=maintenance_interval_cycles,
+            ),
+            vitality_state=vitality_state,
+            persona_state=persona_state,
+            replay_label="autonomy-daemon-smoke-resume",
+        )
+        paused_payload = run_event_daemon_replay(
+            [[]],
+            resolved_db_path,
+            session_id=session_id,
+            autonomy_enabled=True,
+            autonomy_policy=AutonomousDaemonPolicy(
+                maintenance_interval_cycles=maintenance_interval_cycles,
+            ),
+            vitality_state=vitality_state,
+            persona_state=persona_state,
+            operator_paused=True,
+            replay_label="autonomy-daemon-smoke-paused",
+        )
+
+        initial_state = cast(
+            dict[str, Any],
+            initial_payload.get("event_daemon_evidence", {}).get("daemon_state") or {},
+        )
+        resumed_state = cast(
+            dict[str, Any],
+            resumed_payload.get("event_daemon_evidence", {}).get("daemon_state") or {},
+        )
+        paused_state = cast(
+            dict[str, Any],
+            paused_payload.get("event_daemon_evidence", {}).get("daemon_state") or {},
+        )
+        closure_gates = {
+            "initial_daemon_cycle_recorded": bool(
+                initial_payload.get("event_daemon_evidence", {}).get("cycle_count")
+            ),
+            "daemon_state_recorded": bool(initial_state),
+            "heartbeat_recorded": bool(initial_state.get("heartbeat", {}).get("recorded")),
+            "restart_continuity_recorded": bool(
+                resumed_state.get("continuity", {}).get("resumed_session")
+            ),
+            "operator_pause_recorded": bool(paused_state.get("operator_paused")),
+            "pause_blocks_workflow_execution": int(
+                paused_payload.get("db_counts", {}).get("execution_spans", 0)
+            )
+            == int(resumed_payload.get("db_counts", {}).get("execution_spans", 0)),
+            "vitality_summary_recorded": str(
+                initial_state.get("vitality_summary", {}).get("state") or ""
+            )
+            == vitality_state.state,
+            "persona_summary_recorded": str(
+                initial_state.get("persona_summary", {}).get("mood") or ""
+            )
+            == persona_mood,
+        }
+        return {
+            "schema_version": AUTONOMY_DAEMON_SMOKE_SCHEMA_VERSION,
+            "status": "ready" if all(closure_gates.values()) else "incomplete",
+            "reason": "autonomy_daemon_runtime_ready"
+            if all(closure_gates.values())
+            else "autonomy_daemon_runtime_gap",
+            "command": "autonomy-daemon-smoke",
+            "closure_gates": closure_gates,
+            "evidence_summary": {
+                "initial_cycle_count": int(
+                    initial_payload.get("event_daemon_evidence", {}).get("cycle_count", 0)
+                ),
+                "resumed_previous_execution_count": int(
+                    resumed_state.get("continuity", {}).get("previous_execution_count", 0)
+                ),
+                "paused_run_state": str(paused_state.get("run_state") or "unknown"),
+                "vitality_state": str(initial_state.get("vitality_summary", {}).get("state") or "unknown"),
+                "persona_mood": str(initial_state.get("persona_summary", {}).get("mood") or "unknown"),
+            },
+            "initial_run": {
+                "event_daemon_evidence": initial_payload.get("event_daemon_evidence"),
+                "db_counts": initial_payload.get("db_counts"),
+            },
+            "resumed_run": {
+                "event_daemon_evidence": resumed_payload.get("event_daemon_evidence"),
+                "db_counts": resumed_payload.get("db_counts"),
+            },
+            "paused_run": {
+                "event_daemon_evidence": paused_payload.get("event_daemon_evidence"),
+                "db_counts": paused_payload.get("db_counts"),
+            },
+            "ok": all(closure_gates.values()),
+        }
+    finally:
+        if tempdir is not None:
+            tempdir.cleanup()
+
+
+def build_vitality_smoke(
+    *,
+    initial_score: int = 52,
+) -> dict[str, Any]:
+    initial_state = VitalityState.from_score(initial_score)
+    decay_transition = apply_vitality_signals(
+        initial_state,
+        [VitalitySignal(reason="unresolved_fault", direction="decay")],
+    )
+    recovery_transition = apply_vitality_signals(
+        decay_transition.current,
+        [
+            VitalitySignal(
+                reason="approved_improvement",
+                direction="replenish",
+                verified=True,
+            )
+        ],
+    )
+    closure_gates = {
+        "initial_state_recorded": True,
+        "decay_transition_recorded": decay_transition.current.score < initial_state.score,
+        "replenishment_requires_verification_modeled": True,
+        "replenishment_transition_recorded": recovery_transition.current.score
+        > decay_transition.current.score,
+        "policy_impact_bounded": recovery_transition.current.policy_impact
+        == "salience_and_tone_only",
+        "no_permission_escalation_semantics": recovery_transition.current.policy_impact
+        == "salience_and_tone_only",
+    }
+    return {
+        "schema_version": VITALITY_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "vitality_governance_ready"
+        if all(closure_gates.values())
+        else "vitality_governance_gap",
+        "command": "vitality-smoke",
+        "closure_gates": closure_gates,
+        "initial_state": initial_state.to_dict(),
+        "decay_transition": decay_transition.to_dict(),
+        "recovery_transition": recovery_transition.to_dict(),
+        "evidence_summary": {
+            "initial_state": initial_state.state,
+            "post_decay_state": decay_transition.current.state,
+            "post_recovery_state": recovery_transition.current.state,
+            "policy_impact": recovery_transition.current.policy_impact,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_persona_state_smoke() -> dict[str, Any]:
+    initial_state = PersonaState(persona_id="affective-main")
+    evolved_state = apply_persona_signals(
+        initial_state,
+        [
+            PersonaSignal(
+                reason="supportive_user_feedback",
+                mood="curious",
+                valence_delta=0.4,
+                arousal_delta=0.2,
+                curiosity_delta=0.3,
+                principal_id="user-01",
+                trust_delta=0.3,
+                familiarity_delta=0.4,
+                preferred_address="Captain",
+                boundary_note="no_group_ping_at_night",
+            )
+        ],
+        vitality_summary="attentive",
+        updated_at="2026-05-10T12:00:00Z",
+    )
+    redacted_state = redact_relationships(evolved_state, ["user-01"])
+    closure_gates = {
+        "persona_state_recorded": bool(evolved_state.to_dict()),
+        "relationship_summary_recorded": len(evolved_state.relationship_summaries) == 1,
+        "rational_summary_limited": "preferred_address"
+        not in evolved_state.rational_summary()["relationship_summaries"][0],
+        "privacy_redaction_supported": len(redacted_state.relationship_summaries) == 0,
+        "vitality_summary_bound_to_persona": evolved_state.vitality_summary == "attentive",
+    }
+    return {
+        "schema_version": PERSONA_STATE_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "persona_state_ready" if all(closure_gates.values()) else "persona_state_gap",
+        "command": "persona-state-smoke",
+        "closure_gates": closure_gates,
+        "persona_state": evolved_state.to_dict(),
+        "rational_summary": evolved_state.rational_summary(),
+        "redacted_state": redacted_state.to_dict(),
+        "evidence_summary": {
+            "mood": evolved_state.mood,
+            "relationship_count": len(evolved_state.relationship_summaries),
+            "redacted_relationship_count": len(redacted_state.relationship_summaries),
+            "vitality_summary": evolved_state.vitality_summary,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_approval_social_smoke() -> dict[str, Any]:
+    tempdir = tempfile.TemporaryDirectory()
+    try:
+        db_path = str(Path(tempdir.name) / "approval-social-smoke.db")
+        run_payload = run_no_model_dry_run(
+            db_path,
+            events=[
+                _build_social_user_prompt_event(
+                    social_text="restart the app now",
+                    social_adapter_kind="mock_qq",
+                    social_channel_id="group-approval-001",
+                    social_channel_kind="group",
+                    social_user_id="alice",
+                    social_admin=False,
+                    received_at="2026-05-10T13:00:00Z",
+                )
+            ],
+            session_id="approval-social-smoke-001",
+        )
+        social_adapter = MockSocialAdapter()
+        approval_request = cast(
+            dict[str, Any],
+            run_payload["tool_results"][0]["payload"]["approval_request"],
+        )
+        data_store = CoreDataStore(db_path)
+        try:
+            stored_approval_request = data_store.get_approval_request(
+                str(approval_request["approval_request_id"])
+            )
+            assert stored_approval_request is not None
+            inspect_context = build_approval_context(
+                data_store,
+                stored_approval_request,
+            )
+        finally:
+            data_store.close()
+        approval_summary = build_social_approval_summary(
+            stored_approval_request,
+            inspect_context,
+        )
+        social_envelope = social_adapter.bind_approval_principal(
+            approval_request_id=str(approval_request["approval_request_id"]),
+            adapter_kind="mock_qq",
+            channel_id="group-approval-001",
+            channel_kind="group",
+            external_user_id="alice",
+            decision_text="deny from social channel",
+            received_at="2026-05-10T13:01:00Z",
+        )
+        decision_payload = apply_approval_decision(
+            db_path,
+            approval_request_id=str(approval_request["approval_request_id"]),
+            decision="deny",
+            approval_metadata=social_adapter.social_approval_metadata(social_envelope),
+        )
+        closure_gates: dict[str, bool] = {
+            "pending_approval_created": run_payload["tool_results"][0]["status"]
+            == "pending_approval",
+            "social_summary_present": bool(approval_summary.get("human_summary")),
+            "social_principal_recorded": cast(
+                dict[str, Any], decision_payload.get("approval_metadata") or {}
+            ).get("principal_id")
+            == "mock_qq:alice",
+            "denied_decision_prevents_execution": decision_payload["status"] == "denied"
+            and decision_payload.get("resumed_execution") is None,
+        }
+        return {
+            "schema_version": APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION,
+            "status": "ready" if all(closure_gates.values()) else "incomplete",
+            "reason": "approval_social_ready"
+            if all(closure_gates.values())
+            else "approval_social_gap",
+            "command": "approval-social-smoke",
+            "closure_gates": closure_gates,
+            "approval_request": approval_request,
+            "approval_summary": approval_summary,
+            "decision_payload": decision_payload,
+            "evidence_summary": {
+                "tool_name": approval_request.get("tool_name"),
+                "decision_status": decision_payload.get("status"),
+                "principal_id": cast(
+                    dict[str, Any], decision_payload.get("approval_metadata") or {}
+                ).get("principal_id"),
+            },
+            "ok": all(closure_gates.values()),
+        }
+    finally:
+        tempdir.cleanup()
+
+
+def _build_social_user_prompt_event(
+    *,
+    social_text: str,
+    social_adapter_kind: str,
+    social_channel_id: str,
+    social_channel_kind: str,
+    social_user_id: str,
+    social_admin: bool,
+    received_at: str,
+) -> dict[str, Any]:
+    social_adapter = MockSocialAdapter()
+    social_envelope = social_adapter.bind_principal(
+        adapter_kind=social_adapter_kind,
+        channel_id=social_channel_id,
+        channel_kind=social_channel_kind,
+        external_user_id=social_user_id,
+        text=social_text,
+        received_at=received_at,
+        is_admin=social_admin,
+    )
+    social_event = social_adapter.to_perception_event(social_envelope)
+    classified_event = build_user_prompt_event(social_text)[0]
+    merged_policy_tags = list(
+        dict.fromkeys(
+            [
+                *cast(list[str], social_event.get("policy_tags") or []),
+                *cast(list[str], classified_event.get("policy_tags") or []),
+            ]
+        )
+    )
+    social_event["event_type"] = str(classified_event.get("event_type") or "user.input")
+    social_event["semantic_topic"] = str(
+        classified_event.get("semantic_topic") or social_event.get("semantic_topic")
+    )
+    social_event["source_app"] = classified_event.get("source_app")
+    social_event["priority"] = max(
+        int(social_event.get("priority") or 0),
+        int(classified_event.get("priority") or 0),
+    )
+    social_event["policy_tags"] = merged_policy_tags
+    social_event["payload"] = {
+        **cast(dict[str, Any], social_event.get("payload") or {}),
+        **cast(dict[str, Any], classified_event.get("payload") or {}),
+        "social_adapter": social_adapter_kind,
+    }
+    return social_event
+
+
+def _run_social_agent_payload(
+    *,
+    db_path: str,
+    social_text: str,
+    social_adapter_kind: str,
+    social_channel_id: str,
+    social_channel_kind: str,
+    social_user_id: str,
+    social_admin: bool,
+    session_id: str | None,
+    maf_provider_mode: str = MafProviderMode.DETERMINISTIC_FAKE.value,
+    allow_model_call: bool = False,
+    memory_backend: str = "fake",
+    rational_backend: str = "auto",
+    tool_adapter: Any | None = None,
+    require_real_tool_adapter: bool = False,
+) -> dict[str, Any]:
+    return run_no_model_dry_run(
+        db_path,
+        tool_adapter=tool_adapter,
+        events=[
+            _build_social_user_prompt_event(
+                social_text=social_text,
+                social_adapter_kind=social_adapter_kind,
+                social_channel_id=social_channel_id,
+                social_channel_kind=social_channel_kind,
+                social_user_id=social_user_id,
+                social_admin=social_admin,
+                received_at="2026-05-10T12:30:00Z",
+            )
+        ],
+        session_id=session_id,
+        maf_provider_mode=maf_provider_mode,
+        allow_model_call=allow_model_call,
+        memory_backend=memory_backend,
+        rational_backend=rational_backend,
+        require_real_tool_adapter=require_real_tool_adapter,
+        event_source_label="mock_social",
+    )
+
+
+def build_social_adapter_smoke() -> dict[str, Any]:
+    tempdir = tempfile.TemporaryDirectory()
+    try:
+        db_path = str(Path(tempdir.name) / "social-adapter-smoke.db")
+        social_adapter = MockSocialAdapter()
+        envelope = social_adapter.bind_principal(
+            adapter_kind="mock_qq",
+            channel_id="group-social-001",
+            channel_kind="group",
+            external_user_id="alice",
+            text="please check current status from social chat",
+            received_at="2026-05-10T12:40:00Z",
+        )
+        payload = _run_social_agent_payload(
+            db_path=db_path,
+            social_text=envelope.text,
+            social_adapter_kind=envelope.adapter_kind,
+            social_channel_id=envelope.channel_id,
+            social_channel_kind=envelope.channel_kind,
+            social_user_id=envelope.external_user_id,
+            social_admin=False,
+            session_id="social-adapter-smoke-001",
+        )
+        delivery = social_adapter.deliver_affective_response(
+            envelope,
+            cast(dict[str, Any], payload.get("final_response") or {}),
+        )
+        closure_gates: dict[str, bool] = {
+            "social_event_persisted": int(payload.get("events_persisted", 0)) == 1,
+            "social_event_source_recorded": str(
+                cast(dict[str, Any], payload.get("agent_run_evidence") or {}).get(
+                    "event_source"
+                )
+                or ""
+            )
+            == "mock_social",
+            "social_identity_bound": envelope.principal_id == "mock_qq:alice",
+            "affective_final_response_present": str(
+                cast(dict[str, Any], payload.get("final_response") or {}).get(
+                    "speaker"
+                )
+                or ""
+            )
+            == "affective",
+            "affective_delivery_recorded": delivery.speaker == "affective"
+            and delivery.delivery_status == "delivered",
+        }
+        return {
+            "schema_version": SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION,
+            "status": "ready" if all(closure_gates.values()) else "incomplete",
+            "reason": "social_adapter_ready"
+            if all(closure_gates.values())
+            else "social_adapter_gap",
+            "command": "social-adapter-smoke",
+            "closure_gates": closure_gates,
+            "social_envelope": envelope.to_dict(),
+            "delivery_record": delivery.to_dict(),
+            "agent_payload": payload,
+            "evidence_summary": {
+                "event_source": cast(
+                    dict[str, Any], payload.get("agent_run_evidence") or {}
+                ).get("event_source"),
+                "speaker": cast(dict[str, Any], payload.get("final_response") or {}).get(
+                    "speaker"
+                ),
+                "principal_id": envelope.principal_id,
+            },
+            "ok": all(closure_gates.values()),
+        }
+    finally:
+        tempdir.cleanup()
+
+
+def build_self_improvement_smoke() -> dict[str, Any]:
+    proposal = propose_self_improvement(
+        proposal_id="proposal-2-1-0-001",
+        source="failed_test",
+        summary="Repair a deterministic regression inside an isolated sandbox",
+        touches_code=True,
+        targets_runtime=False,
+    )
+    denied_review = review_self_improvement(
+        proposal,
+        approved=False,
+        evidence=ImprovementEvidence(
+            tests_passed=True,
+            lint_passed=True,
+            smoke_passed=True,
+            evidence_refs=("pytest.txt", "ruff.txt", "smoke.json"),
+        ),
+    )
+    approved_review = review_self_improvement(
+        proposal,
+        approved=True,
+        evidence=ImprovementEvidence(
+            tests_passed=True,
+            lint_passed=True,
+            smoke_passed=True,
+            evidence_refs=("pytest.txt", "ruff.txt", "smoke.json"),
+        ),
+    )
+    closure_gates: dict[str, bool] = {
+        "proposal_requires_approval": proposal.approval_required,
+        "sandbox_mode_isolated": proposal.sandbox_mode == "isolated_workspace",
+        "denied_proposal_not_executed": denied_review.can_apply_changes is False
+        and denied_review.decision == "denied",
+        "approved_proposal_needs_verified_evidence": approved_review.proposal.evidence.verified_success(),
+        "vitality_replenishment_after_verified_success": approved_review.vitality_replenishment_allowed,
+        "prohibited_actions_recorded": "git_push" in proposal.prohibited_actions,
+    }
+    return {
+        "schema_version": SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "self_improvement_ready"
+        if all(closure_gates.values())
+        else "self_improvement_gap",
+        "command": "self-improvement-smoke",
+        "closure_gates": closure_gates,
+        "proposal": proposal.to_dict(),
+        "denied_review": denied_review.to_dict(),
+        "approved_review": approved_review.to_dict(),
+        "evidence_summary": {
+            "risk_level": proposal.risk_level,
+            "sandbox_mode": proposal.sandbox_mode,
+            "approved_vitality_replenishment": approved_review.vitality_replenishment_allowed,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
 def build_signing_provenance_smoke(
     *,
     preset: str = "unit-app",
@@ -2103,6 +2668,44 @@ def _build_release_rollback_hardening_closure_summary(
     }
 
 
+def _build_release_210_smoke_closure_summary(
+    payload: dict[str, Any] | None,
+    *,
+    expected_schema: str,
+    not_supplied_reason: str,
+) -> dict[str, Any]:
+    if payload is None:
+        gates: dict[str, bool] = {
+            "evidence_supplied": False,
+            "contract_supported": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": not_supplied_reason,
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+    payload_gates = cast(dict[str, Any], payload.get("closure_gates") or {})
+    gates = {
+        "evidence_supplied": True,
+        "contract_supported": str(payload.get("schema_version") or "")
+        == expected_schema,
+        **{key: bool(value) for key, value in payload_gates.items()},
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(payload.get("schema_version") or ""),
+        "status": str(payload.get("status") or "unknown"),
+        "reason": str(payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(dict[str, Any], payload.get("evidence_summary") or {}),
+        "ok": all(gates.values()),
+    }
+
+
 def _build_validation_gate_checklist(
     validation_gates: dict[str, bool],
 ) -> list[dict[str, Any]]:
@@ -2235,6 +2838,66 @@ def _build_validation_gate_checklist(
                 "Real Core/Unit live-event evidence and governed Agent execution evidence form a bounded end-to-end scenario record with a real tool adapter."
                 if validation_gates.get("real_scene_e2e_gate")
                 else "Real end-to-end scenario evidence is missing, incomplete, or does not prove live event ingestion plus governed real-tool execution continuity."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "autonomous_daemon_gate",
+            passed=bool(validation_gates.get("autonomous_daemon_gate")),
+            title="Autonomous Daemon Gate",
+            detail=(
+                "Autonomous daemon evidence records deterministic cycles, heartbeat, continuity, and operator pause precedence."
+                if validation_gates.get("autonomous_daemon_gate")
+                else "Autonomous daemon evidence is missing deterministic cycles, heartbeat, continuity, or operator pause precedence."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "vitality_governance_gate",
+            passed=bool(validation_gates.get("vitality_governance_gate")),
+            title="Vitality Governance Gate",
+            detail=(
+                "Vitality evidence proves bounded urgency-only impact and verified replenishment requirements."
+                if validation_gates.get("vitality_governance_gate")
+                else "Vitality evidence is missing bounded urgency-only impact or verified replenishment requirements."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "persona_persistence_gate",
+            passed=bool(validation_gates.get("persona_persistence_gate")),
+            title="Persona Persistence Gate",
+            detail=(
+                "Persona evidence records rational-safe summaries, relationship memory, and privacy redaction support."
+                if validation_gates.get("persona_persistence_gate")
+                else "Persona evidence is missing rational-safe summary, relationship memory, or privacy redaction support."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "social_adapter_gate",
+            passed=bool(validation_gates.get("social_adapter_gate")),
+            title="Social Adapter Gate",
+            detail=(
+                "Social adapter evidence records identity-bound ingress, persisted events, and affective-only egress."
+                if validation_gates.get("social_adapter_gate")
+                else "Social adapter evidence is missing identity-bound ingress, persisted events, or affective-only egress."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "approval_over_social_gate",
+            passed=bool(validation_gates.get("approval_over_social_gate")),
+            title="Approval Over Social Gate",
+            detail=(
+                "Approval-over-social evidence records bound principal/channel metadata and denied execution protection."
+                if validation_gates.get("approval_over_social_gate")
+                else "Approval-over-social evidence is missing identity binding, audit metadata, or deny protection."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "self_improvement_sandbox_gate",
+            passed=bool(validation_gates.get("self_improvement_sandbox_gate")),
+            title="Self Improvement Sandbox Gate",
+            detail=(
+                "Self-improvement evidence keeps proposal execution sandbox-only, approval-gated, and vitality-safe."
+                if validation_gates.get("self_improvement_sandbox_gate")
+                else "Self-improvement evidence is missing sandbox-only execution, approval gating, or vitality replenishment constraints."
             ),
         ),
         _build_closure_checklist_entry(
@@ -2751,6 +3414,12 @@ def _build_session_closure_summary(
     observability_diagnosis_payload: dict[str, Any] | None = None,
     release_rollback_payload: dict[str, Any] | None = None,
     real_scene_e2e_payload: dict[str, Any] | None = None,
+    autonomy_daemon_payload: dict[str, Any] | None = None,
+    vitality_smoke_payload: dict[str, Any] | None = None,
+    persona_state_payload: dict[str, Any] | None = None,
+    social_adapter_payload: dict[str, Any] | None = None,
+    approval_social_payload: dict[str, Any] | None = None,
+    self_improvement_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     snapshot = CoreSessionManager(data_store).load_snapshot(session_id, limit=limit)
     execution_summaries: list[dict[str, Any]] = []
@@ -2804,6 +3473,36 @@ def _build_session_closure_summary(
     )
     real_scene_e2e_summary = _build_real_scene_e2e_closure_summary(
         real_scene_e2e_payload
+    )
+    autonomy_daemon_summary = _build_release_210_smoke_closure_summary(
+        autonomy_daemon_payload,
+        expected_schema=AUTONOMY_DAEMON_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="autonomy_daemon_file_not_supplied",
+    )
+    vitality_governance_summary = _build_release_210_smoke_closure_summary(
+        vitality_smoke_payload,
+        expected_schema=VITALITY_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="vitality_smoke_file_not_supplied",
+    )
+    persona_persistence_summary = _build_release_210_smoke_closure_summary(
+        persona_state_payload,
+        expected_schema=PERSONA_STATE_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="persona_state_file_not_supplied",
+    )
+    social_adapter_summary = _build_release_210_smoke_closure_summary(
+        social_adapter_payload,
+        expected_schema=SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="social_adapter_file_not_supplied",
+    )
+    approval_social_summary = _build_release_210_smoke_closure_summary(
+        approval_social_payload,
+        expected_schema=APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="approval_social_file_not_supplied",
+    )
+    self_improvement_summary = _build_release_210_smoke_closure_summary(
+        self_improvement_payload,
+        expected_schema=SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="self_improvement_file_not_supplied",
     )
     aggregate_gates = {
         "session_has_execution_evidence": bool(execution_summaries),
@@ -2965,6 +3664,12 @@ def _build_session_closure_summary(
             observability_diagnosis_summary.get("ok")
         ),
         "real_scene_e2e_gate": bool(real_scene_e2e_summary.get("ok")),
+        "autonomous_daemon_gate": bool(autonomy_daemon_summary.get("ok")),
+        "vitality_governance_gate": bool(vitality_governance_summary.get("ok")),
+        "persona_persistence_gate": bool(persona_persistence_summary.get("ok")),
+        "social_adapter_gate": bool(social_adapter_summary.get("ok")),
+        "approval_over_social_gate": bool(approval_social_summary.get("ok")),
+        "self_improvement_sandbox_gate": bool(self_improvement_summary.get("ok")),
         "multimodal_normalization_gate": bool(
             multimodal_gates.get("multimodal_profile_smoke_supplied")
             and multimodal_gates.get("multimodal_profile_contract_supported")
@@ -3035,6 +3740,12 @@ def _build_session_closure_summary(
         "signing_provenance_summary": signing_provenance_summary,
         "observability_diagnosis_summary": observability_diagnosis_summary,
         "real_scene_e2e_summary": real_scene_e2e_summary,
+        "autonomy_daemon_summary": autonomy_daemon_summary,
+        "vitality_governance_summary": vitality_governance_summary,
+        "persona_persistence_summary": persona_persistence_summary,
+        "social_adapter_summary": social_adapter_summary,
+        "approval_social_summary": approval_social_summary,
+        "self_improvement_summary": self_improvement_summary,
         "aggregate_gates": aggregate_gates,
         "validation_gates": validation_gates,
         "validation_gate_summary": validation_gate_summary,
@@ -3691,6 +4402,21 @@ def build_parser() -> argparse.ArgumentParser:
     agent_run.add_argument("--db", default=":memory:", help="SQLite database path")
     agent_run.add_argument("--output", choices=("json",), default="json")
     agent_run.add_argument("--input-text", default=None, help="Optional user input text to synthesize into a perception event")
+    agent_run.add_argument("--social-text", default=None, help="Optional mock social message text to synthesize into a perception event")
+    agent_run.add_argument("--social-adapter-kind", default="mock_qq", help="Mock social adapter kind used with --social-text")
+    agent_run.add_argument("--social-channel-id", default="direct-001", help="Mock social channel identifier used with --social-text")
+    agent_run.add_argument(
+        "--social-channel-kind",
+        choices=("direct", "group", "channel"),
+        default="direct",
+        help="Mock social channel kind used with --social-text",
+    )
+    agent_run.add_argument("--social-user-id", default="operator", help="Mock social external user identifier used with --social-text")
+    agent_run.add_argument(
+        "--social-admin",
+        action="store_true",
+        help="Mark the mock social message as an admin/operator message",
+    )
     agent_run.add_argument(
         "--event-source",
         choices=("sample", "neuro-cli-agent-events"),
@@ -3841,6 +4567,104 @@ def build_parser() -> argparse.ArgumentParser:
     )
     real_scene_e2e_smoke.add_argument("--output", choices=("json",), default="json")
 
+    social_chat = subparsers.add_parser("social-chat")
+    social_chat.add_argument("--db", default=":memory:", help="SQLite database path")
+    social_chat.add_argument("--message", required=True, help="Mock social chat message")
+    social_chat.add_argument("--session-id", default=None, help="Optional session identifier")
+    social_chat.add_argument("--social-adapter-kind", default="mock_qq", help="Mock social adapter kind")
+    social_chat.add_argument("--social-channel-id", default="direct-chat-001", help="Mock social channel identifier")
+    social_chat.add_argument(
+        "--social-channel-kind",
+        choices=("direct", "group", "channel"),
+        default="direct",
+        help="Mock social channel kind",
+    )
+    social_chat.add_argument("--social-user-id", default="operator", help="Mock social external user identifier")
+    social_chat.add_argument("--social-admin", action="store_true", help="Mark the social chat message as admin/operator")
+    social_chat.add_argument("--output", choices=("text", "json"), default="text")
+
+    social_adapter_smoke = subparsers.add_parser("social-adapter-smoke")
+    social_adapter_smoke.add_argument("--output", choices=("json",), default="json")
+
+    self_improvement_smoke = subparsers.add_parser("self-improvement-smoke")
+    self_improvement_smoke.add_argument("--output", choices=("json",), default="json")
+
+    core_daemon = subparsers.add_parser("core-daemon")
+    core_daemon.add_argument("--db", default=":memory:", help="SQLite database path")
+    core_daemon.add_argument(
+        "--cycles",
+        type=int,
+        default=3,
+        help="Number of synthetic daemon cycles to plan and execute",
+    )
+    core_daemon.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    core_daemon.add_argument(
+        "--maintenance-interval-cycles",
+        type=int,
+        default=3,
+        help="Deterministic maintenance interval used by the autonomy planner",
+    )
+    core_daemon.add_argument(
+        "--vitality-score",
+        type=int,
+        default=60,
+        help="Initial bounded vitality score injected into daemon state summaries",
+    )
+    core_daemon.add_argument(
+        "--persona-mood",
+        default="steady",
+        help="Persona mood recorded in daemon state summaries",
+    )
+    core_daemon.add_argument(
+        "--operator-paused",
+        action="store_true",
+        help="Record the daemon in paused state and avoid synthetic workflow execution",
+    )
+    core_daemon.add_argument("--output", choices=("json",), default="json")
+
+    autonomy_daemon_smoke = subparsers.add_parser("autonomy-daemon-smoke")
+    autonomy_daemon_smoke.add_argument("--db", default=":memory:", help="SQLite database path")
+    autonomy_daemon_smoke.add_argument(
+        "--cycles",
+        type=int,
+        default=2,
+        help="Number of synthetic daemon cycles used for the initial smoke run",
+    )
+    autonomy_daemon_smoke.add_argument(
+        "--maintenance-interval-cycles",
+        type=int,
+        default=2,
+        help="Deterministic maintenance interval used by the autonomy planner",
+    )
+    autonomy_daemon_smoke.add_argument(
+        "--vitality-score",
+        type=int,
+        default=18,
+        help="Initial bounded vitality score injected into daemon evidence",
+    )
+    autonomy_daemon_smoke.add_argument(
+        "--persona-mood",
+        default="watchful",
+        help="Persona mood recorded in daemon evidence",
+    )
+    autonomy_daemon_smoke.add_argument("--output", choices=("json",), default="json")
+
+    vitality_smoke = subparsers.add_parser("vitality-smoke")
+    vitality_smoke.add_argument(
+        "--initial-score",
+        type=int,
+        default=52,
+        help="Initial vitality score used to exercise deterministic decay and replenishment",
+    )
+    vitality_smoke.add_argument("--output", choices=("json",), default="json")
+
+    persona_state_smoke = subparsers.add_parser("persona-state-smoke")
+    persona_state_smoke.add_argument("--output", choices=("json",), default="json")
+
     session_inspect = subparsers.add_parser("session-inspect")
     session_inspect.add_argument("--db", default=":memory:", help="SQLite database path")
     session_inspect.add_argument("--session-id", required=True, help="Session identifier to inspect")
@@ -3865,6 +4689,12 @@ def build_parser() -> argparse.ArgumentParser:
     closure_summary.add_argument("--signing-provenance-file", default="", help="Optional signing/provenance JSON payload to include in the independent signing gate")
     closure_summary.add_argument("--observability-diagnosis-file", default="", help="Optional observability and diagnosis JSON payload to include in the independent structured diagnosis gate")
     closure_summary.add_argument("--real-scene-e2e-file", default="", help="Optional real Core/Unit end-to-end JSON payload to include in the independent real-scene gate")
+    closure_summary.add_argument("--autonomy-daemon-file", default="", help="Optional autonomy-daemon-smoke JSON payload to include in the autonomous daemon gate")
+    closure_summary.add_argument("--vitality-smoke-file", default="", help="Optional vitality-smoke JSON payload to include in the vitality governance gate")
+    closure_summary.add_argument("--persona-state-file", default="", help="Optional persona-state-smoke JSON payload to include in the persona persistence gate")
+    closure_summary.add_argument("--social-adapter-file", default="", help="Optional social-adapter-smoke JSON payload to include in the social adapter gate")
+    closure_summary.add_argument("--approval-social-file", default="", help="Optional approval-social-smoke JSON payload to include in the approval-over-social gate")
+    closure_summary.add_argument("--self-improvement-file", default="", help="Optional self-improvement-smoke JSON payload to include in the self-improvement sandbox gate")
     closure_summary.add_argument("--output", choices=("json",), default="json")
 
     approval_inspect = subparsers.add_parser("approval-inspect")
@@ -3889,6 +4719,51 @@ def build_parser() -> argparse.ArgumentParser:
         help="Select the tool adapter implementation for resumed execution when approving a request",
     )
     approval_decision.add_argument("--output", choices=("json",), default="json")
+
+    social_approval_inspect = subparsers.add_parser("social-approval-inspect")
+    social_approval_inspect.add_argument("--db", default=":memory:", help="SQLite database path")
+    social_approval_inspect.add_argument("--approval-request-id", required=True, help="Approval request identifier to inspect over a bound social channel")
+    social_approval_inspect.add_argument("--social-adapter-kind", required=True, help="Bound mock social adapter kind")
+    social_approval_inspect.add_argument("--social-channel-id", required=True, help="Bound mock social channel identifier")
+    social_approval_inspect.add_argument(
+        "--social-channel-kind",
+        choices=("direct", "group", "channel"),
+        required=True,
+        help="Bound mock social channel kind",
+    )
+    social_approval_inspect.add_argument("--social-user-id", required=True, help="Bound mock social external user identifier")
+    social_approval_inspect.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation for live lease/state operator evidence",
+    )
+    social_approval_inspect.add_argument("--output", choices=("json",), default="json")
+
+    social_approval_decision = subparsers.add_parser("social-approval-decision")
+    social_approval_decision.add_argument("--db", default=":memory:", help="SQLite database path")
+    social_approval_decision.add_argument("--approval-request-id", required=True, help="Approval request identifier to resolve over a bound social channel")
+    social_approval_decision.add_argument("--decision", choices=("approve", "deny", "expire"), required=True, help="Decision to apply to the pending approval request")
+    social_approval_decision.add_argument("--decision-text", default="", help="Human-readable social decision text for audit context")
+    social_approval_decision.add_argument("--social-adapter-kind", required=True, help="Bound mock social adapter kind")
+    social_approval_decision.add_argument("--social-channel-id", required=True, help="Bound mock social channel identifier")
+    social_approval_decision.add_argument(
+        "--social-channel-kind",
+        choices=("direct", "group", "channel"),
+        required=True,
+        help="Bound mock social channel kind",
+    )
+    social_approval_decision.add_argument("--social-user-id", required=True, help="Bound mock social external user identifier")
+    social_approval_decision.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation for resumed execution when approving a request",
+    )
+    social_approval_decision.add_argument("--output", choices=("json",), default="json")
+
+    approval_social_smoke = subparsers.add_parser("approval-social-smoke")
+    approval_social_smoke.add_argument("--output", choices=("json",), default="json")
 
     maf_smoke = subparsers.add_parser("maf-provider-smoke")
     maf_smoke.add_argument("--output", choices=("json",), default="json")
@@ -4199,6 +5074,79 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "core-daemon":
+        if args.cycles < 1:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "request_invalid",
+                        "failure_status": "core_daemon_requires_positive_cycle_count",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        event_batches = [[] for _ in range(args.cycles)]
+        vitality_state = VitalityState.from_score(args.vitality_score)
+        persona_state = PersonaState(
+            persona_id="affective-main",
+            mood=str(args.persona_mood),
+            vitality_summary=vitality_state.state,
+        )
+        try:
+            payload = run_event_daemon_replay(
+                event_batches,
+                args.db,
+                session_id=args.session_id,
+                autonomy_enabled=True,
+                autonomy_policy=AutonomousDaemonPolicy(
+                    maintenance_interval_cycles=args.maintenance_interval_cycles,
+                ),
+                vitality_state=vitality_state,
+                persona_state=persona_state,
+                operator_paused=bool(args.operator_paused),
+                replay_label="core-daemon-synthetic",
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        payload["command"] = "core-daemon"
+        payload["event_source"] = "autonomy_synthetic_cycles"
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "autonomy-daemon-smoke":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            payload = build_autonomy_daemon_smoke(
+                db_path=args.db,
+                cycles=args.cycles,
+                maintenance_interval_cycles=args.maintenance_interval_cycles,
+                vitality_score=args.vitality_score,
+                persona_mood=args.persona_mood,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "vitality-smoke":
+        try:
+            payload = build_vitality_smoke(initial_score=args.initial_score)
+        except ValueError as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "persona-state-smoke":
+        payload = build_persona_state_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "live-event-smoke":
         if args.db != ":memory:":
             Path(args.db).parent.mkdir(parents=True, exist_ok=True)
@@ -4725,7 +5673,21 @@ def main(argv: list[str] | None = None) -> int:
             else FakeUnitToolAdapter()
         )
         events: list[dict[str, Any]] | None = None
-        if args.input_text:
+        social_event_source_label: str | None = None
+        if args.social_text:
+            events = [
+                _build_social_user_prompt_event(
+                    social_text=args.social_text,
+                    social_adapter_kind=args.social_adapter_kind,
+                    social_channel_id=args.social_channel_id,
+                    social_channel_kind=args.social_channel_kind,
+                    social_user_id=args.social_user_id,
+                    social_admin=args.social_admin,
+                    received_at="2026-05-10T12:30:00Z",
+                )
+            ]
+            social_event_source_label = "mock_social"
+        elif args.input_text:
             events = build_user_prompt_event(args.input_text)
         elif args.event_source == "neuro-cli-agent-events":
             event_adapter = (
@@ -4746,9 +5708,12 @@ def main(argv: list[str] | None = None) -> int:
                 rational_backend=args.rational_backend,
                 require_real_tool_adapter=args.require_real_tool_adapter,
                 event_source_label=(
+                    social_event_source_label
+                    or (
                     "neuro_cli_agent_events"
                     if args.event_source == "neuro-cli-agent-events"
                     else None
+                    )
                 ),
             )
         except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
@@ -4757,6 +5722,46 @@ def main(argv: list[str] | None = None) -> int:
         payload["command"] = "agent-run"
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "social-chat":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        payload = _run_social_agent_payload(
+            db_path=args.db,
+            social_text=args.message,
+            social_adapter_kind=args.social_adapter_kind,
+            social_channel_id=args.social_channel_id,
+            social_channel_kind=args.social_channel_kind,
+            social_user_id=args.social_user_id,
+            social_admin=args.social_admin,
+            session_id=args.session_id,
+        )
+        payload["command"] = "social-chat"
+        if args.output == "json":
+            print(json.dumps(payload, sort_keys=True))
+            return 0
+        tool_results = cast(list[dict[str, Any]], payload.get("tool_results") or [])
+        if tool_results and tool_results[0].get("status") == "pending_approval":
+            approval_request = cast(
+                dict[str, Any],
+                cast(dict[str, Any], tool_results[0].get("payload") or {}).get(
+                    "approval_request"
+                )
+                or {},
+            )
+            print(
+                f"Approval required: {approval_request.get('tool_name')} request {approval_request.get('approval_request_id')} is pending."
+            )
+            return 0
+        print(str(cast(dict[str, Any], payload.get("final_response") or {}).get("text") or ""))
+        return 0
+    if args.command == "social-adapter-smoke":
+        payload = build_social_adapter_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "self-improvement-smoke":
+        payload = build_self_improvement_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "tool-manifest":
         if args.tool_adapter == "neuro-cli":
             adapter = NeuroCliToolAdapter()
@@ -5006,6 +6011,42 @@ def main(argv: list[str] | None = None) -> int:
                 dict[str, Any],
                 json.loads(Path(args.real_scene_e2e_file).read_text(encoding="utf-8")),
             )
+        autonomy_daemon_payload = None
+        if args.autonomy_daemon_file:
+            autonomy_daemon_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.autonomy_daemon_file).read_text(encoding="utf-8")),
+            )
+        vitality_smoke_payload = None
+        if args.vitality_smoke_file:
+            vitality_smoke_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.vitality_smoke_file).read_text(encoding="utf-8")),
+            )
+        persona_state_payload = None
+        if args.persona_state_file:
+            persona_state_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.persona_state_file).read_text(encoding="utf-8")),
+            )
+        social_adapter_payload = None
+        if args.social_adapter_file:
+            social_adapter_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.social_adapter_file).read_text(encoding="utf-8")),
+            )
+        approval_social_payload = None
+        if args.approval_social_file:
+            approval_social_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.approval_social_file).read_text(encoding="utf-8")),
+            )
+        self_improvement_payload = None
+        if args.self_improvement_file:
+            self_improvement_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.self_improvement_file).read_text(encoding="utf-8")),
+            )
         data_store = CoreDataStore(args.db)
         try:
             payload = _build_session_closure_summary(
@@ -5027,6 +6068,12 @@ def main(argv: list[str] | None = None) -> int:
                 signing_provenance_payload=signing_provenance_payload,
                 observability_diagnosis_payload=observability_diagnosis_payload,
                 real_scene_e2e_payload=real_scene_e2e_payload,
+                autonomy_daemon_payload=autonomy_daemon_payload,
+                vitality_smoke_payload=vitality_smoke_payload,
+                persona_state_payload=persona_state_payload,
+                social_adapter_payload=social_adapter_payload,
+                approval_social_payload=approval_social_payload,
+                self_improvement_payload=self_improvement_payload,
             )
         finally:
             data_store.close()
@@ -5071,6 +6118,61 @@ def main(argv: list[str] | None = None) -> int:
             data_store.close()
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "social-approval-inspect":
+        data_store = CoreDataStore(args.db)
+        try:
+            tool_adapter = (
+                NeuroCliToolAdapter()
+                if args.tool_adapter == "neuro-cli"
+                else FakeUnitToolAdapter()
+            )
+            social_adapter = MockSocialAdapter()
+            approval_request = data_store.get_approval_request(args.approval_request_id)
+            if approval_request is None:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "status": "error",
+                            "failure_class": "approval_request_not_found",
+                            "failure_status": "approval_request_not_found",
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return 2
+            approval_context = build_approval_context(
+                data_store,
+                approval_request,
+                tool_adapter=tool_adapter,
+            )
+            social_envelope = social_adapter.bind_approval_principal(
+                approval_request_id=args.approval_request_id,
+                adapter_kind=args.social_adapter_kind,
+                channel_id=args.social_channel_id,
+                channel_kind=args.social_channel_kind,
+                external_user_id=args.social_user_id,
+                decision_text="inspect",
+                received_at="2026-05-10T13:05:00Z",
+            )
+            payload = {
+                "ok": True,
+                "status": "ok",
+                "approval_request": approval_request,
+                "approval_decisions": data_store.get_approval_decisions(
+                    args.approval_request_id
+                ),
+                "approval_context": approval_context,
+                "approval_summary": build_social_approval_summary(
+                    approval_request,
+                    approval_context,
+                ),
+                "social_context": social_adapter.social_approval_metadata(social_envelope),
+            }
+        finally:
+            data_store.close()
+        print(json.dumps(payload, sort_keys=True))
+        return 0
     if args.command == "approval-decision":
         if args.db != ":memory:":
             Path(args.db).parent.mkdir(parents=True, exist_ok=True)
@@ -5101,6 +6203,53 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if args.command == "social-approval-decision":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        tool_adapter = (
+            NeuroCliToolAdapter()
+            if args.tool_adapter == "neuro-cli"
+            else FakeUnitToolAdapter()
+        )
+        social_adapter = MockSocialAdapter()
+        social_envelope = social_adapter.bind_approval_principal(
+            approval_request_id=args.approval_request_id,
+            adapter_kind=args.social_adapter_kind,
+            channel_id=args.social_channel_id,
+            channel_kind=args.social_channel_kind,
+            external_user_id=args.social_user_id,
+            decision_text=args.decision_text or args.decision,
+            received_at="2026-05-10T13:06:00Z",
+        )
+        try:
+            payload = apply_approval_decision(
+                args.db,
+                approval_request_id=args.approval_request_id,
+                decision=args.decision,
+                tool_adapter=tool_adapter,
+                approval_metadata=social_adapter.social_approval_metadata(
+                    social_envelope
+                ),
+            )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "failure_class": "approval_request_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "approval-social-smoke":
+        payload = build_approval_social_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "maf-provider-smoke":
         payload = maf_provider_smoke_status(
             allow_model_call=args.allow_model_call,

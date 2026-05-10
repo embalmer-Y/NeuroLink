@@ -23,8 +23,8 @@ static char callback_event_name[NEURO_UNIT_APP_EVENT_NAME_LEN] = "callback";
 /* Sample app command exposed through the Unit app-command registry contract. */
 static const char app_command_name[] = "invoke";
 static const char app_id[] = "neuro_unit_app";
-static const char app_version[] = "2.0.0";
-static const char app_build_id[] = "neuro_unit_app-2.0.0-cbor-v2";
+static const char app_version[] = "2.1.0";
+static const char app_build_id[] = "neuro_unit_app-2.1.0-cbor-v2";
 
 static void print_app_version(const char *stage)
 {
@@ -139,7 +139,7 @@ const struct app_runtime_manifest app_runtime_manifest = {
   .abi_minor = APP_RT_MANIFEST_ABI_MINOR,
   .version = {
     .major = 2,
-    .minor = 0,
+    .minor = 1,
     .patch = 0,
   },
   .capability_flags = APP_RT_CAP_STORAGE,

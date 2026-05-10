@@ -1,21 +1,24 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` on top of the
-closed release-1.2.6 federation, relay, and Agent-platform baseline and the
-now-closed release-1.2.7 HLD-completion bundle while the project moves through
-the active release-2.0.0 stabilization, freeze, and promotion line. It still
-covers the closed release-1.2.5 multimodal governance baseline and the
-inherited release-1.2.4 Core orchestrator/live-event-service surfaces that
-remain part of release evidence. Release identity is now promoted to `2.0.0`
-after the stabilization evidence and frozen real-scene rerun archive passed.
-This runbook is written
+promoted release-2.1.0 autonomous/social baseline, which extends the closed
+release-2.0.0 stabilized baseline with autonomous daemon cycles, Vitality,
+Persona persistence, social adapter ingress/egress, approval-aware social
+control, and self-improvement sandbox evidence. It still covers the inherited
+closed release-1.2.6 federation/relay/Agent-platform baseline, the closed
+release-1.2.7 HLD-completion bundle, and the inherited release-1.2.4 through
+release-1.2.5 runtime/governance surfaces that remain part of release evidence.
+Release identity is now promoted to `2.1.0` after the release-2.1.0 promotion
+bundle and real-provider integration evidence passed. This runbook is written
 for operators and developers who need to run Core locally, check provider and
 memory readiness, execute the Core-owned build/deploy gates, or close bounded
 live service and AI Core release evidence.
 
 For a task-oriented startup and daily-use guide, start with
-`docs/project/AI_CORE_USER_GUIDE.md`. For the active release-2.0.0 stabilization
-and promotion plan, use `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md`.
+`docs/project/AI_CORE_USER_GUIDE.md`. For the implementation plan and promotion
+record that define the current baseline, use
+`docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md` and
+`docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md`.
 
 ## 1. Runtime Shape
 
