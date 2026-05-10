@@ -1,4 +1,6 @@
 from typing import Any, cast
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -659,6 +661,22 @@ class TestMafRuntimeBoundary(unittest.TestCase):
             {"affective", "rational"},
         )
 
+    def test_cli_provider_test_outputs_json(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["provider-test", "--allow-model-call"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "provider-test")
+        self.assertEqual(payload["test_surface"], "provider-test")
+        self.assertEqual(payload["schema_version"], MAF_PROVIDER_SMOKE_SCHEMA_VERSION)
+        self.assertIn(payload["status"], ("ready", "skipped"))
+        self.assertTrue(payload["model_call_allowed"])
+        self.assertFalse(payload["executes_model_call"])
+        self.assertTrue(payload["closure_gates"]["real_provider_call_opt_in_respected"])
+        self.assertTrue(payload["closure_gates"]["closure_smoke_outcome_recorded"])
+
     def test_cli_maf_provider_smoke_rejects_execute_without_allow(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
@@ -673,6 +691,89 @@ class TestMafRuntimeBoundary(unittest.TestCase):
         )
         self.assertFalse(payload["closure_gates"]["real_provider_call_opt_in_respected"])
         self.assertTrue(payload["closure_gates"]["closure_smoke_outcome_recorded"])
+
+    def test_cli_maf_provider_smoke_uses_runtime_config_file_for_model_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "runtime_provider_profiles.json"
+            core_cli_main(
+                [
+                    "provider-config",
+                    "--config-file",
+                    str(config_file),
+                    "--profile",
+                    "openai_compatible",
+                    "--endpoint-url",
+                    "https://provider.example/v1",
+                    "--configured-model",
+                    "gpt-4.1-mini",
+                ]
+            )
+            out = io.StringIO()
+            with mock.patch.dict(
+                "os.environ",
+                {"OPENAI_API_KEY": "secret"},
+                clear=True,
+            ):
+                with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+                    with redirect_stdout(out):
+                        code = core_cli_main(
+                            [
+                                "maf-provider-smoke",
+                                "--allow-model-call",
+                                "--maf-config-file",
+                                str(config_file),
+                            ]
+                        )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(
+            payload["maf_runtime"]["provider_config"]["configured_model"],
+            "gpt-4.1-mini",
+        )
+
+    def test_cli_provider_test_uses_runtime_config_file_for_model_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "runtime_provider_profiles.json"
+            core_cli_main(
+                [
+                    "provider-config",
+                    "--config-file",
+                    str(config_file),
+                    "--profile",
+                    "openai_compatible",
+                    "--endpoint-url",
+                    "https://provider.example/v1",
+                    "--configured-model",
+                    "gpt-4.1-mini",
+                ]
+            )
+            out = io.StringIO()
+            with mock.patch.dict(
+                "os.environ",
+                {"OPENAI_API_KEY": "secret"},
+                clear=True,
+            ):
+                with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+                    with redirect_stdout(out):
+                        code = core_cli_main(
+                            [
+                                "provider-test",
+                                "--allow-model-call",
+                                "--config-file",
+                                str(config_file),
+                            ]
+                        )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "provider-test")
+        self.assertEqual(payload["status"], "ready")
+        self.assertEqual(
+            payload["maf_runtime"]["provider_config"]["configured_model"],
+            "gpt-4.1-mini",
+        )
 
 
 class TestMultimodalProfileRouting(unittest.TestCase):

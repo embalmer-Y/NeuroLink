@@ -1,3 +1,118 @@
+2026-05-11: Completed the last missing release-2.2.1 user-facing provider/model runtime surface by adding `provider-test`. The new command reuses the config-backed runtime path, accepts an operator `--config-file`, reports structured readiness or explicit model-call evidence, and keeps credentials environment-backed only. Focused provider regressions passed with `190 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-360 Release 2.2.1 Provider Test Surface
+
+- Status: implementation completed and focused-regression green
+- Added:
+  - `provider-test` CLI command for operator-facing config-backed provider validation
+  - `--config-file` support on `provider-test` so persisted provider profiles can drive endpoint/model selection
+  - focused regressions covering the new surface and config-backed readiness behavior
+- Safety and evidence behavior:
+  - `provider-test` reuses the structured provider readiness and optional model-call evidence path
+  - credentials remain environment-backed and are not persisted or printed as secret values
+  - config-backed endpoint and model identifiers can be validated without source edits
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_inference_profiles.py neurolink_core/tests/test_maf.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `190 passed, 3 subtests passed`
+- Release-2.2.1 status:
+  - all six planned user-facing surfaces are now present: `provider-list`, `provider-config`, `provider-test`, `model-list`, `model-set-active`, `model-profile-smoke`
+
+2026-05-10: Extended release-2.2.1 provider/model runtime configuration into the live real-provider execution path. Added canonical runtime env projection from persisted provider profiles, introduced `--maf-config-file` for `no-model-dry-run`, `agent-run`, and `maf-provider-smoke`, and wired the workflow runtime so `real_provider` can consume configured endpoint/model selection without source edits while still requiring credentials from environment variables. Focused regressions passed with `188 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-359 Release 2.2.1 Runtime Config Consumption Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - `build_provider_runtime_env()` to project persisted provider profile settings into canonical runtime env vars
+  - `--maf-config-file` support for `no-model-dry-run`, `agent-run`, and `maf-provider-smoke`
+  - workflow wiring so real-provider runtime profile and provider client consume config-backed endpoint/model selection
+  - focused regressions covering config-backed `maf-provider-smoke` readiness and `agent-run` real-provider execution
+- Safety and evidence behavior:
+  - persisted config still stores only env-var references for credentials, never secret values
+  - live runtime now honors configured endpoint and model identifiers from the provider profile store
+  - missing credentials still fail closed because readiness remains gated by environment-backed secrets
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_inference_profiles.py neurolink_core/tests/test_maf.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `188 passed, 3 subtests passed`
+- Next:
+  - add `provider-test` so operators can execute a targeted config-backed provider validation surface explicitly
+
+2026-05-10: Extended release-2.2.1 provider/model runtime configuration from read-only registry evidence into a persisted operator config slice. Added a JSON-backed provider profile config store, default config path support, profile update helpers, active-slot persistence, and CLI commands `provider-config`, `model-list`, and `model-set-active`. The active `model-profile-smoke` and `provider-list` commands now honor the persisted config file while keeping credentials as env-var references and leaving model execution disabled. Focused provider regressions passed with `34 passed`. - Copilot
+
+#### EXEC-358 Release 2.2.1 Persistent Provider Config Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - JSON-backed provider profile config persistence under the NeuroLink config root
+  - `load_provider_profile_config()` and provider config write helpers
+  - `provider-config` CLI command for provider/profile metadata updates
+  - `model-list` CLI command for configured model identifiers and active slot view
+  - `model-set-active` CLI command for affective/rational slot assignment
+  - config-file support for `provider-list` and `model-profile-smoke`
+- Safety and evidence behavior:
+  - credentials remain env-var references, never persisted secret values
+  - endpoint URL and model/deployment identifiers can be changed without editing source code
+  - active profile slots persist across CLI invocations
+  - profile smoke remains deterministic with `executes_model_call=false`
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_inference_profiles.py neurolink_core/tests/test_maf.py -q`
+  - `34 passed`
+- Next:
+  - thread persisted provider config into the live MAF runtime path so `real_provider` can consume configured endpoint/model selection directly rather than env-only defaults
+
+2026-05-10: Started release-2.2.1 runtime provider/model configuration with a deterministic ProviderProfileRegistry slice. Added provider profile schemas and smoke evidence in `neurolink_core/inference.py`, exposed `provider-list` and `model-profile-smoke` through the AI Core CLI, and added focused tests proving secret values are masked, missing credentials fail closed, configured OpenAI-compatible profiles become ready, and no model call is executed by the smoke. Focused provider regressions passed with `32 passed`. - Copilot
+
+#### EXEC-357 Release 2.2.1 Provider Profile Registry Slice
+
+- Status: implementation started and focused-regression green
+- Added:
+  - `ProviderProfile`
+  - `ProviderProfileRegistry`
+  - `provider_profile_registry()`
+  - `provider_profile_catalog()`
+  - `model_profile_smoke()`
+  - CLI commands `provider-list` and `model-profile-smoke`
+  - `neurolink_core/tests/test_inference_profiles.py`
+- Safety and evidence behavior:
+  - provider profile evidence records env var names and readiness, not secret values
+  - absent credentials/model identifiers produce `configured_fail_closed` evidence rather than a model call
+  - configured OpenAI-compatible env references mark active profiles ready
+  - smoke payload sets `executes_model_call=false`
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_inference_profiles.py neurolink_core/tests/test_maf.py -q`
+  - `32 passed`
+- Next:
+  - add persistent runtime config file support and operator commands for provider config, model listing, and active-slot updates
+
+2026-05-10: Started the post-2.1.0 QwenPaw-informed implementation line with a release-2.2.0 reference foundation plan. Added `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md` after reviewing the local QwenPaw checkout for channel registry, QQ/OneBot, WeCom/WeChat, provider/model configuration, Skills, MCP, ToolGuard, ACP coding delegation, prompt/persona files, memory maintenance, heartbeat, and task-tracking patterns. The new plan freezes NeuroLink-native contract names, license/copy boundaries, 2.2.x small-version ownership, and future evidence gates while preserving `2.1.0` as the promoted runtime identity. - Copilot
+
+#### EXEC-356 Release 2.2.0 QwenPaw Reference Foundation Start
+
+- Status: started; documentation and contract boundary landed
+- Added:
+  - `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`
+- QwenPaw reference surfaces captured:
+  - channel registry and common channel contract
+  - QQ official Bot and OneBot/NapCat-compatible paths
+  - WeCom and WeChat iLink social paths
+  - provider/model configuration API and CLI patterns
+  - SKILL.md-style skills, runtime MCP descriptors, ToolGuard, and ACP coding delegation
+  - prompt/persona files, memory maintenance, heartbeat, and task tracking
+- NeuroLink boundaries frozen:
+  - use QwenPaw as architecture reference, not copied implementation by default
+  - require license/notice review before any direct source incorporation
+  - keep Core policy, leases, approvals, audit, and closure-summary gates authoritative
+- Follow-up release train:
+  - `2.2.1` provider/model runtime reconfiguration
+  - `2.2.2` QQ official and OneBot-compatible social adapters
+  - `2.2.3` WeCom and optional WeChat iLink adapters
+  - `2.2.4` Tool/MCP/Skills/coding-agent improvements
+  - `2.2.5` persona seed and growth state
+  - `2.2.6` heartbeat, long stability, memory maintenance, self-optimization, and World Model v1
+  - `2.3.0` integrated social-resident promotion candidate
+- Next:
+  - implement release-2.2.1 provider/model configuration contracts and smoke evidence
+
 2026-05-10: Promoted release identity to 2.1.0 after the fresh autonomous/social promotion bundle and real-provider verification both converged. The active promotion bundle `smoke-evidence/release-2.1.0-promotion-20260510T090042Z/` first reached a green `closure-summary-final.json` with `validation_gate_summary.ok=true`, `passed_count=26`, and `failed_gate_ids=[]`. After that green pre-promotion bundle, canonical identity moved to `2.1.0` in the Neuro CLI, workflow catalog, sample Unit app source, README, and AI Core runbooks, the sample Unit app artifact was rebuilt, `system-capabilities-post-promotion.json` reported `release_target=2.1.0`, refreshed hardware/signing/resource evidence recorded `neuro_unit_app-2.1.0-cbor-v2`, and `closure-summary-post-promotion.json` remained green at 26/26. Full regressions passed with `258 passed, 6 subtests passed` for AI Core, `127 passed` for Neuro CLI, and `385 passed, 6 subtests passed` combined. - Copilot
 
 #### EXEC-355 Release 2.1.0 Promotion And Post-Promotion Evidence Refresh

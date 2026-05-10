@@ -13,7 +13,13 @@ from .maf import (
     build_maf_runtime_profile,
     maf_provider_smoke_status,
 )
+from .inference import build_provider_runtime_env
+from .inference import model_profile_smoke
 from .inference import multimodal_profile_smoke
+from .inference import provider_config_update
+from .inference import provider_profile_catalog
+from .inference import provider_model_list
+from .inference import set_active_provider_profile
 from .session import CoreSessionManager
 from .tools import FakeUnitToolAdapter, NeuroCliToolAdapter
 from .tools import load_mcp_bridge_descriptor_payload
@@ -3795,6 +3801,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
     )
     dry_run.add_argument(
+        "--maf-config-file",
+        default="",
+        help="Optional runtime provider profile config JSON path used to resolve model and endpoint settings",
+    )
+    dry_run.add_argument(
         "--memory-backend",
         choices=("fake", "local", "mem0"),
         default="fake",
@@ -4441,6 +4452,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
     )
     agent_run.add_argument(
+        "--maf-config-file",
+        default="",
+        help="Optional runtime provider profile config JSON path used to resolve model and endpoint settings",
+    )
+    agent_run.add_argument(
         "--memory-backend",
         choices=("fake", "local", "mem0"),
         default="fake",
@@ -4777,6 +4793,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Actually execute the provider smoke model call; requires --allow-model-call",
     )
+    maf_smoke.add_argument(
+        "--maf-config-file",
+        default="",
+        help="Optional runtime provider profile config JSON path used to resolve model and endpoint settings",
+    )
+
+    provider_test = subparsers.add_parser("provider-test")
+    provider_test.add_argument("--output", choices=("json",), default="json")
+    provider_test.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Opt in to a future real-provider smoke call when package and model configuration are available",
+    )
+    provider_test.add_argument(
+        "--execute-model-call",
+        action="store_true",
+        help="Actually execute the provider test model call; requires --allow-model-call",
+    )
+    provider_test.add_argument(
+        "--config-file",
+        default="",
+        help="Optional runtime provider profile config JSON path used to resolve model and endpoint settings",
+    )
 
     multimodal_smoke = subparsers.add_parser("multimodal-profile-smoke")
     multimodal_smoke.add_argument("--output", choices=("json",), default="json")
@@ -4824,6 +4863,55 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-live-backend",
         action="store_true",
         help="Require live OpenAI-compatible/vLLM provider configuration for readiness",
+    )
+
+    provider_list = subparsers.add_parser("provider-list")
+    provider_list.add_argument("--output", choices=("json",), default="json")
+    provider_list.add_argument("--config-file", default="", help="Optional provider profile config JSON path")
+
+    provider_config = subparsers.add_parser("provider-config")
+    provider_config.add_argument("--output", choices=("json",), default="json")
+    provider_config.add_argument("--config-file", default="", help="Optional provider profile config JSON path")
+    provider_config.add_argument("--profile", required=True, help="Provider profile name to update")
+    provider_config.add_argument("--provider-kind", default=None)
+    provider_config.add_argument("--credential-env-var", default=None)
+    provider_config.add_argument("--endpoint-env-var", default=None)
+    provider_config.add_argument("--endpoint-url", default=None)
+    provider_config.add_argument("--model-env-var", default=None)
+    provider_config.add_argument("--deployment-env-var", default=None)
+    provider_config.add_argument("--configured-model", default=None)
+    provider_config.add_argument("--configured-deployment", default=None)
+    provider_config.add_argument(
+        "--supports-model-discovery",
+        choices=("true", "false"),
+        default=None,
+    )
+    enable_disable = provider_config.add_mutually_exclusive_group()
+    enable_disable.add_argument("--enable", action="store_true")
+    enable_disable.add_argument("--disable", action="store_true")
+
+    model_list = subparsers.add_parser("model-list")
+    model_list.add_argument("--output", choices=("json",), default="json")
+    model_list.add_argument("--config-file", default="", help="Optional provider profile config JSON path")
+
+    model_set_active = subparsers.add_parser("model-set-active")
+    model_set_active.add_argument("--output", choices=("json",), default="json")
+    model_set_active.add_argument("--config-file", default="", help="Optional provider profile config JSON path")
+    model_set_active.add_argument("--slot", choices=("affective", "rational"), required=True)
+    model_set_active.add_argument("--profile", required=True, help="Provider profile name to activate for the chosen slot")
+
+    model_profile = subparsers.add_parser("model-profile-smoke")
+    model_profile.add_argument("--output", choices=("json",), default="json")
+    model_profile.add_argument("--config-file", default="", help="Optional provider profile config JSON path")
+    model_profile.add_argument(
+        "--active-affective-profile",
+        default=None,
+        help="Active provider profile for the Affective model slot",
+    )
+    model_profile.add_argument(
+        "--active-rational-profile",
+        default=None,
+        help="Active provider profile for the Rational model slot",
     )
 
     federation_smoke = subparsers.add_parser("federation-route-smoke")
@@ -4919,6 +5007,9 @@ def main(argv: list[str] | None = None) -> int:
         return normalized_batches
 
     def provider_error_payload(command: str, exc: Exception) -> dict[str, Any]:
+        runtime_env = build_provider_runtime_env(
+            config_path=getattr(args, "maf_config_file", "") or "",
+        )
         return {
             "ok": False,
             "status": "error",
@@ -4932,7 +5023,8 @@ def main(argv: list[str] | None = None) -> int:
             ),
             "failure_status": str(exc),
             "maf_runtime": build_maf_runtime_profile(
-                provider_mode=getattr(args, "maf_provider_mode", MafProviderMode.DETERMINISTIC_FAKE.value)
+                provider_mode=getattr(args, "maf_provider_mode", MafProviderMode.DETERMINISTIC_FAKE.value),
+                env=runtime_env,
             ).to_dict(),
         }
 
@@ -4978,6 +5070,7 @@ def main(argv: list[str] | None = None) -> int:
                 session_id=args.session_id,
                 maf_provider_mode=args.maf_provider_mode,
                 allow_model_call=args.allow_model_call,
+                maf_config_file=args.maf_config_file,
                 memory_backend=args.memory_backend,
                 rational_backend=args.rational_backend,
                 require_real_tool_adapter=args.require_real_tool_adapter,
@@ -5704,6 +5797,7 @@ def main(argv: list[str] | None = None) -> int:
                 session_id=args.session_id,
                 maf_provider_mode=args.maf_provider_mode,
                 allow_model_call=args.allow_model_call,
+                maf_config_file=args.maf_config_file,
                 memory_backend=args.memory_backend,
                 rational_backend=args.rational_backend,
                 require_real_tool_adapter=args.require_real_tool_adapter,
@@ -6251,10 +6345,23 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
     if args.command == "maf-provider-smoke":
+        runtime_env = build_provider_runtime_env(config_path=args.maf_config_file)
         payload = maf_provider_smoke_status(
             allow_model_call=args.allow_model_call,
             execute_model_call=args.execute_model_call,
+            env=runtime_env,
         )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "provider-test":
+        runtime_env = build_provider_runtime_env(config_path=args.config_file)
+        payload = maf_provider_smoke_status(
+            allow_model_call=args.allow_model_call,
+            execute_model_call=args.execute_model_call,
+            env=runtime_env,
+        )
+        payload["command"] = "provider-test"
+        payload["test_surface"] = "provider-test"
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
     if args.command == "multimodal-profile-smoke":
@@ -6278,6 +6385,49 @@ def main(argv: list[str] | None = None) -> int:
                 "failure_status": str(exc),
                 "executes_model_call": False,
             }
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "provider-list":
+        payload = provider_profile_catalog(config_path=args.config_file)
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "provider-config":
+        payload = provider_config_update(
+            profile_name=args.profile,
+            config_path=args.config_file,
+            provider_kind=args.provider_kind,
+            credential_env_var=args.credential_env_var,
+            endpoint_env_var=args.endpoint_env_var,
+            endpoint_url=args.endpoint_url,
+            model_env_var=args.model_env_var,
+            deployment_env_var=args.deployment_env_var,
+            configured_model=args.configured_model,
+            configured_deployment=args.configured_deployment,
+            supports_model_discovery=(
+                True if args.supports_model_discovery == "true" else False if args.supports_model_discovery == "false" else None
+            ),
+            enabled=True if args.enable else False if args.disable else None,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "model-list":
+        payload = provider_model_list(config_path=args.config_file)
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "model-set-active":
+        payload = set_active_provider_profile(
+            slot=args.slot,
+            profile_name=args.profile,
+            config_path=args.config_file,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "model-profile-smoke":
+        payload = model_profile_smoke(
+            config_path=args.config_file,
+            active_affective_profile=args.active_affective_profile,
+            active_rational_profile=args.active_rational_profile,
+        )
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
     if args.command == "federation-route-smoke":

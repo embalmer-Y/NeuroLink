@@ -325,6 +325,9 @@ Capability map:
 	self-improvement plan.
 - `docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md` - final release-2.1.0
 	promotion decision, evidence bundle, and validation result.
+- `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md` -
+	QwenPaw-informed post-2.1 implementation train, extension contracts,
+	license boundary, small-version roadmap, and future evidence gates.
 - `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md` - historical 2.0.0
 	stabilization, freeze, rerun, and promotion plan.
 - `docs/project/RELEASE_2.0.0_CONTRACT_FREEZE_CHECKLIST.md` - frozen public
@@ -344,6 +347,7 @@ Capability map:
 Release progress and architecture closure notes live in:
 
 - `PROJECT_PROGRESS.md`
+- `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`
 - `docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md`
 - `docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md`
 - `docs/project/RELEASE_2.0.0_FINALIZATION_PLAN.md`

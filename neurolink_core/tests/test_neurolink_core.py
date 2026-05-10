@@ -3786,6 +3786,88 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             agent_run_evidence["prompt_safe_context"]["safety_boundaries"]["can_execute_tools_directly"]
         )
         self.assertEqual(agent_run_evidence["db_counts"], payload["db_counts"])
+
+    def test_cli_agent_run_real_provider_can_resolve_model_from_config_file(self) -> None:
+        class FakeProviderClient:
+            provider_client_kind = "test_client"
+
+            def decide(
+                self,
+                frame: Any,
+                memory_items: list[dict[str, Any]],
+                profile: Any,
+            ) -> dict[str, Any]:
+                del frame, memory_items, profile
+                return {
+                    "delegated": True,
+                    "reason": "real_provider_affective_decision",
+                    "salience": 88,
+                }
+
+            def plan(
+                self,
+                decision: Any,
+                frame: Any,
+                profile: Any,
+                available_tools: list[dict[str, Any]],
+                session_context: dict[str, Any],
+            ) -> dict[str, Any]:
+                del decision, frame, profile
+                self.available_tools = available_tools
+                self.session_context = session_context
+                return {
+                    "tool_name": "system_query_device",
+                    "args": {"source": "real-provider"},
+                    "reason": "real_provider_rational_plan",
+                }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "runtime_provider_profiles.json"
+            core_cli_main(
+                [
+                    "provider-config",
+                    "--config-file",
+                    str(config_file),
+                    "--profile",
+                    "openai_compatible",
+                    "--endpoint-url",
+                    "https://provider.example/v1",
+                    "--configured-model",
+                    "gpt-4.1-mini",
+                ]
+            )
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}, clear=False):
+                with mock.patch("neurolink_core.maf.find_spec", return_value=object()):
+                    with mock.patch(
+                        "neurolink_core.workflow.build_default_maf_provider_client",
+                        return_value=FakeProviderClient(),
+                    ):
+                        with redirect_stdout(out):
+                            code = core_cli_main(
+                                [
+                                    "agent-run",
+                                    "--input-text",
+                                    "check current device status",
+                                    "--maf-provider-mode",
+                                    "real_provider",
+                                    "--allow-model-call",
+                                    "--maf-config-file",
+                                    str(config_file),
+                                    "--session-id",
+                                    "agent-run-real-provider-config-001",
+                                ]
+                            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["maf_runtime"]["provider_config"]["configured_model"],
+            "gpt-4.1-mini",
+        )
+        self.assertTrue(payload["maf_runtime"]["provider_ready_for_model_call"])
+        self.assertEqual(payload["runtime_mode"], "real_llm")
+        agent_run_evidence = payload["agent_run_evidence"]
         self.assertEqual(agent_run_evidence["evidence_counts"]["policy_decisions"], 1)
         self.assertEqual(agent_run_evidence["evidence_counts"]["tool_results"], 1)
         self.assertTrue(agent_run_evidence["audit"]["audit_record_present"])

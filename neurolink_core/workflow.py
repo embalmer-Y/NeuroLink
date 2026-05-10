@@ -20,7 +20,7 @@ from .autonomy import (
 from .common import PerceptionEvent, PerceptionFrame, WorkflowResult, new_id, utc_now_iso
 from .data import CoreDataStore
 from .events import PerceptionEventRouter
-from .inference import build_inference_route, normalize_multimodal_input
+from .inference import build_inference_route, build_provider_runtime_env, normalize_multimodal_input
 from .maf import (
     MafProviderMode,
     MafRuntimeProfile,
@@ -3676,17 +3676,23 @@ def run_no_model_dry_run(
     require_real_tool_adapter: bool = False,
     event_source_label: str | None = None,
     federation_route_provider: Callable[[PerceptionFrame, dict[str, Any]], dict[str, Any] | None] | None = None,
+    maf_config_file: str = "",
 ) -> dict[str, Any]:
     data_store = CoreDataStore(db_path)
     try:
-        maf_runtime_profile = build_maf_runtime_profile(provider_mode=maf_provider_mode)
+        runtime_env = build_provider_runtime_env(config_path=maf_config_file)
+        maf_runtime_profile = build_maf_runtime_profile(
+            provider_mode=maf_provider_mode,
+            env=runtime_env,
+        )
         resolved_provider_client = provider_client
         if maf_runtime_profile.provider_mode == MafProviderMode.REAL_PROVIDER.value:
             if not allow_model_call:
                 raise ValueError("real_provider_mode_requires_allow_model_call")
             if resolved_provider_client is None:
                 resolved_provider_client = build_default_maf_provider_client(
-                    maf_runtime_profile
+                    maf_runtime_profile,
+                    env=runtime_env,
                 )
         if rational_backend == "copilot" and not allow_model_call:
             raise ValueError("copilot_rational_backend_requires_allow_model_call")
