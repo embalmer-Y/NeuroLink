@@ -49,6 +49,12 @@ from .social_adapters.registry import social_adapter_registry
 from .social_adapters.qq_official_gateway import run_qq_official_gateway_client
 from .social_adapters.qq_official import QQOfficialSocialAdapter
 from .social_adapters.qq_official_webhook import run_qq_official_webhook_server
+from .social_adapters.openclaw_gateway import OPENCLAW_GATEWAY_CLIENT_SCHEMA_VERSION
+from .social_adapters.openclaw_gateway import run_openclaw_gateway_client
+from .social_adapters.qq_openclaw import QQOpenClawSocialAdapter
+from .social_adapters.wechat_ilink import WeChatILinkSocialAdapter
+from .social_adapters.wecom import WeComSocialAdapter
+from .social_adapters.wecom_gateway import run_wecom_gateway_client
 from .social_adapters import social_adapter_test
 from .workflow import (
     APP_ARTIFACT_ADMISSION_SCHEMA_VERSION,
@@ -91,6 +97,8 @@ SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION = "2.1.0-social-adapter-smoke-v1"
 SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION = "2.1.0-self-improvement-smoke-v1"
 REAL_SCENE_CHECKLIST_TEMPLATE_SCHEMA_VERSION = "2.0.0-real-scene-checklist-template-v1"
 QQ_OFFICIAL_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.2-qq-official-gateway-closure-v1"
+WECOM_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.3-wecom-gateway-closure-v1"
+OPENCLAW_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.3-openclaw-gateway-closure-v1"
 
 
 def _build_closure_checklist_entry(
@@ -1872,6 +1880,147 @@ def _run_qq_official_gateway_ingress(
     )
 
 
+def _run_wecom_gateway_ingress(
+    *,
+    db_path: str,
+    duration: int,
+    max_events: int,
+    ready_file: str,
+    session_id: str | None,
+    config_path: str,
+    gateway_url: str,
+    maf_provider_mode: str,
+    allow_model_call: bool,
+    memory_backend: str,
+    rational_backend: str,
+    require_real_tool_adapter: bool,
+) -> dict[str, Any]:
+    registry = social_adapter_registry(env=os.environ, config_path=config_path)
+    profile = registry.get_profile("wecom")
+    if profile is None:
+        raise ValueError("wecom_profile_missing")
+    if not profile.ready_for_live_io:
+        raise ValueError("wecom_profile_not_ready")
+    _, access_token = _pick_profile_env_value(
+        profile,
+        preferred_fragments=("TOKEN", "KEY", "SECRET"),
+    )
+    resolved_gateway_url = gateway_url or profile.endpoint_url or ""
+    if not resolved_gateway_url:
+        raise ValueError("wecom_gateway_url_missing")
+    social_adapter = WeComSocialAdapter()
+
+    def ingest_callback(envelope: SocialMessageEnvelope, event_type: str) -> dict[str, Any]:
+        event = _build_social_event_from_envelope(
+            envelope,
+            social_adapter=social_adapter,
+        )
+        event["payload"] = {
+            **cast(dict[str, Any], event.get("payload") or {}),
+            "wecom_event_type": event_type,
+        }
+        return run_no_model_dry_run(
+            db_path,
+            events=[event],
+            session_id=session_id,
+            maf_provider_mode=maf_provider_mode,
+            allow_model_call=allow_model_call,
+            memory_backend=memory_backend,
+            rational_backend=rational_backend,
+            require_real_tool_adapter=require_real_tool_adapter,
+            event_source_label="wecom_gateway",
+        )
+
+    return run_wecom_gateway_client(
+        access_token=access_token,
+        gateway_url=resolved_gateway_url,
+        ingest_callback=ingest_callback,
+        duration=duration,
+        max_events=max_events,
+        ready_file=ready_file,
+    )
+
+
+def _run_openclaw_gateway_ingress(
+    *,
+    db_path: str,
+    adapter_name: str,
+    duration: int,
+    max_events: int,
+    ready_file: str,
+    session_id: str | None,
+    config_path: str,
+    gateway_url: str,
+    plugin_package: str,
+    maf_provider_mode: str,
+    allow_model_call: bool,
+    memory_backend: str,
+    rational_backend: str,
+    require_real_tool_adapter: bool,
+) -> dict[str, Any]:
+    registry = social_adapter_registry(env=os.environ, config_path=config_path)
+    profile = registry.get_profile(adapter_name)
+    if profile is None:
+        raise ValueError("openclaw_profile_missing")
+    if profile.transport_kind != "openclaw_gateway":
+        raise ValueError("openclaw_profile_transport_unsupported")
+    if not profile.ready_for_live_io:
+        raise ValueError("openclaw_profile_not_ready")
+    if profile.adapter_kind not in {"wechat_ilink", "qq_openclaw"}:
+        raise ValueError("openclaw_adapter_not_supported")
+    _, access_token = _pick_profile_env_value(
+        profile,
+        preferred_fragments=("TOKEN", "KEY", "SECRET"),
+    )
+    resolved_gateway_url = gateway_url or profile.host_url or profile.endpoint_url or ""
+    if not resolved_gateway_url:
+        raise ValueError("openclaw_gateway_url_missing")
+    resolved_plugin_package = plugin_package or profile.plugin_package or ""
+    if not resolved_plugin_package:
+        raise ValueError("openclaw_plugin_package_missing")
+    social_adapter = (
+        WeChatILinkSocialAdapter()
+        if profile.adapter_kind == "wechat_ilink"
+        else QQOpenClawSocialAdapter()
+    )
+
+    def ingest_callback(envelope: SocialMessageEnvelope, event_type: str) -> dict[str, Any]:
+        event = _build_social_event_from_envelope(
+            envelope,
+            social_adapter=social_adapter,
+        )
+        event["payload"] = {
+            **cast(dict[str, Any], event.get("payload") or {}),
+            "openclaw_event_type": event_type,
+            "openclaw_plugin_package": resolved_plugin_package,
+        }
+        return run_no_model_dry_run(
+            db_path,
+            events=[event],
+            session_id=session_id,
+            maf_provider_mode=maf_provider_mode,
+            allow_model_call=allow_model_call,
+            memory_backend=memory_backend,
+            rational_backend=rational_backend,
+            require_real_tool_adapter=require_real_tool_adapter,
+            event_source_label="openclaw_gateway",
+        )
+
+    return run_openclaw_gateway_client(
+        access_token=access_token,
+        gateway_url=resolved_gateway_url,
+        adapter_kind=profile.adapter_kind,
+        plugin_id=str(profile.plugin_id or profile.adapter_kind),
+        plugin_package=resolved_plugin_package,
+        installer_package=str(profile.installer_package or ""),
+        envelope_from_event=social_adapter.envelope_from_event,
+        ingest_callback=ingest_callback,
+        duration=duration,
+        max_events=max_events,
+        ready_file=ready_file,
+    )
+
+
 def build_social_adapter_smoke(*, config_path: str = "") -> dict[str, Any]:
     tempdir = tempfile.TemporaryDirectory()
     try:
@@ -1893,11 +2042,47 @@ def build_social_adapter_smoke(*, config_path: str = "") -> dict[str, Any]:
             enabled=True,
             compliance_acknowledged=True,
         )
+        social_adapter_config_update(
+            adapter_name="wecom",
+            config_path=resolved_config_path,
+            endpoint_url="wss://qyapi.weixin.qq.com/cgi-bin/webhook/connect",
+            credential_env_vars=["WECOM_BOT_TOKEN"],
+            enabled=True,
+        )
+        social_adapter_config_update(
+            adapter_name="wechat_ilink",
+            config_path=resolved_config_path,
+            host_url="ws://127.0.0.1:8811/openclaw",
+            endpoint_url="https://wechat.example.invalid/ilink",
+            credential_env_vars=["WECHAT_ILINK_TOKEN"],
+            plugin_package="@tencent/openclaw-weixin",
+            installer_package="@tencent-weixin/openclaw-weixin-cli",
+            plugin_installed=True,
+            account_session_ready=True,
+            enabled=True,
+            compliance_acknowledged=True,
+        )
+        social_adapter_config_update(
+            adapter_name="qq_openclaw",
+            config_path=resolved_config_path,
+            host_url="ws://127.0.0.1:8811/openclaw",
+            credential_env_vars=["QQ_OPENCLAW_TOKEN"],
+            plugin_id="qq_openclaw",
+            plugin_package="operator-supplied-qq-openclaw-package",
+            installer_package="operator-supplied-qq-openclaw-installer",
+            plugin_installed=True,
+            account_session_ready=True,
+            enabled=True,
+            compliance_acknowledged=True,
+        )
         adapter_registry_payload = social_adapter_list(
             env={
                 "QQ_BOT_TOKEN": "masked-token",
                 "QQ_BOT_SECRET": "masked-secret",
                 "ONEBOT_ACCESS_TOKEN": "masked-access-token",
+                "WECOM_BOT_TOKEN": "masked-wecom-token",
+                "WECHAT_ILINK_TOKEN": "masked-wechat-token",
+                "QQ_OPENCLAW_TOKEN": "masked-qq-openclaw-token",
             },
             config_path=resolved_config_path,
         )
@@ -1906,6 +2091,9 @@ def build_social_adapter_smoke(*, config_path: str = "") -> dict[str, Any]:
                 "QQ_BOT_TOKEN": "masked-token",
                 "QQ_BOT_SECRET": "masked-secret",
                 "ONEBOT_ACCESS_TOKEN": "masked-access-token",
+                "WECOM_BOT_TOKEN": "masked-wecom-token",
+                "WECHAT_ILINK_TOKEN": "masked-wechat-token",
+                "QQ_OPENCLAW_TOKEN": "masked-qq-openclaw-token",
             },
             config_path=resolved_config_path,
         )
@@ -1941,6 +2129,26 @@ def build_social_adapter_smoke(*, config_path: str = "") -> dict[str, Any]:
             (result for result in test_results if str(result.get("adapter") or "") == "onebot_qq"),
             None,
         ) or {}
+        wecom_result = next(
+            (result for result in test_results if str(result.get("adapter") or "") == "wecom"),
+            None,
+        ) or {}
+        wechat_ilink_result = next(
+            (
+                result
+                for result in test_results
+                if str(result.get("adapter") or "") == "wechat_ilink"
+            ),
+            None,
+        ) or {}
+        qq_openclaw_result = next(
+            (
+                result
+                for result in test_results
+                if str(result.get("adapter") or "") == "qq_openclaw"
+            ),
+            None,
+        ) or {}
         closure_gates: dict[str, bool] = {
             "social_event_persisted": int(payload.get("events_persisted", 0)) == 1,
             "social_event_source_recorded": str(
@@ -1967,10 +2175,33 @@ def build_social_adapter_smoke(*, config_path: str = "") -> dict[str, Any]:
             "onebot_social_gate": str(onebot_result.get("status") or "") == "ready"
             and str(cast(dict[str, Any], onebot_result.get("social_envelope") or {}).get("adapter_kind") or "")
             == "onebot_qq",
+            "wecom_social_gate": str(wecom_result.get("status") or "") == "ready"
+            and str(cast(dict[str, Any], wecom_result.get("social_envelope") or {}).get("adapter_kind") or "")
+            == "wecom",
+            "wechat_ilink_social_gate": str(wechat_ilink_result.get("status") or "") == "ready"
+            and str(cast(dict[str, Any], wechat_ilink_result.get("social_envelope") or {}).get("adapter_kind") or "")
+            == "wechat_ilink",
+            "qq_openclaw_social_gate": str(qq_openclaw_result.get("status") or "")
+            == "ready"
+            and str(
+                cast(
+                    dict[str, Any], qq_openclaw_result.get("social_envelope") or {}
+                ).get("adapter_kind")
+                or ""
+            )
+            == "qq_openclaw",
             "social_compliance_gate": bool(
                 cast(dict[str, Any], onebot_result.get("profile") or {}).get("compliance_ready")
             ) and bool(
                 cast(dict[str, Any], qq_result.get("profile") or {}).get("compliance_ready")
+            ) and bool(
+                cast(dict[str, Any], wecom_result.get("profile") or {}).get("compliance_ready")
+            ) and bool(
+                cast(dict[str, Any], wechat_ilink_result.get("profile") or {}).get("compliance_ready")
+            ) and bool(
+                cast(dict[str, Any], qq_openclaw_result.get("profile") or {}).get(
+                    "compliance_ready"
+                )
             ),
         }
         return {
@@ -3044,6 +3275,126 @@ def build_qq_official_gateway_closure(
     }
 
 
+def build_wecom_gateway_closure(
+    *,
+    gateway_run_payload: dict[str, Any],
+) -> dict[str, Any]:
+    gateway_closure_gates = cast(
+        dict[str, Any], gateway_run_payload.get("closure_gates") or {}
+    )
+    closure_gates = {
+        "gateway_run_payload_supplied": bool(gateway_run_payload),
+        "gateway_run_command_recorded": str(gateway_run_payload.get("command") or "")
+        == "wecom-gateway-client",
+        "gateway_run_contract_supported": str(
+            gateway_run_payload.get("schema_version") or ""
+        )
+        == "2.2.3-wecom-gateway-client-v1",
+        "gateway_connected": bool(gateway_closure_gates.get("gateway_connected")),
+        "auth_sent": bool(gateway_closure_gates.get("auth_sent")),
+        "ready_recorded": bool(gateway_closure_gates.get("ready_recorded")),
+        "dispatch_processed": bool(gateway_closure_gates.get("dispatch_processed")),
+        "core_ingress_recorded": bool(
+            gateway_closure_gates.get("core_ingress_recorded")
+        ),
+        "bounded_runtime_recorded": bool(
+            gateway_closure_gates.get("bounded_runtime")
+        ),
+    }
+    return {
+        "schema_version": WECOM_GATEWAY_CLOSURE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "wecom_gateway_closure_ready"
+        if all(closure_gates.values())
+        else "wecom_gateway_closure_gap",
+        "command": "wecom-gateway-closure",
+        "gateway_run": gateway_run_payload,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "gateway_url": str(
+                cast(dict[str, Any], gateway_run_payload.get("gateway") or {}).get(
+                    "url"
+                )
+                or ""
+            ),
+            "bot_user_id": str(gateway_run_payload.get("bot_user_id") or ""),
+            "dispatch_event_count": int(
+                gateway_run_payload.get("dispatch_event_count") or 0
+            ),
+            "events_persisted": sum(
+                int(item.get("events_persisted") or 0)
+                for item in cast(
+                    list[dict[str, Any]], gateway_run_payload.get("core_results") or []
+                )
+            ),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_openclaw_gateway_closure(
+    *,
+    gateway_run_payload: dict[str, Any],
+) -> dict[str, Any]:
+    gateway_closure_gates = cast(
+        dict[str, Any], gateway_run_payload.get("closure_gates") or {}
+    )
+    plugin_payload = cast(dict[str, Any], gateway_run_payload.get("plugin") or {})
+    closure_gates = {
+        "gateway_run_payload_supplied": bool(gateway_run_payload),
+        "gateway_run_command_recorded": str(gateway_run_payload.get("command") or "")
+        == "openclaw-gateway-client",
+        "gateway_run_contract_supported": str(
+            gateway_run_payload.get("schema_version") or ""
+        )
+        == OPENCLAW_GATEWAY_CLIENT_SCHEMA_VERSION,
+        "gateway_connected": bool(gateway_closure_gates.get("gateway_connected")),
+        "bind_sent": bool(gateway_closure_gates.get("bind_sent")),
+        "ready_recorded": bool(gateway_closure_gates.get("ready_recorded")),
+        "plugin_identified": bool(gateway_closure_gates.get("plugin_identified")),
+        "plugin_ready": bool(plugin_payload.get("ready")),
+        "dispatch_processed": bool(gateway_closure_gates.get("dispatch_processed")),
+        "core_ingress_recorded": bool(
+            gateway_closure_gates.get("core_ingress_recorded")
+        ),
+        "bounded_runtime_recorded": bool(
+            gateway_closure_gates.get("bounded_runtime")
+        ),
+    }
+    return {
+        "schema_version": OPENCLAW_GATEWAY_CLOSURE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "openclaw_gateway_closure_ready"
+        if all(closure_gates.values())
+        else "openclaw_gateway_closure_gap",
+        "command": "openclaw-gateway-closure",
+        "gateway_run": gateway_run_payload,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "adapter_kind": str(gateway_run_payload.get("adapter_kind") or ""),
+            "gateway_url": str(
+                cast(dict[str, Any], gateway_run_payload.get("gateway") or {}).get(
+                    "url"
+                )
+                or ""
+            ),
+            "plugin_id": str(plugin_payload.get("plugin_id") or ""),
+            "plugin_package": str(plugin_payload.get("plugin_package") or ""),
+            "host_version": str(plugin_payload.get("host_version") or ""),
+            "dispatch_event_count": int(
+                gateway_run_payload.get("dispatch_event_count") or 0
+            ),
+            "events_persisted": sum(
+                int(item.get("events_persisted") or 0)
+                for item in cast(
+                    list[dict[str, Any]], gateway_run_payload.get("core_results") or []
+                )
+            ),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
 def _build_qq_official_gateway_closure_summary(
     qq_gateway_payload: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -3092,6 +3443,108 @@ def _build_qq_official_gateway_closure_summary(
         "closure_gates": gates,
         "evidence_summary": cast(
             dict[str, Any], qq_gateway_payload.get("evidence_summary") or {}
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def _build_wecom_gateway_closure_summary(
+    wecom_gateway_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if wecom_gateway_payload is None:
+        gates = {
+            "wecom_gateway_evidence_supplied": False,
+            "wecom_gateway_contract_supported": False,
+            "gateway_run_payload_supplied": False,
+            "gateway_run_command_recorded": False,
+            "gateway_run_contract_supported": False,
+            "gateway_connected": False,
+            "auth_sent": False,
+            "ready_recorded": False,
+            "dispatch_processed": False,
+            "core_ingress_recorded": False,
+            "bounded_runtime_recorded": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "wecom_gateway_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], wecom_gateway_payload.get("closure_gates") or {})
+    gates = {
+        "wecom_gateway_evidence_supplied": True,
+        "wecom_gateway_contract_supported": str(
+            wecom_gateway_payload.get("schema_version") or ""
+        )
+        == WECOM_GATEWAY_CLOSURE_SCHEMA_VERSION,
+        **{key: bool(value) for key, value in payload_gates.items()},
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(wecom_gateway_payload.get("schema_version") or ""),
+        "status": str(wecom_gateway_payload.get("status") or "unknown"),
+        "reason": str(wecom_gateway_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any], wecom_gateway_payload.get("evidence_summary") or {}
+        ),
+        "ok": all(gates.values()),
+    }
+
+
+def _build_openclaw_gateway_closure_summary(
+    openclaw_gateway_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if openclaw_gateway_payload is None:
+        gates = {
+            "openclaw_gateway_evidence_supplied": False,
+            "openclaw_gateway_contract_supported": False,
+            "gateway_run_payload_supplied": False,
+            "gateway_run_command_recorded": False,
+            "gateway_run_contract_supported": False,
+            "gateway_connected": False,
+            "bind_sent": False,
+            "ready_recorded": False,
+            "plugin_identified": False,
+            "plugin_ready": False,
+            "dispatch_processed": False,
+            "core_ingress_recorded": False,
+            "bounded_runtime_recorded": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "openclaw_gateway_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(
+        dict[str, Any], openclaw_gateway_payload.get("closure_gates") or {}
+    )
+    gates = {
+        "openclaw_gateway_evidence_supplied": True,
+        "openclaw_gateway_contract_supported": str(
+            openclaw_gateway_payload.get("schema_version") or ""
+        )
+        == OPENCLAW_GATEWAY_CLOSURE_SCHEMA_VERSION,
+        **{key: bool(value) for key, value in payload_gates.items()},
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(openclaw_gateway_payload.get("schema_version") or ""),
+        "status": str(openclaw_gateway_payload.get("status") or "unknown"),
+        "reason": str(openclaw_gateway_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any], openclaw_gateway_payload.get("evidence_summary") or {}
         ),
         "ok": all(gates.values()),
     }
@@ -3279,6 +3732,26 @@ def _build_validation_gate_checklist(
                 "Bounded official QQ gateway evidence records connection, dispatch-to-Core, persisted session state, and resume continuity when required."
                 if validation_gates.get("qq_official_gateway_gate")
                 else "QQ official gateway live evidence is missing, incomplete, or does not satisfy the bounded reconnect/resume closure contract."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "wecom_gateway_gate",
+            passed=bool(validation_gates.get("wecom_gateway_gate")),
+            title="WeCom Gateway Live Gate",
+            detail=(
+                "Bounded WeCom gateway evidence records authenticated connection, dispatch-to-Core, and bounded runtime closure."
+                if validation_gates.get("wecom_gateway_gate")
+                else "WeCom gateway live evidence is missing, incomplete, or does not satisfy the bounded authenticated dispatch closure contract."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "openclaw_gateway_gate",
+            passed=bool(validation_gates.get("openclaw_gateway_gate")),
+            title="OpenClaw Gateway Live Gate",
+            detail=(
+                "Bounded OpenClaw gateway evidence records host bind, plugin identification, dispatch-to-Core, and bounded runtime closure."
+                if validation_gates.get("openclaw_gateway_gate")
+                else "OpenClaw gateway live evidence is missing, incomplete, or does not satisfy the bounded hosted-plugin dispatch closure contract."
             ),
         ),
         _build_closure_checklist_entry(
@@ -3820,6 +4293,8 @@ def _build_session_closure_summary(
     persona_state_payload: dict[str, Any] | None = None,
     social_adapter_payload: dict[str, Any] | None = None,
     qq_gateway_payload: dict[str, Any] | None = None,
+    wecom_gateway_payload: dict[str, Any] | None = None,
+    openclaw_gateway_payload: dict[str, Any] | None = None,
     approval_social_payload: dict[str, Any] | None = None,
     self_improvement_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -3897,6 +4372,12 @@ def _build_session_closure_summary(
         not_supplied_reason="social_adapter_file_not_supplied",
     )
     qq_gateway_summary = _build_qq_official_gateway_closure_summary(qq_gateway_payload)
+    wecom_gateway_summary = _build_wecom_gateway_closure_summary(
+        wecom_gateway_payload
+    )
+    openclaw_gateway_summary = _build_openclaw_gateway_closure_summary(
+        openclaw_gateway_payload
+    )
     approval_social_summary = _build_release_210_smoke_closure_summary(
         approval_social_payload,
         expected_schema=APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION,
@@ -4072,6 +4553,8 @@ def _build_session_closure_summary(
         "persona_persistence_gate": bool(persona_persistence_summary.get("ok")),
         "social_adapter_gate": bool(social_adapter_summary.get("ok")),
         "qq_official_gateway_gate": bool(qq_gateway_summary.get("ok")),
+        "wecom_gateway_gate": bool(wecom_gateway_summary.get("ok")),
+        "openclaw_gateway_gate": bool(openclaw_gateway_summary.get("ok")),
         "approval_over_social_gate": bool(approval_social_summary.get("ok")),
         "self_improvement_sandbox_gate": bool(self_improvement_summary.get("ok")),
         "multimodal_normalization_gate": bool(
@@ -4149,6 +4632,8 @@ def _build_session_closure_summary(
         "persona_persistence_summary": persona_persistence_summary,
         "social_adapter_summary": social_adapter_summary,
         "qq_official_gateway_summary": qq_gateway_summary,
+        "wecom_gateway_summary": wecom_gateway_summary,
+        "openclaw_gateway_summary": openclaw_gateway_summary,
         "approval_social_summary": approval_social_summary,
         "self_improvement_summary": self_improvement_summary,
         "aggregate_gates": aggregate_gates,
@@ -5013,11 +5498,26 @@ def build_parser() -> argparse.ArgumentParser:
     social_adapter_config.add_argument("--adapter-kind", default=None)
     social_adapter_config.add_argument("--endpoint-url", default=None)
     social_adapter_config.add_argument("--webhook-url", default=None)
+    social_adapter_config.add_argument("--host-url", default=None)
     social_adapter_config.add_argument("--credential-env-var", action="append", default=None)
     social_adapter_config.add_argument("--supported-channel-kind", action="append", default=None)
     social_adapter_config.add_argument("--default-channel-policy", default=None)
     social_adapter_config.add_argument("--mention-policy", default=None)
     social_adapter_config.add_argument("--transport-kind", default=None)
+    social_adapter_config.add_argument("--runtime-host", default=None)
+    social_adapter_config.add_argument("--plugin-id", default=None)
+    social_adapter_config.add_argument("--plugin-package", default=None)
+    social_adapter_config.add_argument("--installer-package", default=None)
+    social_adapter_config.add_argument(
+        "--plugin-installed",
+        choices=("true", "false"),
+        default=None,
+    )
+    social_adapter_config.add_argument(
+        "--account-session-ready",
+        choices=("true", "false"),
+        default=None,
+    )
     social_adapter_config.add_argument("--compliance-class", default=None)
     social_adapter_config.add_argument(
         "--compliance-acknowledged",
@@ -5158,6 +5658,100 @@ def build_parser() -> argparse.ArgumentParser:
         help="Require the Neuro CLI adapter during the gateway-driven Core run",
     )
 
+    wecom_gateway_client = subparsers.add_parser("wecom-gateway-client")
+    wecom_gateway_client.add_argument("--db", default=":memory:", help="SQLite database path")
+    wecom_gateway_client.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+    wecom_gateway_client.add_argument("--gateway-url", default="", help="Optional gateway WSS URL override for bounded WeCom gateway runs")
+    wecom_gateway_client.add_argument("--duration", type=int, default=30, help="Maximum bounded runtime in seconds")
+    wecom_gateway_client.add_argument("--max-events", type=int, default=1, help="Stop after this many WeCom dispatch events if non-zero")
+    wecom_gateway_client.add_argument("--ready-file", default="", help="Optional file path written once the WeCom gateway client is ready")
+    wecom_gateway_client.add_argument("--output", choices=("json",), default="json")
+    wecom_gateway_client.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    wecom_gateway_client.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    wecom_gateway_client.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    wecom_gateway_client.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for WeCom gateway ingress lookup and candidate commit behavior",
+    )
+    wecom_gateway_client.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+    wecom_gateway_client.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter during the WeCom gateway-driven Core run",
+    )
+
+    openclaw_gateway_client = subparsers.add_parser("openclaw-gateway-client")
+    openclaw_gateway_client.add_argument("--db", default=":memory:", help="SQLite database path")
+    openclaw_gateway_client.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+    openclaw_gateway_client.add_argument("--adapter", required=True, help="Hosted social adapter name to route OpenClaw events through")
+    openclaw_gateway_client.add_argument("--gateway-url", default="", help="Optional OpenClaw host websocket URL override")
+    openclaw_gateway_client.add_argument("--plugin-package", default="", help="Optional hosted plugin package override")
+    openclaw_gateway_client.add_argument("--duration", type=int, default=30, help="Maximum bounded runtime in seconds")
+    openclaw_gateway_client.add_argument("--max-events", type=int, default=1, help="Stop after this many OpenClaw dispatch events if non-zero")
+    openclaw_gateway_client.add_argument("--ready-file", default="", help="Optional file path written once the OpenClaw gateway client is ready")
+    openclaw_gateway_client.add_argument("--output", choices=("json",), default="json")
+    openclaw_gateway_client.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    openclaw_gateway_client.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    openclaw_gateway_client.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    openclaw_gateway_client.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for OpenClaw gateway ingress lookup and candidate commit behavior",
+    )
+    openclaw_gateway_client.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+    openclaw_gateway_client.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter during the OpenClaw gateway-driven Core run",
+    )
+
     qq_official_gateway_closure = subparsers.add_parser("qq-official-gateway-closure")
     qq_official_gateway_closure.add_argument(
         "--gateway-run-file",
@@ -5170,6 +5764,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Require reconnect and RESUME evidence in addition to bounded gateway dispatch-to-Core proof.",
     )
     qq_official_gateway_closure.add_argument("--output", choices=("json",), default="json")
+
+    wecom_gateway_closure = subparsers.add_parser("wecom-gateway-closure")
+    wecom_gateway_closure.add_argument(
+        "--gateway-run-file",
+        required=True,
+        help="JSON payload emitted by wecom-gateway-client to validate as bounded WeCom gateway live evidence.",
+    )
+    wecom_gateway_closure.add_argument("--output", choices=("json",), default="json")
+
+    openclaw_gateway_closure = subparsers.add_parser("openclaw-gateway-closure")
+    openclaw_gateway_closure.add_argument(
+        "--gateway-run-file",
+        required=True,
+        help="JSON payload emitted by openclaw-gateway-client to validate as bounded OpenClaw gateway live evidence.",
+    )
+    openclaw_gateway_closure.add_argument("--output", choices=("json",), default="json")
 
     self_improvement_smoke = subparsers.add_parser("self-improvement-smoke")
     self_improvement_smoke.add_argument("--output", choices=("json",), default="json")
@@ -5279,6 +5889,8 @@ def build_parser() -> argparse.ArgumentParser:
     closure_summary.add_argument("--persona-state-file", default="", help="Optional persona-state-smoke JSON payload to include in the persona persistence gate")
     closure_summary.add_argument("--social-adapter-file", default="", help="Optional social-adapter-smoke JSON payload to include in the social adapter gate")
     closure_summary.add_argument("--qq-gateway-file", default="", help="Optional qq-official-gateway-closure JSON payload to include in the bounded official QQ gateway live gate")
+    closure_summary.add_argument("--wecom-gateway-file", default="", help="Optional wecom-gateway-closure JSON payload to include in the bounded WeCom gateway live gate")
+    closure_summary.add_argument("--openclaw-gateway-file", default="", help="Optional openclaw-gateway-closure JSON payload to include in the bounded OpenClaw gateway live gate")
     closure_summary.add_argument("--approval-social-file", default="", help="Optional approval-social-smoke JSON payload to include in the approval-over-social gate")
     closure_summary.add_argument("--self-improvement-file", default="", help="Optional self-improvement-smoke JSON payload to include in the self-improvement sandbox gate")
     closure_summary.add_argument("--output", choices=("json",), default="json")
@@ -6433,11 +7045,30 @@ def main(argv: list[str] | None = None) -> int:
             adapter_kind=args.adapter_kind,
             endpoint_url=args.endpoint_url,
             webhook_url=args.webhook_url,
+            host_url=args.host_url,
             credential_env_vars=args.credential_env_var,
             supported_channel_kinds=args.supported_channel_kind,
             default_channel_policy=args.default_channel_policy,
             mention_policy=args.mention_policy,
             transport_kind=args.transport_kind,
+            runtime_host=args.runtime_host,
+            plugin_id=args.plugin_id,
+            plugin_package=args.plugin_package,
+            installer_package=args.installer_package,
+            plugin_installed=(
+                True
+                if args.plugin_installed == "true"
+                else False
+                if args.plugin_installed == "false"
+                else None
+            ),
+            account_session_ready=(
+                True
+                if args.account_session_ready == "true"
+                else False
+                if args.account_session_ready == "false"
+                else None
+            ),
             share_session_in_group=(
                 True
                 if args.share_session_in_group == "true"
@@ -6536,6 +7167,54 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
+    if args.command == "wecom-gateway-client":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            payload = _run_wecom_gateway_ingress(
+                db_path=args.db,
+                duration=args.duration,
+                max_events=args.max_events,
+                ready_file=args.ready_file,
+                session_id=args.session_id,
+                config_path=args.config_file,
+                gateway_url=args.gateway_url,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
+            )
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "openclaw-gateway-client":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            payload = _run_openclaw_gateway_ingress(
+                db_path=args.db,
+                adapter_name=args.adapter,
+                duration=args.duration,
+                max_events=args.max_events,
+                ready_file=args.ready_file,
+                session_id=args.session_id,
+                config_path=args.config_file,
+                gateway_url=args.gateway_url,
+                plugin_package=args.plugin_package,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
+            )
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "qq-official-gateway-closure":
         try:
             gateway_run_payload = cast(
@@ -6554,6 +7233,56 @@ def main(argv: list[str] | None = None) -> int:
                         "status": "error",
                         "command": args.command,
                         "failure_class": "qq_official_gateway_closure_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "wecom-gateway-closure":
+        try:
+            gateway_run_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.gateway_run_file).read_text(encoding="utf-8")),
+            )
+            payload = build_wecom_gateway_closure(
+                gateway_run_payload=gateway_run_payload,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "wecom_gateway_closure_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "openclaw-gateway-closure":
+        try:
+            gateway_run_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.gateway_run_file).read_text(encoding="utf-8")),
+            )
+            payload = build_openclaw_gateway_closure(
+                gateway_run_payload=gateway_run_payload,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "openclaw_gateway_closure_invalid",
                         "failure_status": str(exc),
                     },
                     sort_keys=True,
@@ -6845,6 +7574,18 @@ def main(argv: list[str] | None = None) -> int:
                 dict[str, Any],
                 json.loads(Path(args.qq_gateway_file).read_text(encoding="utf-8")),
             )
+        wecom_gateway_payload = None
+        if args.wecom_gateway_file:
+            wecom_gateway_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.wecom_gateway_file).read_text(encoding="utf-8")),
+            )
+        openclaw_gateway_payload = None
+        if args.openclaw_gateway_file:
+            openclaw_gateway_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.openclaw_gateway_file).read_text(encoding="utf-8")),
+            )
         approval_social_payload = None
         if args.approval_social_file:
             approval_social_payload = cast(
@@ -6883,6 +7624,8 @@ def main(argv: list[str] | None = None) -> int:
                 persona_state_payload=persona_state_payload,
                 social_adapter_payload=social_adapter_payload,
                 qq_gateway_payload=qq_gateway_payload,
+                wecom_gateway_payload=wecom_gateway_payload,
+                openclaw_gateway_payload=openclaw_gateway_payload,
                 approval_social_payload=approval_social_payload,
                 self_improvement_payload=self_improvement_payload,
             )

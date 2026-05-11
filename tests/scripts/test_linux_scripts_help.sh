@@ -15,6 +15,7 @@ scripts=(
   "applocation/NeuroLink/scripts/monitor_neurolink_uart.sh"
   "applocation/NeuroLink/scripts/preflight_neurolink_linux.sh"
   "applocation/NeuroLink/scripts/prepare_dnesp32s3b_wsl.sh"
+  "applocation/NeuroLink/scripts/run_release_2_2_3_pre_promotion_validation.sh"
   "applocation/NeuroLink/scripts/run_zenoh_router_wsl.sh"
   "applocation/NeuroLink/scripts/setup_neurolink_env.sh"
   "applocation/NeuroLink/scripts/smoke_neurolink_linux.sh"

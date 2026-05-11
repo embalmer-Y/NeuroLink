@@ -11,12 +11,25 @@ from typing import Any, cast
 
 from ..social import MockSocialAdapter, SocialDeliveryRecord, SocialMessageEnvelope
 from .onebot_qq import OneBotQQSocialAdapter
+from .qq_openclaw import QQOpenClawSocialAdapter
 from .qq_official import QQOfficialSocialAdapter
 from .samples import onebot_direct_message_sample
 from .samples import onebot_group_message_no_mention_sample
+from .samples import onebot_direct_message_sample
+from .samples import qq_openclaw_direct_message_sample
+from .samples import qq_openclaw_group_message_no_mention_sample
+from .samples import qq_openclaw_group_message_sample
 from .samples import onebot_group_message_sample, qq_official_group_message_sample
 from .samples import qq_official_direct_message_sample
 from .samples import qq_official_group_message_no_mention_sample
+from .samples import wechat_ilink_direct_message_sample
+from .samples import wechat_ilink_group_message_no_mention_sample
+from .samples import wechat_ilink_group_message_sample
+from .samples import wecom_direct_message_sample
+from .samples import wecom_group_message_no_mention_sample
+from .samples import wecom_group_message_sample
+from .wechat_ilink import WeChatILinkSocialAdapter
+from .wecom import WeComSocialAdapter
 SOCIAL_ADAPTER_SAMPLE_SCENARIOS = ("group", "direct", "group_no_mention")
 
 
@@ -142,14 +155,21 @@ class SocialAdapterProfile:
     name: str
     adapter_kind: str
     enabled: bool
+    runtime_host: str = "direct"
     endpoint_url: str | None = None
     webhook_url: str | None = None
+    host_url: str | None = None
     credential_env_vars: tuple[str, ...] = ()
     supported_channel_kinds: tuple[str, ...] = DEFAULT_SUPPORTED_CHANNEL_KINDS
     default_channel_policy: str = "direct_and_group"
     mention_policy: str = "optional"
     transport_kind: str = "local"
     share_session_in_group: bool = False
+    plugin_id: str | None = None
+    plugin_package: str | None = None
+    installer_package: str | None = None
+    plugin_installed: bool = False
+    account_session_ready: bool = False
     compliance_class: str = "deterministic_mock"
     compliance_acknowledged: bool = True
     live_network_allowed: bool = False
@@ -163,6 +183,16 @@ class SocialAdapterProfile:
 
     @property
     def ready_for_live_io(self) -> bool:
+        if self.transport_kind == "openclaw_gateway":
+            return (
+                self.enabled
+                and self.endpoint_configured
+                and self.credential_configured
+                and bool(self.plugin_package)
+                and self.plugin_installed
+                and self.account_session_ready
+                and self.compliance_ready
+            )
         return (
             self.enabled
             and self.endpoint_configured
@@ -175,6 +205,17 @@ class SocialAdapterProfile:
         if not self.enabled:
             missing.append("enabled_adapter")
         if not self.endpoint_configured:
+            if self.transport_kind == "openclaw_gateway":
+                missing.append("host_endpoint_reference")
+            else:
+                missing.append("endpoint_reference")
+        if self.transport_kind == "openclaw_gateway" and not self.plugin_package:
+            missing.append("plugin_package_coordinate")
+        if self.transport_kind == "openclaw_gateway" and not self.plugin_installed:
+            missing.append("plugin_installed_evidence")
+        if self.transport_kind == "openclaw_gateway" and not self.account_session_ready:
+            missing.append("account_session_ready")
+        if not self.endpoint_configured and self.transport_kind != "openclaw_gateway":
             missing.append("endpoint_reference")
         if not self.credential_configured:
             missing.append("credential_reference")
@@ -188,8 +229,10 @@ class SocialAdapterProfile:
             "name": self.name,
             "adapter_kind": self.adapter_kind,
             "enabled": self.enabled,
+            "runtime_host": self.runtime_host,
             "endpoint_url": self.endpoint_url,
             "webhook_url": self.webhook_url,
+            "host_url": self.host_url,
             "endpoint_configured": self.endpoint_configured,
             "credential_env_vars": list(self.credential_env_vars),
             "credential_configured": self.credential_configured,
@@ -201,6 +244,11 @@ class SocialAdapterProfile:
             "mention_policy": self.mention_policy,
             "transport_kind": self.transport_kind,
             "share_session_in_group": self.share_session_in_group,
+            "plugin_id": self.plugin_id,
+            "plugin_package": self.plugin_package,
+            "installer_package": self.installer_package,
+            "plugin_installed": self.plugin_installed,
+            "account_session_ready": self.account_session_ready,
             "compliance_class": self.compliance_class,
             "compliance_acknowledged": self.compliance_acknowledged,
             "compliance_ready": self.compliance_ready,
@@ -214,14 +262,21 @@ class SocialAdapterProfile:
             "name": self.name,
             "adapter_kind": self.adapter_kind,
             "enabled": self.enabled,
+            "runtime_host": self.runtime_host,
             "endpoint_url": self.endpoint_url,
             "webhook_url": self.webhook_url,
+            "host_url": self.host_url,
             "credential_env_vars": list(self.credential_env_vars),
             "supported_channel_kinds": list(self.supported_channel_kinds),
             "default_channel_policy": self.default_channel_policy,
             "mention_policy": self.mention_policy,
             "transport_kind": self.transport_kind,
             "share_session_in_group": self.share_session_in_group,
+            "plugin_id": self.plugin_id,
+            "plugin_package": self.plugin_package,
+            "installer_package": self.installer_package,
+            "plugin_installed": self.plugin_installed,
+            "account_session_ready": self.account_session_ready,
             "compliance_class": self.compliance_class,
             "compliance_acknowledged": self.compliance_acknowledged,
             "live_network_allowed": self.live_network_allowed,
@@ -348,6 +403,69 @@ def _default_profiles(env: Mapping[str, str]) -> dict[str, SocialAdapterProfile]
             compliance_class="lab_bridge",
             compliance_acknowledged=False,
         ),
+        "wecom": SocialAdapterProfile(
+            name="wecom",
+            adapter_kind="wecom",
+            enabled=False,
+            runtime_host="direct",
+            endpoint_url=None,
+            endpoint_configured=False,
+            credential_env_vars=("WECOM_BOT_TOKEN",),
+            credential_configured=_credentials_present(env, ("WECOM_BOT_TOKEN",)),
+            supported_channel_kinds=("direct", "group"),
+            default_channel_policy="mention_or_direct",
+            mention_policy="mention_or_direct",
+            transport_kind="websocket",
+            share_session_in_group=False,
+            compliance_class="official_api",
+            compliance_acknowledged=True,
+        ),
+        "wechat_ilink": SocialAdapterProfile(
+            name="wechat_ilink",
+            adapter_kind="wechat_ilink",
+            enabled=False,
+            runtime_host="openclaw",
+            endpoint_url=None,
+            host_url=None,
+            endpoint_configured=False,
+            credential_env_vars=("WECHAT_ILINK_TOKEN",),
+            credential_configured=_credentials_present(env, ("WECHAT_ILINK_TOKEN",)),
+            supported_channel_kinds=("direct", "group"),
+            default_channel_policy="lab_opt_in",
+            mention_policy="mention_or_direct",
+            transport_kind="openclaw_gateway",
+            share_session_in_group=False,
+            plugin_id="wechat_ilink",
+            plugin_package="@tencent/openclaw-weixin",
+            installer_package="@tencent-weixin/openclaw-weixin-cli",
+            plugin_installed=False,
+            account_session_ready=False,
+            compliance_class="personal_account_bridge",
+            compliance_acknowledged=False,
+        ),
+        "qq_openclaw": SocialAdapterProfile(
+            name="qq_openclaw",
+            adapter_kind="qq_openclaw",
+            enabled=False,
+            runtime_host="openclaw",
+            endpoint_url=None,
+            host_url=None,
+            endpoint_configured=False,
+            credential_env_vars=("QQ_OPENCLAW_TOKEN",),
+            credential_configured=_credentials_present(env, ("QQ_OPENCLAW_TOKEN",)),
+            supported_channel_kinds=("direct", "group"),
+            default_channel_policy="lab_opt_in",
+            mention_policy="mention_or_direct",
+            transport_kind="openclaw_gateway",
+            share_session_in_group=False,
+            plugin_id="qq_openclaw",
+            plugin_package=None,
+            installer_package=None,
+            plugin_installed=False,
+            account_session_ready=False,
+            compliance_class="personal_account_bridge",
+            compliance_acknowledged=False,
+        ),
     }
 
 
@@ -364,12 +482,15 @@ def _overlay_profile_from_config(
     )
     endpoint_url = str(config_entry.get("endpoint_url") or profile.endpoint_url or "") or None
     webhook_url = str(config_entry.get("webhook_url") or profile.webhook_url or "") or None
+    host_url = str(config_entry.get("host_url") or profile.host_url or "") or None
     return SocialAdapterProfile(
         name=str(config_entry.get("name") or profile.name),
         adapter_kind=str(config_entry.get("adapter_kind") or profile.adapter_kind),
         enabled=_coerce_bool(config_entry.get("enabled"), default=profile.enabled),
+        runtime_host=str(config_entry.get("runtime_host") or profile.runtime_host),
         endpoint_url=endpoint_url,
         webhook_url=webhook_url,
+        host_url=host_url,
         credential_env_vars=credential_env_vars,
         supported_channel_kinds=_normalize_channel_kinds(
             config_entry.get("supported_channel_kinds")
@@ -385,6 +506,23 @@ def _overlay_profile_from_config(
             config_entry.get("share_session_in_group"),
             default=profile.share_session_in_group,
         ),
+        plugin_id=str(config_entry.get("plugin_id") or profile.plugin_id or "") or None,
+        plugin_package=str(
+            config_entry.get("plugin_package") or profile.plugin_package or ""
+        )
+        or None,
+        installer_package=str(
+            config_entry.get("installer_package") or profile.installer_package or ""
+        )
+        or None,
+        plugin_installed=_coerce_bool(
+            config_entry.get("plugin_installed"),
+            default=profile.plugin_installed,
+        ),
+        account_session_ready=_coerce_bool(
+            config_entry.get("account_session_ready"),
+            default=profile.account_session_ready,
+        ),
         compliance_class=str(config_entry.get("compliance_class") or profile.compliance_class),
         compliance_acknowledged=_coerce_bool(
             config_entry.get("compliance_acknowledged"),
@@ -394,7 +532,7 @@ def _overlay_profile_from_config(
             config_entry.get("live_network_allowed"),
             default=profile.live_network_allowed,
         ),
-        endpoint_configured=bool(endpoint_url or webhook_url),
+        endpoint_configured=bool(host_url or endpoint_url or webhook_url),
         credential_configured=_credentials_present(env, credential_env_vars),
     )
 
@@ -468,12 +606,19 @@ def social_adapter_config_update(
     adapter_kind: str | None = None,
     endpoint_url: str | None = None,
     webhook_url: str | None = None,
+    host_url: str | None = None,
     credential_env_vars: list[str] | None = None,
     supported_channel_kinds: list[str] | None = None,
     default_channel_policy: str | None = None,
     mention_policy: str | None = None,
     transport_kind: str | None = None,
     share_session_in_group: bool | None = None,
+    runtime_host: str | None = None,
+    plugin_id: str | None = None,
+    plugin_package: str | None = None,
+    installer_package: str | None = None,
+    plugin_installed: bool | None = None,
+    account_session_ready: bool | None = None,
     compliance_class: str | None = None,
     compliance_acknowledged: bool | None = None,
     live_network_allowed: bool | None = None,
@@ -501,6 +646,8 @@ def social_adapter_config_update(
         updated_entry["endpoint_url"] = endpoint_url
     if webhook_url is not None:
         updated_entry["webhook_url"] = webhook_url
+    if host_url is not None:
+        updated_entry["host_url"] = host_url
     if credential_env_vars is not None:
         updated_entry["credential_env_vars"] = list(_dedupe(tuple(credential_env_vars)))
     if supported_channel_kinds is not None:
@@ -515,6 +662,18 @@ def social_adapter_config_update(
         updated_entry["transport_kind"] = transport_kind
     if share_session_in_group is not None:
         updated_entry["share_session_in_group"] = share_session_in_group
+    if runtime_host is not None:
+        updated_entry["runtime_host"] = runtime_host
+    if plugin_id is not None:
+        updated_entry["plugin_id"] = plugin_id
+    if plugin_package is not None:
+        updated_entry["plugin_package"] = plugin_package
+    if installer_package is not None:
+        updated_entry["installer_package"] = installer_package
+    if plugin_installed is not None:
+        updated_entry["plugin_installed"] = plugin_installed
+    if account_session_ready is not None:
+        updated_entry["account_session_ready"] = account_session_ready
     if compliance_class is not None:
         updated_entry["compliance_class"] = compliance_class
     if compliance_acknowledged is not None:
@@ -551,6 +710,12 @@ def _adapter_for_kind(adapter_kind: str) -> Any:
         return QQOfficialSocialAdapter()
     if adapter_kind == "onebot_qq":
         return OneBotQQSocialAdapter()
+    if adapter_kind == "wecom":
+        return WeComSocialAdapter()
+    if adapter_kind == "wechat_ilink":
+        return WeChatILinkSocialAdapter()
+    if adapter_kind == "qq_openclaw":
+        return QQOpenClawSocialAdapter()
     return MockSocialAdapter()
 
 
@@ -576,6 +741,32 @@ def _sample_envelope(
             payload = onebot_group_message_sample()
         payload["share_session_in_group"] = profile.share_session_in_group
         return OneBotQQSocialAdapter().envelope_from_event(payload)
+    if profile.adapter_kind == "wecom":
+        if sample_scenario == "direct":
+            payload = wecom_direct_message_sample()
+        elif sample_scenario == "group_no_mention":
+            payload = wecom_group_message_no_mention_sample()
+        else:
+            payload = wecom_group_message_sample()
+        return WeComSocialAdapter().envelope_from_event(payload)
+    if profile.adapter_kind == "wechat_ilink":
+        if sample_scenario == "direct":
+            payload = wechat_ilink_direct_message_sample()
+        elif sample_scenario == "group_no_mention":
+            payload = wechat_ilink_group_message_no_mention_sample()
+        else:
+            payload = wechat_ilink_group_message_sample()
+        payload["share_session_in_group"] = profile.share_session_in_group
+        return WeChatILinkSocialAdapter().envelope_from_event(payload)
+    if profile.adapter_kind == "qq_openclaw":
+        if sample_scenario == "direct":
+            payload = qq_openclaw_direct_message_sample()
+        elif sample_scenario == "group_no_mention":
+            payload = qq_openclaw_group_message_no_mention_sample()
+        else:
+            payload = qq_openclaw_group_message_sample()
+        payload["share_session_in_group"] = profile.share_session_in_group
+        return QQOpenClawSocialAdapter().envelope_from_event(payload)
     return MockSocialAdapter().bind_principal(
         adapter_kind=profile.adapter_kind,
         channel_id="mock-social-001",

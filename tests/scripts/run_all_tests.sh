@@ -14,6 +14,7 @@ for test_script in \
   "${TEST_DIR}/test_style_scripts.sh" \
   "${TEST_DIR}/test_setup_neurolink_env.sh" \
   "${TEST_DIR}/test_preflight_neurolink_linux.sh" \
+  "${TEST_DIR}/test_release_2_2_3_pre_promotion_validation.sh" \
   "${TEST_DIR}/test_smoke_neurolink_linux.sh" \
   "${TEST_DIR}/test_linux_scripts_help.sh" \
   "${TEST_DIR}/test_run_zenoh_router_wsl.sh" \

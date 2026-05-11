@@ -80,6 +80,105 @@ ONEBOT_QQ_DIRECT_MESSAGE_SAMPLE: dict[str, Any] = {
 }
 
 
+WECOM_GROUP_MESSAGE_SAMPLE: dict[str, Any] = {
+    "msgid": "wecom-msg-sample-001",
+    "conversation_type": "group",
+    "roomid": "wecom-room-001",
+    "from": "alice",
+    "text": "@NeuroLink please check current status",
+    "mentioned_list": ["neuro_bot"],
+}
+
+
+WECOM_GROUP_MESSAGE_NO_MENTION_SAMPLE: dict[str, Any] = {
+    "msgid": "wecom-msg-sample-002",
+    "conversation_type": "group",
+    "roomid": "wecom-room-001",
+    "from": "alice",
+    "text": "please check current status",
+    "mentioned_list": [],
+}
+
+
+WECOM_DIRECT_MESSAGE_SAMPLE: dict[str, Any] = {
+    "msgid": "wecom-dm-sample-001",
+    "conversation_type": "single",
+    "from": "alice",
+    "text": "please check my direct message status",
+    "mentioned_list": [],
+}
+
+
+WECHAT_ILINK_GROUP_MESSAGE_SAMPLE: dict[str, Any] = {
+    "msg_id": "wechat-ilink-msg-sample-001",
+    "scene": "group",
+    "room_id": "wechat-room-001",
+    "from_user": "alice",
+    "text": "please check current status",
+    "mentioned_list": ["neuro_bot"],
+    "share_session_in_group": True,
+}
+
+
+WECHAT_ILINK_GROUP_MESSAGE_NO_MENTION_SAMPLE: dict[str, Any] = {
+    "msg_id": "wechat-ilink-msg-sample-002",
+    "scene": "group",
+    "room_id": "wechat-room-001",
+    "from_user": "alice",
+    "text": "please check current status",
+    "mentioned_list": [],
+    "share_session_in_group": False,
+}
+
+
+WECHAT_ILINK_DIRECT_MESSAGE_SAMPLE: dict[str, Any] = {
+    "msg_id": "wechat-ilink-dm-sample-001",
+    "scene": "direct",
+    "from_user": "alice",
+    "text": "please check my direct status",
+    "mentioned_list": [],
+    "share_session_in_group": False,
+}
+
+
+QQ_OPENCLAW_GROUP_MESSAGE_SAMPLE: dict[str, Any] = {
+    "msg_id": "qq-openclaw-msg-sample-001",
+    "scene": "group",
+    "room_id": "qq-openclaw-room-001",
+    "from_user": "alice",
+    "text": "please check current status",
+    "mentioned_list": ["neuro_bot"],
+    "share_session_in_group": True,
+    "plugin_id": "qq_openclaw",
+    "plugin_package": "operator-supplied-qq-openclaw-package",
+    "installer_package": "operator-supplied-qq-openclaw-installer",
+}
+
+
+QQ_OPENCLAW_GROUP_MESSAGE_NO_MENTION_SAMPLE: dict[str, Any] = {
+    "msg_id": "qq-openclaw-msg-sample-002",
+    "scene": "group",
+    "room_id": "qq-openclaw-room-001",
+    "from_user": "alice",
+    "text": "please check current status",
+    "mentioned_list": [],
+    "share_session_in_group": False,
+    "plugin_id": "qq_openclaw",
+}
+
+
+QQ_OPENCLAW_DIRECT_MESSAGE_SAMPLE: dict[str, Any] = {
+    "msg_id": "qq-openclaw-dm-sample-001",
+    "scene": "direct",
+    "from_user": "alice",
+    "text": "please check my direct status",
+    "mentioned_list": [],
+    "share_session_in_group": False,
+    "plugin_id": "qq_openclaw",
+    "plugin_package": "operator-supplied-qq-openclaw-package",
+}
+
+
 def qq_official_group_message_sample() -> dict[str, Any]:
     return deepcopy(QQ_OFFICIAL_GROUP_MESSAGE_SAMPLE)
 
@@ -102,3 +201,39 @@ def onebot_group_message_no_mention_sample() -> dict[str, Any]:
 
 def onebot_direct_message_sample() -> dict[str, Any]:
     return deepcopy(ONEBOT_QQ_DIRECT_MESSAGE_SAMPLE)
+
+
+def wecom_group_message_sample() -> dict[str, Any]:
+    return deepcopy(WECOM_GROUP_MESSAGE_SAMPLE)
+
+
+def wecom_group_message_no_mention_sample() -> dict[str, Any]:
+    return deepcopy(WECOM_GROUP_MESSAGE_NO_MENTION_SAMPLE)
+
+
+def wecom_direct_message_sample() -> dict[str, Any]:
+    return deepcopy(WECOM_DIRECT_MESSAGE_SAMPLE)
+
+
+def wechat_ilink_group_message_sample() -> dict[str, Any]:
+    return deepcopy(WECHAT_ILINK_GROUP_MESSAGE_SAMPLE)
+
+
+def wechat_ilink_group_message_no_mention_sample() -> dict[str, Any]:
+    return deepcopy(WECHAT_ILINK_GROUP_MESSAGE_NO_MENTION_SAMPLE)
+
+
+def wechat_ilink_direct_message_sample() -> dict[str, Any]:
+    return deepcopy(WECHAT_ILINK_DIRECT_MESSAGE_SAMPLE)
+
+
+def qq_openclaw_group_message_sample() -> dict[str, Any]:
+    return deepcopy(QQ_OPENCLAW_GROUP_MESSAGE_SAMPLE)
+
+
+def qq_openclaw_group_message_no_mention_sample() -> dict[str, Any]:
+    return deepcopy(QQ_OPENCLAW_GROUP_MESSAGE_NO_MENTION_SAMPLE)
+
+
+def qq_openclaw_direct_message_sample() -> dict[str, Any]:
+    return deepcopy(QQ_OPENCLAW_DIRECT_MESSAGE_SAMPLE)

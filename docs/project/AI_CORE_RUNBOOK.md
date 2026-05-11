@@ -463,6 +463,104 @@ JSON and convert it into a stable closure payload before the final
 Then add `--qq-gateway-file /tmp/qq-official-gateway-closure.json` to the final
 `closure-summary` command and verify `validation_gates.qq_official_gateway_gate=true`.
 
+### 4.7.2 OpenClaw-Hosted Compatibility Profile Preflight
+
+For release-2.2.3 additive validation, keep `wechat_ilink` and `qq_openclaw`
+under the generic OpenClaw boundary instead of treating them as promoted direct
+production routes. Their role is to prove bounded hosted-profile normalization,
+operator-supplied host/plugin evidence, and optional bounded gateway ingress
+without weakening the promoted `qq_official` or direct `wecom` paths.
+
+Before a hosted-profile validation run, the operator should provide or confirm:
+
+1. one OpenClaw gateway host URL;
+2. the environment variable name that holds the hosted-profile access token;
+3. the plugin identifier and verified plugin package coordinate;
+4. installer/package metadata as evidence only;
+5. explicit account/session readiness evidence;
+6. explicit compliance acknowledgement before any live-bound validation.
+
+Use this compact matrix to keep the release-2.2.3 boundary explicit during
+operator validation:
+
+| Adapter | Route class | Release-2.2.3 role | Ready when | Promotion posture |
+| --- | --- | --- | --- | --- |
+| `qq_official` | direct official API | promoted QQ baseline | official credentials and deterministic checks are green | production QQ path |
+| `wecom` | direct gateway/API | promoted enterprise path | direct endpoint/token plus bounded gateway evidence are green | production enterprise path |
+| `wechat_ilink` | OpenClaw-hosted compatibility | additive hosted validation only | host URL, plugin package, session readiness, compliance acknowledgement | fail closed unless operator evidence is explicit |
+| `qq_openclaw` | OpenClaw-hosted compatibility | additive hosted validation only | host URL, plugin package, session readiness, compliance acknowledgement | fail closed unless operator evidence is explicit |
+| `onebot_qq` | compatibility bridge | lab or migration aid only | bridge endpoint and deterministic checks are green | not a promoted QQ replacement |
+
+Configure a bounded `qq_openclaw` profile explicitly:
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-config \
+  --adapter qq_openclaw \
+  --enable \
+  --host-url ws://<openclaw-host> \
+  --credential-env-var QQ_OPENCLAW_TOKEN \
+  --transport-kind openclaw_gateway \
+  --runtime-host openclaw \
+  --plugin-id qq_openclaw \
+  --plugin-package <operator-supplied-plugin> \
+  --installer-package <operator-supplied-installer> \
+  --plugin-installed true \
+  --account-session-ready true \
+  --compliance-acknowledged true
+```
+
+Run deterministic hosted-profile checks before any bounded gateway ingress:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_openclaw \
+  --sample-scenario group
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_openclaw \
+  --sample-scenario direct
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-smoke
+```
+
+Inspect these fields in the JSON outputs:
+
+1. `results[0].profile.runtime_host`
+2. `results[0].profile.transport_kind`
+3. `results[0].profile.missing_requirements`
+4. `results[0].social_envelope.metadata.plugin_id`
+5. `results[0].social_envelope.metadata.plugin_package`
+6. `closure_gates.qq_openclaw_social_gate` in the `social-adapter-smoke` output
+
+When bounded OpenClaw ingress is approved, archive the raw gateway run and then
+convert it to stable closure evidence before release closure:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli openclaw-gateway-client \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --adapter qq_openclaw \
+  --gateway-url ws://<openclaw-host> \
+  --plugin-package <operator-supplied-plugin> \
+  --duration 15 \
+  --max-events 1 > /tmp/openclaw-gateway-run.json
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli openclaw-gateway-closure \
+  --gateway-run-file /tmp/openclaw-gateway-run.json > /tmp/openclaw-gateway-closure.json
+```
+
+Then add `--openclaw-gateway-file /tmp/openclaw-gateway-closure.json` to the
+final `closure-summary` command and verify
+`validation_gates.openclaw_gateway_gate=true`.
+
+For the default release-2.2.3 pre-promotion rerun, prefer the fixed packaged
+validation command instead of manually rebuilding the focused pytest filter:
+
+```bash
+cd /home/emb/project/zephyrproject
+bash applocation/NeuroLink/scripts/run_release_2_2_3_pre_promotion_validation.sh
+```
+
 ### 4.7.1 Official QQ Webhook Callback Drill
 
 Use this drill when you are ready to connect the official QQ developer console

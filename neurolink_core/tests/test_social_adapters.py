@@ -21,8 +21,18 @@ from neurolink_core.social_adapters import onebot_group_message_sample
 from neurolink_core.social_adapters import qq_official_direct_message_sample
 from neurolink_core.social_adapters import qq_official_group_message_no_mention_sample
 from neurolink_core.social_adapters import qq_official_group_message_sample
+from neurolink_core.social_adapters import qq_openclaw_direct_message_sample
+from neurolink_core.social_adapters import qq_openclaw_group_message_no_mention_sample
+from neurolink_core.social_adapters import qq_openclaw_group_message_sample
+from neurolink_core.social_adapters import wechat_ilink_direct_message_sample
+from neurolink_core.social_adapters import wechat_ilink_group_message_no_mention_sample
+from neurolink_core.social_adapters import wechat_ilink_group_message_sample
+from neurolink_core.social_adapters import wecom_direct_message_sample
+from neurolink_core.social_adapters import wecom_group_message_no_mention_sample
+from neurolink_core.social_adapters import wecom_group_message_sample
 from neurolink_core.social_adapters import registry as social_registry_module
 from neurolink_core.social_adapters.onebot_qq import OneBotQQSocialAdapter
+from neurolink_core.social_adapters.qq_openclaw import QQOpenClawSocialAdapter
 from neurolink_core.social_adapters.qq_official import QQOfficialSocialAdapter
 from neurolink_core.social_adapters.qq_official_webhook import qq_official_validation_response
 from neurolink_core.social_adapters.registry import SOCIAL_ADAPTER_TEST_SCHEMA_VERSION
@@ -30,6 +40,8 @@ from neurolink_core.social_adapters.registry import social_adapter_config_update
 from neurolink_core.social_adapters.registry import social_adapter_list
 from neurolink_core.social_adapters.registry import social_adapter_registry
 from neurolink_core.social_adapters.registry import social_adapter_test
+from neurolink_core.social_adapters.wechat_ilink import WeChatILinkSocialAdapter
+from neurolink_core.social_adapters.wecom import WeComSocialAdapter
 
 
 class TestSocialAdapterRegistry(unittest.TestCase):
@@ -38,13 +50,169 @@ class TestSocialAdapterRegistry(unittest.TestCase):
 
         qq_profile = registry.get_profile("qq_official")
         onebot_profile = registry.get_profile("onebot_qq")
+        wecom_profile = registry.get_profile("wecom")
+        wechat_profile = registry.get_profile("wechat_ilink")
+        qq_openclaw_profile = registry.get_profile("qq_openclaw")
 
         self.assertIsNotNone(qq_profile)
         self.assertIsNotNone(onebot_profile)
+        self.assertIsNotNone(wecom_profile)
+        self.assertIsNotNone(wechat_profile)
+        self.assertIsNotNone(qq_openclaw_profile)
         self.assertIn("credential_reference", qq_profile.missing_requirements())
         self.assertIn("compliance_acknowledgement", onebot_profile.missing_requirements())
+        self.assertIn("endpoint_reference", wecom_profile.missing_requirements())
+        self.assertIn("compliance_acknowledgement", wechat_profile.missing_requirements())
+        self.assertIn(
+            "plugin_package_coordinate",
+            qq_openclaw_profile.missing_requirements(),
+        )
         self.assertNotIn("credential_values", qq_profile.to_dict())
         self.assertEqual(qq_profile.to_dict()["credential_values_masked"], [])
+
+    def test_qq_openclaw_requires_host_endpoint_and_compliance(self) -> None:
+        registry = social_adapter_registry(env={"QQ_OPENCLAW_TOKEN": "secret"})
+
+        qq_openclaw_profile = registry.get_profile("qq_openclaw")
+        self.assertIsNotNone(qq_openclaw_profile)
+        self.assertFalse(qq_openclaw_profile.ready_for_live_io)
+        self.assertIn(
+            "host_endpoint_reference",
+            qq_openclaw_profile.missing_requirements(),
+        )
+        self.assertIn(
+            "plugin_package_coordinate",
+            qq_openclaw_profile.missing_requirements(),
+        )
+        self.assertIn(
+            "compliance_acknowledgement",
+            qq_openclaw_profile.missing_requirements(),
+        )
+        self.assertEqual(qq_openclaw_profile.runtime_host, "openclaw")
+        self.assertEqual(qq_openclaw_profile.transport_kind, "openclaw_gateway")
+
+    def test_config_update_can_mark_qq_openclaw_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            social_adapter_config_update(
+                adapter_name="qq_openclaw",
+                config_path=str(config_file),
+                host_url="ws://127.0.0.1:8811/openclaw",
+                credential_env_vars=["QQ_OPENCLAW_TOKEN"],
+                plugin_package="operator-supplied-qq-openclaw-package",
+                installer_package="operator-supplied-qq-openclaw-installer",
+                plugin_installed=True,
+                account_session_ready=True,
+                enabled=True,
+                compliance_acknowledged=True,
+                live_network_allowed=True,
+            )
+            payload = social_adapter_list(
+                env={"QQ_OPENCLAW_TOKEN": "token"},
+                config_path=str(config_file),
+            )
+
+        qq_openclaw_profile = next(
+            profile for profile in payload["profiles"] if profile["name"] == "qq_openclaw"
+        )
+        self.assertTrue(qq_openclaw_profile["ready_for_live_io"])
+        self.assertEqual(qq_openclaw_profile["runtime_host"], "openclaw")
+        self.assertEqual(
+            qq_openclaw_profile["plugin_package"],
+            "operator-supplied-qq-openclaw-package",
+        )
+
+    def test_config_update_enables_wecom_readiness_from_env_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            social_adapter_config_update(
+                adapter_name="wecom",
+                config_path=str(config_file),
+                credential_env_vars=["WECOM_BOT_TOKEN"],
+                endpoint_url="wss://qyapi.weixin.qq.com/cgi-bin/webhook/connect",
+                enabled=True,
+                active=True,
+            )
+            payload = social_adapter_list(
+                env={"WECOM_BOT_TOKEN": "token"},
+                config_path=str(config_file),
+            )
+
+        wecom_profile = next(
+            profile for profile in payload["profiles"] if profile["name"] == "wecom"
+        )
+        self.assertEqual(payload["active_adapter"], "wecom")
+        self.assertTrue(wecom_profile["ready_for_live_io"])
+        self.assertEqual(wecom_profile["credential_values_masked"], ["***"])
+        self.assertEqual(wecom_profile["transport_kind"], "websocket")
+        self.assertEqual(wecom_profile["mention_policy"], "mention_or_direct")
+
+    def test_wechat_ilink_requires_compliance_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            social_adapter_config_update(
+                adapter_name="wechat_ilink",
+                config_path=str(config_file),
+                host_url="ws://127.0.0.1:8811/openclaw",
+                endpoint_url="https://wechat.example.invalid/ilink",
+                credential_env_vars=["WECHAT_ILINK_TOKEN"],
+                plugin_package="@tencent/openclaw-weixin",
+                installer_package="@tencent-weixin/openclaw-weixin-cli",
+                plugin_installed=True,
+                account_session_ready=True,
+                enabled=True,
+                compliance_acknowledged=False,
+            )
+            registry = social_adapter_registry(
+                env={"WECHAT_ILINK_TOKEN": "secret"},
+                config_path=str(config_file),
+            )
+
+        wechat_profile = registry.get_profile("wechat_ilink")
+        self.assertIsNotNone(wechat_profile)
+        self.assertFalse(wechat_profile.ready_for_live_io)
+        self.assertIn("compliance_acknowledgement", wechat_profile.missing_requirements())
+        self.assertEqual(wechat_profile.transport_kind, "openclaw_gateway")
+        self.assertEqual(wechat_profile.runtime_host, "openclaw")
+
+    def test_wechat_ilink_openclaw_profile_requires_host_and_plugin_evidence(self) -> None:
+        registry = social_adapter_registry(env={"WECHAT_ILINK_TOKEN": "secret"})
+
+        wechat_profile = registry.get_profile("wechat_ilink")
+        self.assertIsNotNone(wechat_profile)
+        self.assertIn("host_endpoint_reference", wechat_profile.missing_requirements())
+        self.assertIn("plugin_installed_evidence", wechat_profile.missing_requirements())
+        self.assertIn("account_session_ready", wechat_profile.missing_requirements())
+        self.assertEqual(wechat_profile.plugin_package, "@tencent/openclaw-weixin")
+
+    def test_config_update_can_mark_wechat_ilink_openclaw_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            social_adapter_config_update(
+                adapter_name="wechat_ilink",
+                config_path=str(config_file),
+                host_url="ws://127.0.0.1:8811/openclaw",
+                credential_env_vars=["WECHAT_ILINK_TOKEN"],
+                plugin_package="@tencent/openclaw-weixin",
+                installer_package="@tencent-weixin/openclaw-weixin-cli",
+                plugin_installed=True,
+                account_session_ready=True,
+                enabled=True,
+                compliance_acknowledged=True,
+                live_network_allowed=True,
+            )
+            payload = social_adapter_list(
+                env={"WECHAT_ILINK_TOKEN": "token"},
+                config_path=str(config_file),
+            )
+
+        wechat_profile = next(
+            profile for profile in payload["profiles"] if profile["name"] == "wechat_ilink"
+        )
+        self.assertTrue(wechat_profile["ready_for_live_io"])
+        self.assertEqual(wechat_profile["runtime_host"], "openclaw")
+        self.assertEqual(wechat_profile["host_url"], "ws://127.0.0.1:8811/openclaw")
+        self.assertEqual(wechat_profile["transport_kind"], "openclaw_gateway")
 
     def test_config_update_enables_qq_official_readiness_from_env_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -267,6 +435,110 @@ class TestProtocolNormalization(unittest.TestCase):
         self.assertEqual(envelope.metadata["mentioned_user_ids"], [])
         self.assertEqual(envelope.metadata["session_scope"], "per_user")
 
+    def test_wecom_payload_normalizes_group_message(self) -> None:
+        adapter = WeComSocialAdapter()
+        envelope = adapter.envelope_from_event(wecom_group_message_sample())
+
+        self.assertEqual(envelope.adapter_kind, "wecom")
+        self.assertEqual(envelope.channel_kind, "group")
+        self.assertEqual(envelope.principal_id, "wecom:alice")
+        self.assertEqual(envelope.metadata["transport_kind"], "websocket")
+        self.assertEqual(envelope.metadata["session_scope"], "shared_group")
+        self.assertEqual(envelope.metadata["mentioned_user_ids"], ["neuro_bot"])
+
+    def test_wecom_payload_normalizes_direct_message(self) -> None:
+        adapter = WeComSocialAdapter()
+        envelope = adapter.envelope_from_event(wecom_direct_message_sample())
+
+        self.assertEqual(envelope.channel_kind, "direct")
+        self.assertEqual(envelope.channel_id, "direct-alice")
+        self.assertEqual(envelope.metadata["group_scene"], "direct")
+        self.assertEqual(envelope.metadata["session_scope"], "per_user")
+
+    def test_wecom_group_without_mention_stays_per_user(self) -> None:
+        adapter = WeComSocialAdapter()
+        envelope = adapter.envelope_from_event(wecom_group_message_no_mention_sample())
+
+        self.assertEqual(envelope.channel_kind, "group")
+        self.assertEqual(envelope.metadata["mentioned_user_ids"], [])
+        self.assertEqual(envelope.metadata["session_scope"], "per_user")
+
+    def test_wechat_ilink_payload_normalizes_group_message(self) -> None:
+        adapter = WeChatILinkSocialAdapter()
+        envelope = adapter.envelope_from_event(wechat_ilink_group_message_sample())
+
+        self.assertEqual(envelope.adapter_kind, "wechat_ilink")
+        self.assertEqual(envelope.channel_kind, "group")
+        self.assertEqual(envelope.metadata["runtime_host"], "openclaw")
+        self.assertEqual(envelope.metadata["transport_kind"], "openclaw_gateway")
+        self.assertEqual(
+            envelope.metadata["social_contract_schema_version"],
+            "2.2.3-openclaw-social-contract-v1",
+        )
+        self.assertEqual(
+            envelope.metadata["plugin_package"],
+            "@tencent/openclaw-weixin",
+        )
+        self.assertTrue(envelope.metadata["share_session_in_group"])
+        self.assertEqual(envelope.metadata["session_scope"], "shared_group")
+
+    def test_wechat_ilink_payload_normalizes_direct_message(self) -> None:
+        adapter = WeChatILinkSocialAdapter()
+        envelope = adapter.envelope_from_event(wechat_ilink_direct_message_sample())
+
+        self.assertEqual(envelope.channel_kind, "direct")
+        self.assertEqual(envelope.channel_id, "direct-alice")
+        self.assertEqual(envelope.metadata["plugin_id"], "wechat_ilink")
+        self.assertEqual(
+            envelope.metadata["installer_package"],
+            "@tencent-weixin/openclaw-weixin-cli",
+        )
+        self.assertEqual(envelope.metadata["session_scope"], "per_user")
+
+    def test_wechat_ilink_group_without_mention_stays_per_user(self) -> None:
+        adapter = WeChatILinkSocialAdapter()
+        envelope = adapter.envelope_from_event(
+            wechat_ilink_group_message_no_mention_sample()
+        )
+
+        self.assertEqual(envelope.channel_kind, "group")
+        self.assertFalse(envelope.metadata["share_session_in_group"])
+        self.assertEqual(envelope.metadata["session_scope"], "per_user")
+
+    def test_qq_openclaw_payload_normalizes_group_message(self) -> None:
+        adapter = QQOpenClawSocialAdapter()
+        envelope = adapter.envelope_from_event(qq_openclaw_group_message_sample())
+
+        self.assertEqual(envelope.adapter_kind, "qq_openclaw")
+        self.assertEqual(envelope.channel_kind, "group")
+        self.assertEqual(envelope.metadata["runtime_host"], "openclaw")
+        self.assertEqual(envelope.metadata["platform_kind"], "qq")
+        self.assertEqual(envelope.metadata["plugin_id"], "qq_openclaw")
+        self.assertTrue(envelope.metadata["share_session_in_group"])
+        self.assertEqual(envelope.metadata["session_scope"], "shared_group")
+
+    def test_qq_openclaw_payload_normalizes_direct_message(self) -> None:
+        adapter = QQOpenClawSocialAdapter()
+        envelope = adapter.envelope_from_event(qq_openclaw_direct_message_sample())
+
+        self.assertEqual(envelope.channel_kind, "direct")
+        self.assertEqual(envelope.channel_id, "direct-alice")
+        self.assertEqual(
+            envelope.metadata["plugin_package"],
+            "operator-supplied-qq-openclaw-package",
+        )
+        self.assertEqual(envelope.metadata["session_scope"], "per_user")
+
+    def test_qq_openclaw_group_without_mention_stays_per_user(self) -> None:
+        adapter = QQOpenClawSocialAdapter()
+        envelope = adapter.envelope_from_event(
+            qq_openclaw_group_message_no_mention_sample()
+        )
+
+        self.assertEqual(envelope.channel_kind, "group")
+        self.assertFalse(envelope.metadata["share_session_in_group"])
+        self.assertEqual(envelope.metadata["session_scope"], "per_user")
+
 
 class TestSocialAdapterCli(unittest.TestCase):
     def test_cli_social_adapter_list_outputs_registry(self) -> None:
@@ -279,6 +551,153 @@ class TestSocialAdapterCli(unittest.TestCase):
         self.assertEqual(payload["command"], "social-adapter-list")
         self.assertIn("qq_official", {profile["name"] for profile in payload["profiles"]})
         self.assertIn("onebot_qq", {profile["name"] for profile in payload["profiles"]})
+        self.assertIn("wecom", {profile["name"] for profile in payload["profiles"]})
+        self.assertIn("wechat_ilink", {profile["name"] for profile in payload["profiles"]})
+        self.assertIn("qq_openclaw", {profile["name"] for profile in payload["profiles"]})
+
+    def test_cli_social_adapter_test_supports_wecom_direct_sample_scenario(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            core_cli_main(
+                [
+                    "social-adapter-config",
+                    "--config-file",
+                    str(config_file),
+                    "--adapter",
+                    "wecom",
+                    "--endpoint-url",
+                    "wss://qyapi.weixin.qq.com/cgi-bin/webhook/connect",
+                    "--transport-kind",
+                    "websocket",
+                    "--credential-env-var",
+                    "WECOM_BOT_TOKEN",
+                    "--enable",
+                ]
+            )
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"WECOM_BOT_TOKEN": "token"}, clear=False):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "social-adapter-test",
+                            "--config-file",
+                            str(config_file),
+                            "--adapter",
+                            "wecom",
+                            "--sample-scenario",
+                            "direct",
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["sample_scenario"], "direct")
+        self.assertEqual(payload["results"][0]["social_envelope"]["adapter_kind"], "wecom")
+        self.assertEqual(payload["results"][0]["social_envelope"]["channel_kind"], "direct")
+
+    def test_cli_social_adapter_test_supports_wechat_ilink_group_scenario(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            core_cli_main(
+                [
+                    "social-adapter-config",
+                    "--config-file",
+                    str(config_file),
+                    "--adapter",
+                    "wechat_ilink",
+                    "--endpoint-url",
+                    "https://wechat.example.invalid/ilink",
+                    "--transport-kind",
+                    "long_poll",
+                    "--share-session-in-group",
+                    "true",
+                    "--compliance-acknowledged",
+                    "true",
+                    "--credential-env-var",
+                    "WECHAT_ILINK_TOKEN",
+                    "--enable",
+                ]
+            )
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"WECHAT_ILINK_TOKEN": "token"}, clear=False):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "social-adapter-test",
+                            "--config-file",
+                            str(config_file),
+                            "--adapter",
+                            "wechat_ilink",
+                            "--sample-scenario",
+                            "group",
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["results"][0]["social_envelope"]["adapter_kind"], "wechat_ilink")
+        self.assertEqual(payload["results"][0]["social_envelope"]["channel_kind"], "group")
+        self.assertEqual(payload["results"][0]["profile"]["transport_kind"], "long_poll")
+
+    def test_cli_social_adapter_test_supports_qq_openclaw_group_scenario(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            core_cli_main(
+                [
+                    "social-adapter-config",
+                    "--config-file",
+                    str(config_file),
+                    "--adapter",
+                    "qq_openclaw",
+                    "--host-url",
+                    "ws://127.0.0.1:8811/openclaw",
+                    "--transport-kind",
+                    "openclaw_gateway",
+                    "--share-session-in-group",
+                    "true",
+                    "--compliance-acknowledged",
+                    "true",
+                    "--credential-env-var",
+                    "QQ_OPENCLAW_TOKEN",
+                    "--plugin-id",
+                    "qq_openclaw",
+                    "--plugin-package",
+                    "operator-supplied-qq-openclaw-package",
+                    "--installer-package",
+                    "operator-supplied-qq-openclaw-installer",
+                    "--plugin-installed",
+                    "true",
+                    "--account-session-ready",
+                    "true",
+                    "--enable",
+                ]
+            )
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"QQ_OPENCLAW_TOKEN": "token"}, clear=False):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "social-adapter-test",
+                            "--config-file",
+                            str(config_file),
+                            "--adapter",
+                            "qq_openclaw",
+                            "--sample-scenario",
+                            "group",
+                        ]
+                    )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["results"][0]["social_envelope"]["adapter_kind"],
+            "qq_openclaw",
+        )
+        self.assertEqual(payload["results"][0]["social_envelope"]["channel_kind"], "group")
+        self.assertEqual(
+            payload["results"][0]["profile"]["transport_kind"],
+            "openclaw_gateway",
+        )
 
     def test_cli_social_adapter_config_and_test_use_config_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -671,6 +1090,360 @@ class TestSocialAdapterCli(unittest.TestCase):
             identify_payload = server_ready["identify"]
             self.assertEqual(identify_payload["op"], 2)
             self.assertEqual(identify_payload["d"]["token"], "QQBot gateway-access-token-001")
+
+    def test_cli_wecom_gateway_client_authenticates_and_dispatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            ready_file = Path(tmpdir) / "wecom-gateway-ready.json"
+            db_file = Path(tmpdir) / "wecom-gateway.db"
+            social_adapter_config_update(
+                adapter_name="wecom",
+                config_path=str(config_file),
+                credential_env_vars=["WECOM_BOT_TOKEN"],
+                endpoint_url="wss://qyapi.weixin.qq.com/cgi-bin/webhook/connect",
+                enabled=True,
+                active=True,
+                live_network_allowed=True,
+            )
+
+            server_ready: dict[str, Any] = {}
+            stop_event = threading.Event()
+
+            async def gateway_handler(websocket: Any) -> None:
+                auth_payload = json.loads(await asyncio.wait_for(websocket.recv(), timeout=2))
+                server_ready["auth"] = auth_payload
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "event": "READY",
+                            "bot_user_id": "wecom-bot-001",
+                        }
+                    )
+                )
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "event": "message",
+                            "data": {
+                                "msgid": "wecom-live-001",
+                                "conversation_type": "single",
+                                "from": "alice",
+                                "text": "hello from wecom gateway",
+                                "mentioned_list": [],
+                            },
+                        }
+                    )
+                )
+                await asyncio.sleep(0.05)
+
+            def run_gateway_server() -> None:
+                async def main() -> None:
+                    async with websockets.serve(gateway_handler, "127.0.0.1", 0) as server:
+                        port = server.sockets[0].getsockname()[1]
+                        server_ready["url"] = f"ws://127.0.0.1:{port}"
+                        while not stop_event.is_set():
+                            await asyncio.sleep(0.05)
+
+                asyncio.run(main())
+
+            server_thread = threading.Thread(target=run_gateway_server)
+            server_thread.start()
+            for _ in range(50):
+                if server_ready.get("url"):
+                    break
+                time.sleep(0.1)
+            self.assertTrue(server_ready.get("url"))
+
+            out = io.StringIO()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "WECOM_BOT_TOKEN": "test-wecom-token",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "wecom-gateway-client",
+                            "--config-file",
+                            str(config_file),
+                            "--db",
+                            str(db_file),
+                            "--gateway-url",
+                            str(server_ready["url"]),
+                            "--duration",
+                            "5",
+                            "--max-events",
+                            "1",
+                            "--ready-file",
+                            str(ready_file),
+                        ]
+                    )
+            stop_event.set()
+            server_thread.join(timeout=5)
+
+            self.assertEqual(code, 0)
+            self.assertFalse(server_thread.is_alive())
+            self.assertTrue(ready_file.exists())
+            auth_payload = server_ready["auth"]
+            self.assertEqual(auth_payload["op"], "auth")
+            self.assertEqual(auth_payload["d"]["token"], "test-wecom-token")
+
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["ready_event_count"], 1)
+            self.assertEqual(payload["dispatch_event_count"], 1)
+            self.assertEqual(payload["events"][0]["event_type"], "message")
+            self.assertEqual(payload["events"][0]["channel_kind"], "direct")
+            self.assertEqual(payload["core_results"][0]["events_persisted"], 1)
+
+    def test_cli_openclaw_gateway_client_binds_and_dispatches_wechat_ilink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            ready_file = Path(tmpdir) / "openclaw-gateway-ready.json"
+            db_file = Path(tmpdir) / "openclaw-gateway.db"
+            social_adapter_config_update(
+                adapter_name="wechat_ilink",
+                config_path=str(config_file),
+                host_url="ws://127.0.0.1:8811/openclaw",
+                endpoint_url="https://wechat.example.invalid/ilink",
+                credential_env_vars=["WECHAT_ILINK_TOKEN"],
+                plugin_package="@tencent/openclaw-weixin",
+                installer_package="@tencent-weixin/openclaw-weixin-cli",
+                plugin_installed=True,
+                account_session_ready=True,
+                enabled=True,
+                active=True,
+                compliance_acknowledged=True,
+                live_network_allowed=True,
+            )
+
+            server_ready: dict[str, Any] = {}
+            stop_event = threading.Event()
+
+            async def gateway_handler(websocket: Any) -> None:
+                bind_payload = json.loads(await asyncio.wait_for(websocket.recv(), timeout=2))
+                server_ready["bind"] = bind_payload
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "event": "READY",
+                            "host_version": "0.9.1",
+                            "plugin": {
+                                "id": "wechat_ilink",
+                                "package": "@tencent/openclaw-weixin",
+                                "ready": True,
+                            },
+                        }
+                    )
+                )
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "event": "message",
+                            "data": {
+                                "msg_id": "wechat-openclaw-live-001",
+                                "scene": "direct",
+                                "from_user": "alice",
+                                "text": "hello from openclaw gateway",
+                                "mentioned_list": [],
+                            },
+                        }
+                    )
+                )
+                await asyncio.sleep(0.05)
+
+            def run_gateway_server() -> None:
+                async def main() -> None:
+                    async with websockets.serve(gateway_handler, "127.0.0.1", 0) as server:
+                        port = server.sockets[0].getsockname()[1]
+                        server_ready["url"] = f"ws://127.0.0.1:{port}"
+                        while not stop_event.is_set():
+                            await asyncio.sleep(0.05)
+
+                asyncio.run(main())
+
+            server_thread = threading.Thread(target=run_gateway_server)
+            server_thread.start()
+            for _ in range(50):
+                if server_ready.get("url"):
+                    break
+                time.sleep(0.1)
+            self.assertTrue(server_ready.get("url"))
+
+            out = io.StringIO()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "WECHAT_ILINK_TOKEN": "test-openclaw-token",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "openclaw-gateway-client",
+                            "--config-file",
+                            str(config_file),
+                            "--db",
+                            str(db_file),
+                            "--adapter",
+                            "wechat_ilink",
+                            "--gateway-url",
+                            str(server_ready["url"]),
+                            "--duration",
+                            "5",
+                            "--max-events",
+                            "1",
+                            "--ready-file",
+                            str(ready_file),
+                        ]
+                    )
+            stop_event.set()
+            server_thread.join(timeout=5)
+
+            self.assertEqual(code, 0)
+            self.assertFalse(server_thread.is_alive())
+            self.assertTrue(ready_file.exists())
+            bind_payload = server_ready["bind"]
+            self.assertEqual(bind_payload["op"], "bind")
+            self.assertEqual(bind_payload["d"]["token"], "test-openclaw-token")
+            self.assertEqual(bind_payload["d"]["adapter"], "wechat_ilink")
+
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["ready_event_count"], 1)
+            self.assertEqual(payload["dispatch_event_count"], 1)
+            self.assertEqual(payload["events"][0]["adapter_kind"], "wechat_ilink")
+            self.assertEqual(payload["events"][0]["channel_kind"], "direct")
+            self.assertEqual(payload["events"][0]["plugin_package"], "@tencent/openclaw-weixin")
+            self.assertEqual(payload["core_results"][0]["events_persisted"], 1)
+
+    def test_cli_openclaw_gateway_client_binds_and_dispatches_qq_openclaw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "social_adapter_profiles.json"
+            ready_file = Path(tmpdir) / "qq-openclaw-gateway-ready.json"
+            db_file = Path(tmpdir) / "qq-openclaw-gateway.db"
+            social_adapter_config_update(
+                adapter_name="qq_openclaw",
+                config_path=str(config_file),
+                host_url="ws://127.0.0.1:8811/openclaw",
+                credential_env_vars=["QQ_OPENCLAW_TOKEN"],
+                plugin_id="qq_openclaw",
+                plugin_package="operator-supplied-qq-openclaw-package",
+                installer_package="operator-supplied-qq-openclaw-installer",
+                plugin_installed=True,
+                account_session_ready=True,
+                enabled=True,
+                active=True,
+                compliance_acknowledged=True,
+                live_network_allowed=True,
+            )
+
+            server_ready: dict[str, Any] = {}
+            stop_event = threading.Event()
+
+            async def gateway_handler(websocket: Any) -> None:
+                bind_payload = json.loads(await asyncio.wait_for(websocket.recv(), timeout=2))
+                server_ready["bind"] = bind_payload
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "event": "READY",
+                            "host_version": "0.9.2",
+                            "plugin": {
+                                "id": "qq_openclaw",
+                                "package": "operator-supplied-qq-openclaw-package",
+                                "ready": True,
+                            },
+                        }
+                    )
+                )
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "event": "message",
+                            "data": {
+                                "msg_id": "qq-openclaw-live-001",
+                                "scene": "direct",
+                                "from_user": "alice",
+                                "text": "hello from qq openclaw gateway",
+                                "mentioned_list": [],
+                            },
+                        }
+                    )
+                )
+                await asyncio.sleep(0.05)
+
+            def run_gateway_server() -> None:
+                async def main() -> None:
+                    async with websockets.serve(gateway_handler, "127.0.0.1", 0) as server:
+                        port = server.sockets[0].getsockname()[1]
+                        server_ready["url"] = f"ws://127.0.0.1:{port}"
+                        while not stop_event.is_set():
+                            await asyncio.sleep(0.05)
+
+                asyncio.run(main())
+
+            server_thread = threading.Thread(target=run_gateway_server)
+            server_thread.start()
+            for _ in range(50):
+                if server_ready.get("url"):
+                    break
+                time.sleep(0.1)
+            self.assertTrue(server_ready.get("url"))
+
+            out = io.StringIO()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QQ_OPENCLAW_TOKEN": "test-openclaw-token",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(out):
+                    code = core_cli_main(
+                        [
+                            "openclaw-gateway-client",
+                            "--config-file",
+                            str(config_file),
+                            "--db",
+                            str(db_file),
+                            "--adapter",
+                            "qq_openclaw",
+                            "--gateway-url",
+                            str(server_ready["url"]),
+                            "--duration",
+                            "5",
+                            "--max-events",
+                            "1",
+                            "--ready-file",
+                            str(ready_file),
+                        ]
+                    )
+            stop_event.set()
+            server_thread.join(timeout=5)
+
+            self.assertEqual(code, 0)
+            self.assertFalse(server_thread.is_alive())
+            self.assertTrue(ready_file.exists())
+            bind_payload = server_ready["bind"]
+            self.assertEqual(bind_payload["op"], "bind")
+            self.assertEqual(bind_payload["d"]["token"], "test-openclaw-token")
+            self.assertEqual(bind_payload["d"]["adapter"], "qq_openclaw")
+
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["ready_event_count"], 1)
+            self.assertEqual(payload["dispatch_event_count"], 1)
+            self.assertEqual(payload["events"][0]["adapter_kind"], "qq_openclaw")
+            self.assertEqual(payload["events"][0]["channel_kind"], "direct")
+            self.assertEqual(
+                payload["events"][0]["plugin_package"],
+                "operator-supplied-qq-openclaw-package",
+            )
+            self.assertEqual(payload["core_results"][0]["events_persisted"], 1)
 
     def test_cli_qq_official_gateway_client_resumes_after_disconnect(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

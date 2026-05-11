@@ -422,6 +422,103 @@ JSON，再把它转换成稳定的 closure payload，然后再进入最终的
 `--qq-gateway-file /tmp/qq-official-gateway-closure.json`，并确认
 `validation_gates.qq_official_gateway_gate=true`。
 
+### 4.7.2 OpenClaw Hosted 兼容 Profile 预检
+
+对于 release-2.2.3 的 additive 验证，`wechat_ilink` 与 `qq_openclaw` 都应被
+视为 generic OpenClaw boundary 内的 hosted compatibility profile，而不是已提
+升的 direct production route。它们的目标是证明 bounded hosted-profile
+normalization、操作者提供的 host/plugin evidence，以及可选的 bounded
+gateway ingress，而不是削弱已提升的 `qq_official` 或 direct `wecom` 路径。
+
+在开始 hosted-profile 验证前，操作者需要提供或确认：
+
+1. 一个 OpenClaw gateway host URL；
+2. 保存 hosted-profile access token 的环境变量名；
+3. plugin identifier 与已验证的 plugin package coordinate；
+4. installer/package 元数据，仅作为 evidence，不作为安装动作；
+5. 明确的 account/session readiness evidence；
+6. 在任何 live-bound 验证前，先显式完成 compliance acknowledgement。
+
+为了在 operator 验证过程中始终保持 release-2.2.3 的边界清晰，建议直接按这张紧凑矩阵判断：
+
+| Adapter | 路径类别 | 在 release-2.2.3 中的角色 | 何时算 ready | 提升姿态 |
+| --- | --- | --- | --- | --- |
+| `qq_official` | direct official API | 已提升的 QQ 基线 | 官方凭据齐备且确定性检查为绿 | 生产 QQ 主路径 |
+| `wecom` | direct gateway/API | 已提升的企业侧路径 | direct endpoint/token 与 bounded gateway evidence 均为绿 | 生产企业路径 |
+| `wechat_ilink` | OpenClaw-hosted compatibility | 仅作为 additive hosted validation | host URL、plugin package、session readiness、compliance acknowledgement 齐备 | 若 operator evidence 不完整则 fail closed |
+| `qq_openclaw` | OpenClaw-hosted compatibility | 仅作为 additive hosted validation | host URL、plugin package、session readiness、compliance acknowledgement 齐备 | 若 operator evidence 不完整则 fail closed |
+| `onebot_qq` | compatibility bridge | 仅用于实验或迁移辅助 | bridge endpoint 与确定性检查为绿 | 不是 promoted QQ replacement |
+
+先显式配置受限的 `qq_openclaw` profile：
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-config \
+  --adapter qq_openclaw \
+  --enable \
+  --host-url ws://<openclaw-host> \
+  --credential-env-var QQ_OPENCLAW_TOKEN \
+  --transport-kind openclaw_gateway \
+  --runtime-host openclaw \
+  --plugin-id qq_openclaw \
+  --plugin-package <operator-supplied-plugin> \
+  --installer-package <operator-supplied-installer> \
+  --plugin-installed true \
+  --account-session-ready true \
+  --compliance-acknowledged true
+```
+
+在任何 bounded gateway ingress 之前，先完成 hosted-profile 的确定性检查：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_openclaw \
+  --sample-scenario group
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_openclaw \
+  --sample-scenario direct
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-smoke
+```
+
+重点检查这些 JSON 字段：
+
+1. `results[0].profile.runtime_host`
+2. `results[0].profile.transport_kind`
+3. `results[0].profile.missing_requirements`
+4. `results[0].social_envelope.metadata.plugin_id`
+5. `results[0].social_envelope.metadata.plugin_package`
+6. `social-adapter-smoke` 输出中的 `closure_gates.qq_openclaw_social_gate`
+
+如果已经批准 bounded OpenClaw ingress，应先归档 raw gateway run，再在 release
+closure 前把它转换成稳定的 closure evidence：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli openclaw-gateway-client \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --adapter qq_openclaw \
+  --gateway-url ws://<openclaw-host> \
+  --plugin-package <operator-supplied-plugin> \
+  --duration 15 \
+  --max-events 1 > /tmp/openclaw-gateway-run.json
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli openclaw-gateway-closure \
+  --gateway-run-file /tmp/openclaw-gateway-run.json > /tmp/openclaw-gateway-closure.json
+```
+
+随后在最终 `closure-summary` 命令里增加
+`--openclaw-gateway-file /tmp/openclaw-gateway-closure.json`，并确认
+`validation_gates.openclaw_gateway_gate=true`。
+
+对于默认的 release-2.2.3 预提测回归，优先直接执行这条已经打包好的固定验证命令，
+不要再手工重拼 focused pytest 过滤条件：
+
+```bash
+cd /home/emb/project/zephyrproject
+bash applocation/NeuroLink/scripts/run_release_2_2_3_pre_promotion_validation.sh
+```
+
 ### 4.7.1 QQ 官方 Webhook Callback 联调清单
 
 当你准备把 QQ 官方开发者平台真正接到这条 bounded 本地 ingress 路径上时，按

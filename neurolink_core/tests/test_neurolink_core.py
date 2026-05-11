@@ -827,6 +827,301 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["validation_gates"]["qq_official_gateway_gate"])
         self.assertTrue(payload["qq_official_gateway_summary"]["ok"])
 
+    def test_cli_wecom_gateway_closure_reports_ready_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gateway_run_file = Path(tmpdir) / "wecom-gateway-run.json"
+            gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.3-wecom-gateway-client-v1",
+                        "command": "wecom-gateway-client",
+                        "status": "ready",
+                        "reason": "wecom_gateway_dispatch_processed",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "auth_sent": True,
+                            "ready_recorded": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {"url": "wss://qyapi.weixin.qq.com/cgi-bin/websocket"},
+                        "bot_user_id": "wecom-bot-001",
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "wecom-gateway-closure",
+                        "--gateway-run-file",
+                        str(gateway_run_file),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.3-wecom-gateway-closure-v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["auth_sent"])
+        self.assertEqual(payload["evidence_summary"]["dispatch_event_count"], 1)
+
+    def test_cli_closure_summary_can_pass_wecom_gateway_gate_with_gateway_closure_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            gateway_run_file = Path(tmpdir) / "wecom-gateway-run.json"
+            gateway_closure_file = Path(tmpdir) / "wecom-gateway-closure.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-wecom-gateway-001")
+            gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.3-wecom-gateway-client-v1",
+                        "command": "wecom-gateway-client",
+                        "status": "ready",
+                        "reason": "wecom_gateway_dispatch_processed",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "auth_sent": True,
+                            "ready_recorded": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {"url": "wss://qyapi.weixin.qq.com/cgi-bin/websocket"},
+                        "bot_user_id": "wecom-bot-001",
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            gateway_out = io.StringIO()
+            with redirect_stdout(gateway_out):
+                gateway_code = core_cli_main(
+                    [
+                        "wecom-gateway-closure",
+                        "--gateway-run-file",
+                        str(gateway_run_file),
+                    ]
+                )
+            gateway_closure_file.write_text(gateway_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-wecom-gateway-001",
+                        "--wecom-gateway-file",
+                        str(gateway_closure_file),
+                    ]
+                )
+
+        self.assertEqual(gateway_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["wecom_gateway_gate"])
+        self.assertTrue(payload["wecom_gateway_summary"]["ok"])
+
+    def test_cli_closure_summary_keeps_social_adapter_bundle_green_with_qq_openclaw_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            social_adapter_file = Path(tmpdir) / "social-adapter.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-social-adapter-001")
+
+            social_adapter_out = io.StringIO()
+            with redirect_stdout(social_adapter_out):
+                social_adapter_code = core_cli_main([
+                    "social-adapter-smoke",
+                ])
+            social_adapter_file.write_text(
+                social_adapter_out.getvalue(),
+                encoding="utf-8",
+            )
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-social-adapter-001",
+                        "--social-adapter-file",
+                        str(social_adapter_file),
+                    ]
+                )
+
+        self.assertEqual(social_adapter_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["social_adapter_gate"])
+        self.assertTrue(payload["social_adapter_summary"]["ok"])
+        self.assertTrue(
+            payload["social_adapter_summary"]["closure_gates"][
+                "qq_openclaw_social_gate"
+            ]
+        )
+        self.assertIn(
+            "qq_openclaw",
+            payload["social_adapter_summary"]["evidence_summary"][
+                "ready_adapter_names"
+            ],
+        )
+        self.assertIn(
+            "qq_openclaw",
+            payload["social_adapter_summary"]["evidence_summary"][
+                "tested_adapter_names"
+            ],
+        )
+
+    def test_cli_openclaw_gateway_closure_reports_ready_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gateway_run_file = Path(tmpdir) / "openclaw-gateway-run.json"
+            gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.3-openclaw-gateway-client-v1",
+                        "command": "openclaw-gateway-client",
+                        "status": "ready",
+                        "reason": "openclaw_gateway_dispatch_processed",
+                        "adapter_kind": "wechat_ilink",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "bind_sent": True,
+                            "ready_recorded": True,
+                            "plugin_identified": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {
+                            "url": "ws://127.0.0.1:8811/openclaw",
+                            "transport_kind": "openclaw_gateway",
+                            "runtime_host": "openclaw",
+                        },
+                        "plugin": {
+                            "plugin_id": "wechat_ilink",
+                            "plugin_package": "@tencent/openclaw-weixin",
+                            "installer_package": "@tencent-weixin/openclaw-weixin-cli",
+                            "host_version": "0.9.1",
+                            "ready": True,
+                        },
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "openclaw-gateway-closure",
+                        "--gateway-run-file",
+                        str(gateway_run_file),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["schema_version"], "2.2.3-openclaw-gateway-closure-v1"
+        )
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["plugin_ready"])
+        self.assertEqual(
+            payload["evidence_summary"]["plugin_package"],
+            "@tencent/openclaw-weixin",
+        )
+
+    def test_cli_closure_summary_can_pass_openclaw_gateway_gate_with_gateway_closure_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            gateway_run_file = Path(tmpdir) / "openclaw-gateway-run.json"
+            gateway_closure_file = Path(tmpdir) / "openclaw-gateway-closure.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-openclaw-gateway-001")
+            gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.3-openclaw-gateway-client-v1",
+                        "command": "openclaw-gateway-client",
+                        "status": "ready",
+                        "reason": "openclaw_gateway_dispatch_processed",
+                        "adapter_kind": "wechat_ilink",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "bind_sent": True,
+                            "ready_recorded": True,
+                            "plugin_identified": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {
+                            "url": "ws://127.0.0.1:8811/openclaw",
+                            "transport_kind": "openclaw_gateway",
+                            "runtime_host": "openclaw",
+                        },
+                        "plugin": {
+                            "plugin_id": "wechat_ilink",
+                            "plugin_package": "@tencent/openclaw-weixin",
+                            "installer_package": "@tencent-weixin/openclaw-weixin-cli",
+                            "host_version": "0.9.1",
+                            "ready": True,
+                        },
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            gateway_out = io.StringIO()
+            with redirect_stdout(gateway_out):
+                gateway_code = core_cli_main(
+                    [
+                        "openclaw-gateway-closure",
+                        "--gateway-run-file",
+                        str(gateway_run_file),
+                    ]
+                )
+            gateway_closure_file.write_text(gateway_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-openclaw-gateway-001",
+                        "--openclaw-gateway-file",
+                        str(gateway_closure_file),
+                    ]
+                )
+
+        self.assertEqual(gateway_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["openclaw_gateway_gate"])
+        self.assertTrue(payload["openclaw_gateway_summary"]["ok"])
+
     def test_cli_closure_summary_can_pass_federation_gate_when_route_evidence_is_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "core.db")
@@ -2285,6 +2580,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             social_adapter_file = Path(tmpdir) / "social-adapter.json"
             qq_gateway_run_file = Path(tmpdir) / "qq-gateway-run.json"
             qq_gateway_file = Path(tmpdir) / "qq-gateway-closure.json"
+            wecom_gateway_run_file = Path(tmpdir) / "wecom-gateway-run.json"
+            wecom_gateway_file = Path(tmpdir) / "wecom-gateway-closure.json"
+            openclaw_gateway_run_file = Path(tmpdir) / "openclaw-gateway-run.json"
+            openclaw_gateway_file = Path(tmpdir) / "openclaw-gateway-closure.json"
             approval_social_file = Path(tmpdir) / "approval-social.json"
             self_improvement_file = Path(tmpdir) / "self-improvement.json"
 
@@ -2548,6 +2847,92 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     ]
                 )
             qq_gateway_file.write_text(qq_gateway_out.getvalue(), encoding="utf-8")
+            wecom_gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.3-wecom-gateway-client-v1",
+                        "command": "wecom-gateway-client",
+                        "status": "ready",
+                        "reason": "wecom_gateway_dispatch_processed",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "auth_sent": True,
+                            "ready_recorded": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {
+                            "url": "wss://qyapi.weixin.qq.com/cgi-bin/websocket"
+                        },
+                        "bot_user_id": "wecom-bot-001",
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            wecom_gateway_out = io.StringIO()
+            with redirect_stdout(wecom_gateway_out):
+                wecom_gateway_code = core_cli_main(
+                    [
+                        "wecom-gateway-closure",
+                        "--gateway-run-file",
+                        str(wecom_gateway_run_file),
+                    ]
+                )
+            wecom_gateway_file.write_text(
+                wecom_gateway_out.getvalue(),
+                encoding="utf-8",
+            )
+            openclaw_gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.3-openclaw-gateway-client-v1",
+                        "command": "openclaw-gateway-client",
+                        "status": "ready",
+                        "reason": "openclaw_gateway_dispatch_processed",
+                        "adapter_kind": "qq_openclaw",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "bind_sent": True,
+                            "ready_recorded": True,
+                            "plugin_identified": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {
+                            "url": "ws://127.0.0.1:8811/openclaw",
+                            "transport_kind": "openclaw_gateway",
+                            "runtime_host": "openclaw",
+                        },
+                        "plugin": {
+                            "plugin_id": "qq_openclaw",
+                            "plugin_package": "operator-supplied-qq-openclaw-package",
+                            "installer_package": "operator-supplied-qq-openclaw-installer",
+                            "host_version": "0.9.2",
+                            "ready": True,
+                        },
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            openclaw_gateway_out = io.StringIO()
+            with redirect_stdout(openclaw_gateway_out):
+                openclaw_gateway_code = core_cli_main(
+                    [
+                        "openclaw-gateway-closure",
+                        "--gateway-run-file",
+                        str(openclaw_gateway_run_file),
+                    ]
+                )
+            openclaw_gateway_file.write_text(
+                openclaw_gateway_out.getvalue(),
+                encoding="utf-8",
+            )
             approval_social_out = io.StringIO()
             with redirect_stdout(approval_social_out):
                 approval_social_code = core_cli_main([
@@ -2704,6 +3089,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         str(social_adapter_file),
                         "--qq-gateway-file",
                         str(qq_gateway_file),
+                        "--wecom-gateway-file",
+                        str(wecom_gateway_file),
+                        "--openclaw-gateway-file",
+                        str(openclaw_gateway_file),
                         "--approval-social-file",
                         str(approval_social_file),
                         "--self-improvement-file",
@@ -2726,6 +3115,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(persona_code, 0)
         self.assertEqual(social_adapter_code, 0)
         self.assertEqual(qq_gateway_code, 0)
+        self.assertEqual(wecom_gateway_code, 0)
+        self.assertEqual(openclaw_gateway_code, 0)
         self.assertEqual(approval_social_code, 0)
         self.assertEqual(self_improvement_code, 0)
         self.assertEqual(summary_code, 0)
@@ -2733,7 +3124,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 27)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 29)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
         self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
@@ -2745,6 +3136,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["validation_gates"]["persona_persistence_gate"])
         self.assertTrue(payload["validation_gates"]["social_adapter_gate"])
         self.assertTrue(payload["validation_gates"]["qq_official_gateway_gate"])
+        self.assertTrue(payload["validation_gates"]["wecom_gateway_gate"])
+        self.assertTrue(payload["validation_gates"]["openclaw_gateway_gate"])
         self.assertTrue(payload["validation_gates"]["approval_over_social_gate"])
         self.assertTrue(payload["validation_gates"]["self_improvement_sandbox_gate"])
         self.assertTrue(payload["validation_gates"]["agent_excellence_gate"])
@@ -2760,6 +3153,23 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(
             payload["regression_summary"]["schema_version"],
             "1.2.6-regression-closure-v2",
+        )
+        self.assertTrue(
+            payload["social_adapter_summary"]["closure_gates"][
+                "qq_openclaw_social_gate"
+            ]
+        )
+        self.assertIn(
+            "qq_openclaw",
+            payload["social_adapter_summary"]["evidence_summary"][
+                "ready_adapter_names"
+            ],
+        )
+        self.assertIn(
+            "qq_openclaw",
+            payload["social_adapter_summary"]["evidence_summary"][
+                "tested_adapter_names"
+            ],
         )
 
     def test_low_salience_tick_does_not_delegate(self) -> None:
@@ -4495,11 +4905,20 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["closure_gates"]["social_adapter_registry_gate"])
         self.assertTrue(payload["closure_gates"]["qq_social_gate"])
         self.assertTrue(payload["closure_gates"]["onebot_social_gate"])
+        self.assertTrue(payload["closure_gates"]["wecom_social_gate"])
+        self.assertTrue(payload["closure_gates"]["wechat_ilink_social_gate"])
+        self.assertTrue(payload["closure_gates"]["qq_openclaw_social_gate"])
         self.assertTrue(payload["closure_gates"]["social_compliance_gate"])
         self.assertIn("qq_official", payload["evidence_summary"]["ready_adapter_names"])
         self.assertIn("onebot_qq", payload["evidence_summary"]["ready_adapter_names"])
+        self.assertIn("wecom", payload["evidence_summary"]["ready_adapter_names"])
+        self.assertIn("wechat_ilink", payload["evidence_summary"]["ready_adapter_names"])
+        self.assertIn("qq_openclaw", payload["evidence_summary"]["ready_adapter_names"])
         self.assertIn("qq_official", payload["evidence_summary"]["tested_adapter_names"])
         self.assertIn("onebot_qq", payload["evidence_summary"]["tested_adapter_names"])
+        self.assertIn("wecom", payload["evidence_summary"]["tested_adapter_names"])
+        self.assertIn("wechat_ilink", payload["evidence_summary"]["tested_adapter_names"])
+        self.assertIn("qq_openclaw", payload["evidence_summary"]["tested_adapter_names"])
 
     def test_cli_self_improvement_smoke_reports_sandbox_only_governance(self) -> None:
         smoke_out = io.StringIO()

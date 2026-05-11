@@ -1,5 +1,316 @@
 2026-05-11: Closed and promoted release-2.2.2 after the QQ/social adapter closure bundle, focused AI Core regressions, and release-target validation all converged. The archived bundle `smoke-evidence/release-2.2.2-closure-20260511T021545Z/` now reports a green `closure-summary-final.json` with `validation_gate_summary.ok=true`, `passed_count=27`, and `failed_gate_ids=[]`. The bundle carries forward unchanged 2.1.0 execution evidence for federation/relay route gates, adds fresh release-2.2.2 documentation/regression/social-adapter evidence, and archives the dedicated QQ gateway live closure artifact from the real bounded Tencent gateway run. After that green bundle, canonical identity moved to `2.2.2` in the Neuro CLI, workflow catalog, sample Unit app source identity, README, and AI Core English/Chinese runbooks. Focused AI Core validation passed with `23 passed` for `test_social_adapters.py`, `17 passed, 137 deselected` for the closure-summary and QQ gateway closure slice, `295 passed, 6 subtests passed` for the full `neurolink_core/tests` suite, `5 passed` for the focused Neuro CLI release-target checks, and direct capabilities output now reports `release_target=2.2.2`. - Copilot
 
+2026-05-11: Realigned release-2.2.3 planning from a narrow WeCom/WeChat
+adapter expansion to an OpenClaw-compatible social gateway architecture. The
+plan now keeps `wecom` as the preferred direct enterprise path, preserves the
+promoted `qq_official` release-2.2.2 baseline, and defines OpenClaw-hosted
+plugin work for `wechat_ilink`, future `qq_openclaw`, and later compatible
+plugins as a bounded host/plugin bridge rather than a resident NeuroLink
+service. README indexing was updated to match the revised scope. - Copilot
+
+2026-05-11: Landed the first executable OpenClaw-compatible release-2.2.3 code
+slice. Added a shared OpenClaw social-envelope contract for hosted plugin
+metadata, routed `wechat_ilink` through that contract, and extended social
+adapter profiles so OpenClaw-hosted adapters can record host endpoint, plugin
+package, installer package, plugin-installed evidence, and account/session
+readiness separately from direct channel credentials. Focused social adapter
+regressions passed with `36 passed`. - Copilot
+
+2026-05-11: Added the first bounded generic OpenClaw gateway transport slice
+for release-2.2.3. The new `openclaw-gateway-client` command binds to an
+OpenClaw-compatible websocket host, identifies the selected hosted adapter and
+plugin package, normalizes inbound events through the configured adapter path,
+and forwards them into the normal Core social ingress path without promoting a
+resident daemon. Focused social adapter regressions passed with `37 passed`.
+- Copilot
+
+2026-05-11: Closed the next adjacent OpenClaw release-2.2.3 evidence gap by
+adding `openclaw-gateway-closure` plus additive `closure-summary`
+integration. Operators can now convert bounded `openclaw-gateway-client`
+payloads into a stable closure artifact, feed that artifact into
+`closure-summary --openclaw-gateway-file`, and enforce a distinct
+`openclaw_gateway_gate` without changing the promoted QQ or direct WeCom live
+gates. Focused gateway closure regressions passed with `5 passed, 153
+deselected`. - Copilot
+
+2026-05-11: Added the next OpenClaw-hosted compatibility slice for
+release-2.2.3 by introducing `qq_openclaw` as a bounded hosted profile on the
+existing generic contract. The new slice adds a dedicated `qq_openclaw`
+adapter, deterministic QQ/OpenClaw fixtures, registry/config/list/test support,
+CLI config passthrough for hosted adapter metadata, and bounded
+`openclaw-gateway-client` coverage for QQ-style hosted ingress without changing
+the promoted `qq_official` path. Focused social adapter regressions passed with
+`8 passed, 36 deselected`. - Copilot
+
+2026-05-11: Extended the adjacent release-2.2.3 smoke and operator-documentation
+surface for `qq_openclaw`. `social-adapter-smoke` now carries an additive
+`qq_openclaw_social_gate` beside the existing WeCom and WeChat/OpenClaw gates,
+the focused Core smoke regression confirms the hosted profile appears in both
+ready and tested adapter evidence, and the release-2.2.3 plan plus AI Core
+runbook now describe the operator path for hosted `qq_openclaw` setup,
+deterministic validation, and additive OpenClaw gateway closure wiring. Focused
+Core smoke regression passed with `1 passed, 189 deselected`. - Copilot
+
+2026-05-11: Aligned the Chinese AI Core runbook with the new hosted
+`qq_openclaw` operator path and tightened closure coverage for the final social
+adapter bundle. `AI_CORE_RUNBOOK_ZH.md` now mirrors the English OpenClaw-hosted
+profile preflight, deterministic validation, and additive gateway-closure
+operator flow, and focused plus broader closure-summary regressions now confirm
+that the `social-adapter-smoke` payload with `qq_openclaw_social_gate` still
+keeps the final `social_adapter_gate` green inside the full validation matrix.
+Focused closure regressions passed with `2 passed, 157 deselected`. - Copilot
+
+#### EXEC-382 Release 2.2.3 QQ OpenClaw ZH Runbook And Closure Matrix Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - Chinese AI Core runbook parity for the hosted `qq_openclaw` operator path
+  - focused `closure-summary` regression proving `social-adapter-smoke` with
+    `qq_openclaw_social_gate` keeps `social_adapter_gate` green
+  - broader validation-matrix regression refresh so the final closure path now
+    carries QQ official, WeCom, and OpenClaw gateway evidence together
+- Boundary confirmation:
+  - `qq_openclaw` remains additive hosted compatibility evidence; the promoted
+    `qq_official` path is still the production QQ baseline
+  - the broader closure test now reflects the real current gate set instead of
+    freezing older gate counts or omitting additive gateway evidence
+  - this slice improves operator/documentation and closure confidence only; it
+    does not change runtime gateway behavior
+- Validation:
+  - `PYTHONPATH=. pytest neurolink_core/tests/test_neurolink_core.py -q -k "test_cli_closure_summary_keeps_social_adapter_bundle_green_with_qq_openclaw_smoke or test_cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied"`
+  - `2 passed, 157 deselected`
+- Next:
+  - decide whether `AI_CORE_RUNBOOK.md` and `AI_CORE_RUNBOOK_ZH.md` should also
+    expose a compact OpenClaw compatibility matrix section, or whether the
+    release-2.2.3 plan remains the single matrix source of truth
+  - if needed, add one final broader social slice combining `test_social_adapters.py`
+    and the closure-summary social adapter regressions into a single release-2.2.3
+    pre-promotion command
+
+2026-05-11: Packaged the next release-2.2.3 operator-doc slice by promoting a
+compact compatibility matrix into both AI Core runbooks. The matrix now makes
+the release boundary explicit at the point of operator execution: `qq_official`
+and direct `wecom` stay promoted production paths, while `wechat_ilink` and
+`qq_openclaw` remain additive OpenClaw-hosted compatibility validation that
+must fail closed until host/plugin/session/compliance evidence is explicit.
+This moves the current release from feature implementation into documentation
+packaging plus pre-promotion validation hardening. - Copilot
+
+#### EXEC-383 Release 2.2.3 OpenClaw Compatibility Matrix Packaging Slice
+
+- Status: implemented and diagnostics-clean
+- Added:
+  - compact OpenClaw compatibility matrix in `AI_CORE_RUNBOOK.md`
+  - matching Chinese compatibility matrix in `AI_CORE_RUNBOOK_ZH.md`
+  - explicit stage note that release-2.2.3 is now in documentation packaging
+    and pre-promotion validation hardening, not primary feature construction
+- Boundary confirmation:
+  - `qq_official` remains the promoted QQ production baseline
+  - direct `wecom` remains the promoted enterprise path
+  - `wechat_ilink` and `qq_openclaw` remain additive OpenClaw-hosted evidence
+    and must fail closed without operator-supplied readiness/compliance proof
+  - `onebot_qq` remains a compatibility bridge rather than a promoted path
+- Validation:
+  - `get_errors` on `AI_CORE_RUNBOOK.md`
+  - `get_errors` on `AI_CORE_RUNBOOK_ZH.md`
+  - `get_errors` on `PROJECT_PROGRESS.md`
+- Next:
+  - package one fixed pre-promotion validation command that combines the
+    `qq_openclaw` social-adapter tests with the closure-summary social bundle
+    regressions
+  - decide whether the release-2.2.3 plan should also link directly to that
+    pre-promotion command as the default operator handoff
+
+2026-05-11: Closed the last active release-2.2.3 packaging gap by adding a
+fixed pre-promotion validation command. The new script
+`scripts/run_release_2_2_3_pre_promotion_validation.sh` now packages the
+focused `qq_openclaw` social-adapter regressions, the additive
+`social-adapter-smoke` regression, and the final closure-summary social bundle
+regressions into one repeatable operator handoff command. The English and
+Chinese AI Core runbooks plus the release-2.2.3 plan now point to this command
+as the default rerun path, so the release no longer depends on manually
+reconstructed pytest filters at handoff time. - Copilot
+
+#### EXEC-384 Release 2.2.3 Fixed Pre-Promotion Validation Command Slice
+
+- Status: implemented and focused-validation green
+- Added:
+  - `scripts/run_release_2_2_3_pre_promotion_validation.sh` as the fixed
+    release-2.2.3 operator rerun command
+  - `tests/scripts/test_release_2_2_3_pre_promotion_validation.sh` to verify the
+    packaged command completes successfully
+  - runbook and release-plan updates that promote the packaged command as the
+    default pre-promotion handoff
+- Boundary confirmation:
+  - the packaged command validates only the landed release-2.2.3 social slice,
+    not unrelated AI Core surfaces
+  - `qq_openclaw` remains additive hosted compatibility evidence inside the
+    final social adapter bundle
+  - promotion still requires a green final closure bundle before any release
+    identity change
+- Validation:
+  - `bash applocation/NeuroLink/scripts/run_release_2_2_3_pre_promotion_validation.sh`
+  - `bash applocation/NeuroLink/tests/scripts/test_release_2_2_3_pre_promotion_validation.sh`
+  - `bash applocation/NeuroLink/tests/scripts/test_linux_scripts_help.sh`
+- Next:
+  - generate or refresh the final release-2.2.3 promotion bundle before any
+    version identity promotion
+  - after the bundle is green, update canonical release identity surfaces and
+    promotion checklist artifacts if promotion is requested
+
+#### EXEC-381 Release 2.2.3 QQ OpenClaw Smoke And Runbook Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - additive `qq_openclaw_social_gate` coverage in `social-adapter-smoke`
+  - focused Core smoke regression proving `qq_openclaw` appears in ready/tested
+    adapter evidence
+  - release-2.2.3 plan validation updates for `qq_openclaw` and
+    `openclaw-gateway-closure`
+  - AI Core runbook operator path for hosted `qq_openclaw` configuration,
+    deterministic validation, and additive closure wiring
+- Boundary confirmation:
+  - `qq_openclaw` remains additive compatibility evidence inside the OpenClaw
+    boundary and does not change the promoted `qq_official` release gate
+  - hosted profile metadata remains operator-supplied and fail-closed by
+    default until host/plugin/account evidence is present
+  - the smoke slice proves bounded hosted-profile readiness, not long-running
+    hosted gateway supervision
+- Validation:
+  - `PYTHONPATH=. pytest neurolink_core/tests/test_neurolink_core.py -q -k social_adapter_smoke`
+  - `1 passed, 189 deselected`
+- Next:
+  - align the Chinese runbook with the same `qq_openclaw` hosted-profile
+    operator path
+  - decide whether OpenClaw-hosted profiles need a separate compatibility
+    matrix document or should stay embedded in the release-2.2.3 plan
+
+#### EXEC-380 Release 2.2.3 QQ OpenClaw Hosted Profile Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - `neurolink_core.social_adapters.qq_openclaw` adapter on the shared
+    OpenClaw social-envelope contract
+  - deterministic `qq_openclaw` group/direct fixtures and protocol
+    normalization coverage
+  - hosted `qq_openclaw` registry/config/list/test support with fail-closed
+    operator metadata requirements
+  - generic `openclaw-gateway-client` ingress support for hosted QQ/OpenClaw
+    payloads
+  - `social-adapter-config` CLI support for hosted profile fields such as
+    `host_url`, `plugin_id`, `plugin_package`, `installer_package`,
+    `plugin_installed`, and `account_session_ready`
+- Boundary confirmation:
+  - the promoted `qq_official` release-2.2.2 path remains unchanged; this is a
+    separate compatibility adapter under the generic OpenClaw boundary
+  - default `qq_openclaw` profile metadata remains fail-closed until operators
+    supply verified host and plugin coordinates plus account readiness evidence
+  - no guessed production QQ OpenClaw package coordinate is hard-coded into the
+    default profile
+- Validation:
+  - `PYTHONPATH=. pytest neurolink_core/tests/test_social_adapters.py -q -k "qq_openclaw or openclaw_gateway_client_binds_and_dispatches"`
+  - `8 passed, 36 deselected`
+- Next:
+  - align operator runbook and compatibility matrix with the new `qq_openclaw`
+    hosted profile and generic OpenClaw gateway evidence path
+  - decide whether `social-adapter-smoke` should keep `qq_openclaw` additive-only
+    or promote it into a separate explicit hosted-profile smoke gate later
+
+#### EXEC-379 Release 2.2.3 OpenClaw Gateway Closure Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - bounded `openclaw-gateway-closure` CLI command
+  - additive `closure-summary --openclaw-gateway-file` support
+  - `openclaw_gateway_gate` validation and closure checklist entry
+  - focused core regressions for OpenClaw closure artifact generation and
+    closure-summary gating
+- Boundary confirmation:
+  - this slice adds only additive hosted-plugin gateway evidence and does not
+    weaken the promoted `qq_official` or direct `wecom` live gates
+  - OpenClaw plugin installation, session bootstrap, and account automation
+    remain operator-owned outside NeuroLink
+  - the current closure path covers hosted `wechat_ilink` via the generic
+    OpenClaw contract; `qq_openclaw` remains a later profile slice
+- Validation:
+  - `PYTHONPATH=. pytest neurolink_core/tests/test_neurolink_core.py -q -k "openclaw_gateway or wecom_gateway or qq_gateway"`
+  - `5 passed, 153 deselected`
+- Next:
+  - introduce `qq_openclaw` profile/sample support behind the existing generic
+    gateway and closure contract
+  - align compatibility matrix and operator runbook with the new OpenClaw
+    closure evidence path
+
+#### EXEC-378 Release 2.2.3 OpenClaw Gateway Client Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - bounded `openclaw-gateway-client` CLI command
+  - `neurolink_core.social_adapters.openclaw_gateway` websocket client
+  - hosted `wechat_ilink` gateway regression covering bind, ready, and
+    dispatch-to-Core flow
+- Boundary confirmation:
+  - the generic OpenClaw path is still bounded by runtime and dispatch-event
+    count; it is not a resident host supervisor
+  - plugin installation and account automation remain operator-owned and are
+    not executed by NeuroLink
+  - closure-summary integration is delivered by the follow-on `EXEC-379`
+    closure slice; this transport slice remains focused on bounded ingress only
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py -q`
+  - `37 passed`
+- Next:
+  - add `openclaw-gateway-closure` and additive `closure-summary`
+    integration
+  - introduce `qq_openclaw` profile/sample support behind the generic gateway
+    contract
+
+#### EXEC-377 Release 2.2.3 OpenClaw Contract And Hosted Profile Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - shared `neurolink_core.social_adapters.openclaw` social-envelope contract
+  - OpenClaw-hosted `wechat_ilink` normalization metadata
+  - hosted-plugin profile fields and fail-closed readiness requirements in the
+    social adapter registry
+  - social smoke alignment for OpenClaw-hosted WeChat iLink readiness
+- Boundary confirmation:
+  - this slice only establishes shared contract and hosted readiness metadata;
+    it does not add the generic `openclaw-gateway-client` yet
+  - `wecom` remains the preferred direct bounded enterprise path
+  - promoted `qq_official` semantics remain unchanged
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py -q`
+  - `36 passed`
+- Next:
+  - add the generic bounded `openclaw-gateway-client` transport slice
+  - introduce `qq_openclaw` profile/sample support once the gateway contract is
+    ready
+
+#### EXEC-376 Release 2.2.3 OpenClaw Architecture Realignment
+
+- Status: documented and aligned
+- Added:
+  - release-2.2.3 plan pivot to an OpenClaw-compatible social gateway
+    architecture
+  - explicit preservation of `wecom` direct bounded evidence and `qq_official`
+    promoted semantics
+  - explicit operator-supplied OpenClaw plugin package posture for future
+    `qq_openclaw` work
+- Boundary confirmation:
+  - NeuroLink records host/plugin evidence but does not install plugins or run
+    QR/token automation
+  - OpenClaw-hosted adapters remain bounded, fail-closed, and additive to the
+    existing QQ/WeCom evidence gates
+  - this realignment is documentation-only and does not claim the generic
+    gateway implementation has landed yet
+- Validation:
+  - `get_errors docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md`
+  - no errors
+- Next:
+  - add the shared OpenClaw payload contract under `neurolink_core.social_adapters`
+  - extend registry/profile metadata for direct versus OpenClaw-hosted adapters
+
 #### EXEC-372 Release 2.2.2 Closure And Promotion
 
 - Status: promoted and closure-green
@@ -246,6 +557,98 @@
   - `161 passed, 3 subtests passed`
 - Next:
   - extend release-2.2.2 smoke/closure evidence and optionally add explicit sample payload fixtures for QQ official and OneBot deployments
+
+2026-05-11: Extended release-2.2.3 from deterministic adapter profiling into the
+first bounded WeCom live ingress slice. Added `wecom-gateway-client` as a
+bounded websocket validation path that authenticates with an env-backed token,
+records readiness and dispatch-to-Core evidence, and preserves the existing
+Affective-only, Core-governed, non-resident boundary. Focused WeCom gateway
+regression passed with `1 passed`. - Copilot
+
+2026-05-11: Closed the next release-2.2.3 WeCom live-evidence slice by adding a
+dedicated `wecom-gateway-closure` artifact and wiring it additively into
+`closure-summary`. The new bounded WeCom closure contract now records
+authenticated gateway connection, dispatch-to-Core, and bounded runtime proof
+without changing the promoted release boundary or QQ closure semantics.
+Focused closure regressions passed with `4 passed`. - Copilot
+
+#### EXEC-375 Release 2.2.3 WeCom Gateway Closure Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - bounded `wecom-gateway-closure` CLI command
+  - additive `--wecom-gateway-file` support in `closure-summary`
+  - `wecom_gateway_gate` validation and checklist evidence
+  - focused WeCom gateway closure and summary regression coverage
+- Boundary confirmation:
+  - the WeCom closure artifact stays bounded to authenticated connection,
+    dispatch-to-Core, and bounded runtime proof
+  - this slice does not promote always-on WeCom residency or reconnect
+    supervision claims
+  - QQ official gateway closure semantics remain unchanged and continue to pass
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'wecom_gateway or qq_official_gateway_closure or closure_summary_can_pass_qq_gateway_gate'`
+  - `4 passed`
+- Next:
+  - decide whether release-2.2.3 should add bounded WeCom reconnect/session
+    continuity evidence beyond the current authenticated dispatch contract
+  - decide whether `wechat_ilink` should remain deterministic-only for this
+    release or gain a bounded live evidence slice
+
+#### EXEC-374 Release 2.2.3 Bounded WeCom Gateway Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - bounded `wecom-gateway-client` CLI command
+  - `neurolink_core.social_adapters.wecom_gateway` bounded websocket client
+  - WeCom gateway-driven dispatch-to-Core regression coverage
+- Boundary confirmation:
+  - the WeCom path remains bounded by runtime and dispatch-event count
+  - this slice does not claim an always-on resident or reconnect supervisor yet
+  - Core policy and Affective-only response boundaries remain unchanged during
+    WeCom gateway-driven runs
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py -q -k wecom_gateway_client`
+  - `1 passed`
+- Next:
+  - decide whether release-2.2.3 needs a dedicated WeCom closure artifact for
+    `closure-summary`
+  - decide whether bounded WeChat iLink live validation belongs in this release
+    or should remain deterministic-only
+
+2026-05-11: Started release-2.2.3 development planning after the promoted
+release-2.2.2 QQ/social adapter baseline closed green. Added
+`docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md` to define the next
+Chinese social-channel slice: `wecom` as the preferred production enterprise
+path, optional `wechat_ilink` as a lab-scoped compatibility bridge, bounded
+live validation only, and explicit exclusions for the later 2.2.4 through 2.2.6
+Tool/MCP/Skills, persona-growth, and long-run autonomy work. This kickoff keeps
+release-2.2.3 scoped to social adapter extension, deterministic readiness,
+compliance evidence, and bounded ingress validation without reopening the
+release-2.2.2 resident-daemon boundary. - Copilot
+
+#### EXEC-373 Release 2.2.3 WeCom And WeChat Adapter Kickoff
+
+- Status: started; release boundary and development order documented
+- Added:
+  - `docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md`
+- Release-2.2.3 target:
+  - `wecom` as the primary production Chinese enterprise adapter path
+  - optional `wechat_ilink` as a lab-scoped compatibility bridge with explicit
+    compliance acknowledgement
+  - reuse of release-2.2.2 registry/config/test/smoke patterns and bounded
+    live ingress style
+- Explicit exclusions:
+  - no always-on social resident in 2.2.3
+  - no Tool/MCP/Skills/coding-agent work before release-2.2.4
+  - no persona seed or growth-state work before release-2.2.5
+  - no long-run heartbeat, self-optimization, or World Model work before
+    release-2.2.6
+- Next:
+  - extend `neurolink_core.social_adapters` registry/profile metadata for
+    `wecom` and optional `wechat_ilink`
+  - add WeCom deterministic sample fixtures and normalization before any
+    bounded live validation surface
 
 2026-05-11: Completed the last missing release-2.2.1 user-facing provider/model runtime surface by adding `provider-test`. The new command reuses the config-backed runtime path, accepts an operator `--config-file`, reports structured readiness or explicit model-call evidence, and keeps credentials environment-backed only. Focused provider regressions passed with `190 passed, 3 subtests passed`. - Copilot
 
