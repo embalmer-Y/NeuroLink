@@ -1,16 +1,16 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` on top of the
-promoted release-2.2.4 Tool/Skill/MCP and coding-agent governance baseline,
-which extends the closed release-2.2.3 social-gateway baseline with governed
-MCP read-only execution, per-tool governance descriptors, coding-agent sandbox
-route evidence, and a packaged closure-smoke export flow. It still covers the
-inherited closed release-1.2.6 federation/relay/Agent-platform baseline, the
-closed release-1.2.7 HLD-completion bundle, and the inherited release-1.2.4
-through release-2.2.3 runtime/governance surfaces that remain part of release
-evidence. Release identity is now promoted to `2.2.4` after the release-2.2.4
-promotion bundle passed with the dedicated coding-agent route gate and the
-expanded 30-gate closure matrix.
+completed release-2.2.5 persona-governance baseline, which extends the
+promoted release-2.2.4 Tool/Skill/MCP and coding-agent governance baseline
+with governed persona seed setup, runtime-evidence-only growth apply, inspect,
+privacy export/delete, and immutability/tamper-report operator paths. It still
+covers the inherited closed release-1.2.6 federation/relay/Agent-platform
+baseline, the closed release-1.2.7 HLD-completion bundle, and the inherited
+release-1.2.4 through release-2.2.4 runtime/governance surfaces that remain
+part of release evidence. Release identity is now promoted to `2.2.5` after
+the bounded release-2.2.5 persona-governance closure slice landed with focused
+persona and closure regressions green.
 This runbook is written for operators and developers who need to run Core
 locally, check provider and memory readiness, execute the Core-owned
 build/deploy gates, or close bounded live service and AI Core release evidence.
@@ -19,7 +19,7 @@ For a task-oriented startup and daily-use guide, start with
 `docs/project/AI_CORE_USER_GUIDE.md`. For the implementation roadmap and
 promotion record that define the current baseline, use
 `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`,
-`docs/project/RELEASE_2.2.4_PROMOTION_CHECKLIST.md`, and `PROJECT_PROGRESS.md`.
+`docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md`, and `PROJECT_PROGRESS.md`.
 
 ## 1. Runtime Shape
 

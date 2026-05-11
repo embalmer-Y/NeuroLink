@@ -6,7 +6,7 @@ governed AI Core workflows, and release-grade smoke validation.
 
 ## 🚀 Current Release Line
 
-The project has now entered the promoted release `2.2.4` baseline after closing the Tool/Skill/MCP governance and coding-agent closure line on top of the promoted release `2.2.3` social-gateway baseline. The fresh release-2.2.4 promotion bundle is green with the expanded 30-gate closure matrix, and the canonical host CLI now advertises `RELEASE_TARGET = "2.2.4"`.
+The project has now entered the completed release `2.2.5` baseline after closing the bounded persona seed, growth-governance, privacy export/delete, and immutability/tamper-detection line on top of the promoted release `2.2.4` Tool/Skill/MCP governance baseline. The current host CLI now advertises `RELEASE_TARGET = "2.2.5"`, while the release preserves the existing additive closure gates and deterministic operator evidence model.
 
 ## ✨ What NeuroLink Provides
 
@@ -58,7 +58,7 @@ Release `1.2.5` is the closed multimodal Agent runtime and governance slice. It 
 
 Release `1.2.6` is the closed federation, relay, and Agent platform slice. It carried the project to about 94% HLD completion by making Core-to-Core topology sync, delegated execution planning, Gateway Unit relay route evidence, hardware-agnostic capability descriptors, and higher-quality Agent Tool/Skill/MCP governance executable without hardcoding the current validation hardware.
 
-Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is the closed stabilized product baseline. Release `2.1.0` is the closed autonomous/social AI Core baseline. Release `2.2.2` is the closed QQ-focused social adapter baseline. Release `2.2.3` is the closed OpenClaw-compatible social gateway baseline. Release `2.2.4` is now the promoted Tool/Skill/MCP governance and coding-agent closure baseline after the packaged `release-2.2.4-closure-smoke --evidence-dir` flow proved the 30-gate promotion bundle green.
+Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is the closed stabilized product baseline. Release `2.1.0` is the closed autonomous/social AI Core baseline. Release `2.2.2` is the closed QQ-focused social adapter baseline. Release `2.2.3` is the closed OpenClaw-compatible social gateway baseline. Release `2.2.4` is the promoted Tool/Skill/MCP governance and coding-agent closure baseline, and release `2.2.5` is now the completed persona governance baseline for seed setup, runtime-evidence growth, inspect/export/delete, and immutability reporting.
 
 ## 📁 Project Layout
 
@@ -337,6 +337,9 @@ Capability map:
 - `docs/project/RELEASE_2.2.4_PROMOTION_CHECKLIST.md` - final release-2.2.4
 	promotion decision, packaged closure-smoke evidence flow, and promoted
 	identity surfaces.
+- `docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md` - final bounded
+	release-2.2.5 completion decision, promoted identity surfaces, and focused
+	persona-governance validation evidence.
 - `docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` - release-2.2.2
 	QQ official / OneBot social adapter registry, config, compliance, and smoke
 	implementation plan.
@@ -375,4 +378,4 @@ Release progress and architecture closure notes live in:
 - `docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
 - `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is closed as the multimodal Agent runtime and governance baseline. Releases `1.2.6`, `1.2.7`, `2.0.0`, `2.1.0`, `2.2.2`, and `2.2.3` are closed, and release `2.2.4` is now the promoted Tool/Skill/MCP and coding-agent governance baseline rather than an in-progress branch.
+Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is closed as the multimodal Agent runtime and governance baseline. Releases `1.2.6`, `1.2.7`, `2.0.0`, `2.1.0`, `2.2.2`, and `2.2.3` are closed. Release `2.2.4` remains the packaged Tool/Skill/MCP and coding-agent governance baseline, and release `2.2.5` is now marked complete as the bounded persona-governance follow-up.

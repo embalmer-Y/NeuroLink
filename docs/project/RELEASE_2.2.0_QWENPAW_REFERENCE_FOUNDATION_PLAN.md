@@ -278,9 +278,26 @@ Non-goals:
 3. No autonomous commit, push, firmware flash, credential mutation, or
    production deploy.
 
-## 10. Release 2.2.5 Preview
+## 10. Release 2.2.5 Completion
 
-Release 2.2.5 should add first-class persona seed and growth controls.
+Release 2.2.5 is now complete as the bounded persona seed, growth governance,
+privacy operation, and immutability line.
+
+Delivered bounded implementation status:
+
+1. `neurolink_core.persona` now includes `PersonaSeedConfig`,
+   `PersonaGrowthState`, runtime-evidence-only growth application, and
+   immutability stamp / tamper detection helpers.
+2. `neurolink_core.cli` now exposes first-class governed operator paths:
+   `persona-seed-setup`, `persona-growth-apply`, `persona-state-inspect`,
+   `persona-state-export`, `persona-state-delete`, and
+   `persona-tamper-report`.
+3. `closure-summary` now carries additive `persona_seed_gate`,
+   `persona_growth_gate`, and `memory_immutability_gate` evidence from the
+   persona smoke path.
+4. The bounded 2.2.5 line remains deterministic and file-driven; no live
+   mutable daemon or background memory rewriting path is introduced in this
+   release.
 
 Required design:
 
@@ -294,6 +311,19 @@ Required design:
    but they are not arbitrary memory rewriting.
 5. Tamper detection records hash/provenance mismatches and blocks promotion if
    unexplained manual edits are found.
+
+Bounded operator evidence for this release should include:
+
+1. `persona-seed-setup` proving a governed seed initializes persona and growth
+   state together.
+2. `persona-growth-apply` proving `PersonaGrowthState` revision changes only
+   when runtime evidence is supplied.
+3. `persona-state-inspect` proving read-only inspection and prompt-safe
+   rational summaries remain available.
+4. `persona-state-export` and `persona-state-delete` proving privacy export,
+   redaction, and delete are supported without arbitrary growth-state rewrite.
+5. `persona-tamper-report` plus `closure-summary` proving immutability and
+   provenance mismatches are detectable and promotable as explicit gates.
 
 ## 11. Release 2.2.6 Preview
 

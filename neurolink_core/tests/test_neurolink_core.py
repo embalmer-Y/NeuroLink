@@ -31,10 +31,17 @@ from neurolink_core.motivation import (
     apply_vitality_signals,
 )
 from neurolink_core.persona import (
+    PersonaGrowthEvidence,
     PersonaSignal,
+    PersonaSeedConfig,
     PersonaState,
+    apply_persona_growth_evidence,
     redact_relationships,
     apply_persona_signals,
+    compute_persona_immutability_stamp,
+    initialize_persona_growth_state,
+    initialize_persona_state_from_seed,
+    persona_immutability_tampered,
 )
 from neurolink_core.session import CoreSessionManager
 from neurolink_core.social import MockSocialAdapter, SocialMessageEnvelope
@@ -168,6 +175,95 @@ class TestPersonaState(unittest.TestCase):
         self.assertEqual(updated.curiosity, 1.0)
         self.assertEqual(updated.fatigue, 0.0)
         self.assertEqual(updated.social_openness, 1.0)
+
+    def test_persona_seed_initializes_state_and_growth_fingerprint(self) -> None:
+        seed = PersonaSeedConfig(
+            persona_id="affective-main",
+            seed_name="warm-curious",
+            mood="curious",
+            curiosity=0.8,
+            social_openness=0.7,
+            immutable_boundaries=("privacy_delete_allowed",),
+            created_at="2026-05-11T10:00:00Z",
+        )
+
+        state = initialize_persona_state_from_seed(seed)
+        growth = initialize_persona_growth_state(seed)
+
+        self.assertEqual(state.persona_id, "affective-main")
+        self.assertEqual(state.mood, "curious")
+        self.assertEqual(state.curiosity, 0.8)
+        self.assertEqual(growth.persona_id, "affective-main")
+        self.assertTrue(growth.seed_fingerprint)
+        self.assertEqual(growth.revision, 0)
+        self.assertTrue(growth.provenance_hash)
+
+    def test_persona_growth_requires_runtime_evidence_source(self) -> None:
+        seed = PersonaSeedConfig(persona_id="affective-main")
+        growth = initialize_persona_growth_state(seed)
+
+        with self.assertRaisesRegex(ValueError, "runtime_evidence"):
+            apply_persona_growth_evidence(
+                growth,
+                PersonaGrowthEvidence(
+                    event_id="evt-manual-001",
+                    source="manual_edit",
+                    reason="operator_rewrite",
+                    recorded_at="2026-05-11T10:05:00Z",
+                ),
+            )
+
+    def test_persona_growth_updates_counts_and_immutability_stamp_detects_tamper(self) -> None:
+        seed = PersonaSeedConfig(
+            persona_id="affective-main",
+            seed_name="warm-curious",
+            created_at="2026-05-11T10:00:00Z",
+        )
+        state = initialize_persona_state_from_seed(seed)
+        growth = initialize_persona_growth_state(seed)
+
+        updated_growth = apply_persona_growth_evidence(
+            growth,
+            PersonaGrowthEvidence(
+                event_id="evt-social-001",
+                source="social_interaction",
+                reason="supportive_user_feedback",
+                recorded_at="2026-05-11T10:10:00Z",
+                principal_id="user-01",
+                summary="User gave warm positive feedback.",
+            ),
+        )
+        stamp = compute_persona_immutability_stamp(
+            seed_config=seed,
+            persona_state=state,
+            growth_state=updated_growth,
+        )
+        tampered_state = PersonaState.from_dict(
+            {
+                **state.to_dict(),
+                "mood": "rewritten",
+            }
+        )
+
+        self.assertEqual(updated_growth.social_interaction_count, 1)
+        self.assertEqual(updated_growth.revision, 1)
+        self.assertEqual(updated_growth.last_evidence_reason, "supportive_user_feedback")
+        self.assertFalse(
+            persona_immutability_tampered(
+                expected_stamp=stamp,
+                seed_config=seed,
+                persona_state=state,
+                growth_state=updated_growth,
+            )
+        )
+        self.assertTrue(
+            persona_immutability_tampered(
+                expected_stamp=stamp,
+                seed_config=seed,
+                persona_state=tampered_state,
+                growth_state=updated_growth,
+            )
+        )
 
 
 class TestSocialAdapterContract(unittest.TestCase):
@@ -612,12 +708,16 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "autonomous_daemon_gate",
                 "vitality_governance_gate",
                 "persona_persistence_gate",
+                "persona_seed_gate",
+                "persona_growth_gate",
+                "memory_immutability_gate",
                 "social_adapter_gate",
                 "qq_official_gateway_gate",
                 "wecom_gateway_gate",
                 "openclaw_gateway_gate",
                 "approval_over_social_gate",
                 "self_improvement_sandbox_gate",
+                "coding_agent_route_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -658,12 +758,16 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "autonomous_daemon_gate",
                 "vitality_governance_gate",
                 "persona_persistence_gate",
+                "persona_seed_gate",
+                "persona_growth_gate",
+                "memory_immutability_gate",
                 "social_adapter_gate",
                 "qq_official_gateway_gate",
                 "wecom_gateway_gate",
                 "openclaw_gateway_gate",
                 "approval_over_social_gate",
                 "self_improvement_sandbox_gate",
+                "coding_agent_route_gate",
                 "multimodal_normalization_gate",
                 "profile_routing_gate",
                 "provider_runtime_gate",
@@ -683,10 +787,17 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "tool_skill_mcp_bundle",
                 "provider_smoke_bundle",
                 "multimodal_profile_bundle",
+                "coding_agent_route_bundle",
             ],
         )
         self.assertFalse(payload["relay_failure_summary"]["ok"])
-        self.assertTrue(all(item["passed"] for item in payload["bundle_checklist"]))
+        self.assertFalse(
+            next(
+                item["passed"]
+                for item in payload["bundle_checklist"]
+                if item["item_id"] == "coding_agent_route_bundle"
+            )
+        )
         execution_summary = payload["execution_summaries"][0]
         self.assertTrue(execution_summary["ok"])
         self.assertEqual(execution_summary["tool_result_count"], 1)
@@ -3229,7 +3340,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 30)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 33)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
         self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
@@ -3239,6 +3350,9 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["validation_gates"]["autonomous_daemon_gate"])
         self.assertTrue(payload["validation_gates"]["vitality_governance_gate"])
         self.assertTrue(payload["validation_gates"]["persona_persistence_gate"])
+        self.assertTrue(payload["validation_gates"]["persona_seed_gate"])
+        self.assertTrue(payload["validation_gates"]["persona_growth_gate"])
+        self.assertTrue(payload["validation_gates"]["memory_immutability_gate"])
         self.assertTrue(payload["validation_gates"]["social_adapter_gate"])
         self.assertTrue(payload["validation_gates"]["qq_official_gateway_gate"])
         self.assertTrue(payload["validation_gates"]["wecom_gateway_gate"])
@@ -3934,11 +4048,399 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "2.1.0-persona-state-smoke-v1")
         self.assertEqual(payload["command"], "persona-state-smoke")
         self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["persona_seed_recorded"])
+        self.assertTrue(payload["closure_gates"]["persona_growth_recorded"])
         self.assertTrue(payload["closure_gates"]["relationship_summary_recorded"])
         self.assertTrue(payload["closure_gates"]["rational_summary_limited"])
         self.assertTrue(payload["closure_gates"]["privacy_redaction_supported"])
+        self.assertTrue(payload["closure_gates"]["immutability_stamp_valid"])
         self.assertEqual(payload["evidence_summary"]["mood"], "curious")
         self.assertEqual(payload["evidence_summary"]["redacted_relationship_count"], 0)
+        self.assertEqual(payload["evidence_summary"]["seed_name"], "warm-curious")
+        self.assertEqual(payload["evidence_summary"]["growth_revision"], 1)
+        self.assertEqual(payload["evidence_summary"]["growth_source"], "social_interaction")
+
+    def test_cli_persona_seed_setup_initializes_governed_bundle(self) -> None:
+        setup_out = io.StringIO()
+        with redirect_stdout(setup_out):
+            setup_code = core_cli_main(
+                [
+                    "persona-seed-setup",
+                    "--seed-name",
+                    "operator-curious",
+                    "--mood",
+                    "focused",
+                    "--curiosity",
+                    "0.8",
+                    "--social-openness",
+                    "0.65",
+                    "--immutable-boundary",
+                    "no_raw_dm_export",
+                    "--immutable-boundary",
+                    "operator_approval_required",
+                    "--created-at",
+                    "2026-05-11T08:00:00Z",
+                ]
+            )
+
+        self.assertEqual(setup_code, 0)
+        payload = json.loads(setup_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.5-persona-seed-setup-v1")
+        self.assertEqual(payload["command"], "persona-seed-setup")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["provenance_hash_recorded"])
+        self.assertTrue(payload["closure_gates"]["immutability_stamp_valid"])
+        self.assertEqual(payload["seed_config"]["seed_name"], "operator-curious")
+        self.assertEqual(payload["persona_growth"]["revision"], 0)
+        self.assertEqual(
+            payload["persona_state"]["provenance_hash"],
+            payload["persona_growth"]["seed_fingerprint"],
+        )
+        self.assertEqual(payload["evidence_summary"]["immutable_boundary_count"], 2)
+
+    def test_cli_persona_state_export_supports_redaction(self) -> None:
+        seed = PersonaSeedConfig(
+            seed_name="export-seed",
+            mood="steady",
+            created_at="2026-05-11T09:00:00Z",
+        )
+        growth = initialize_persona_growth_state(seed)
+        persona = apply_persona_signals(
+            initialize_persona_state_from_seed(seed, updated_at=seed.created_at),
+            [
+                PersonaSignal(
+                    reason="trusted_session",
+                    principal_id="user-42",
+                    trust_delta=0.3,
+                    familiarity_delta=0.4,
+                    preferred_address="Alice",
+                )
+            ],
+            updated_at="2026-05-11T09:05:00Z",
+        )
+        persona = PersonaState.from_dict(
+            {
+                **persona.to_dict(),
+                "seed_config": seed.to_dict(),
+                "growth_state": growth.to_dict(),
+                "provenance_hash": growth.seed_fingerprint,
+            }
+        )
+        stamp = compute_persona_immutability_stamp(
+            seed_config=seed,
+            persona_state=persona,
+            growth_state=growth,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "seed.json").write_text(json.dumps(seed.to_dict()), encoding="utf-8")
+            (root / "persona.json").write_text(json.dumps(persona.to_dict()), encoding="utf-8")
+            (root / "growth.json").write_text(json.dumps(growth.to_dict()), encoding="utf-8")
+
+            export_out = io.StringIO()
+            with redirect_stdout(export_out):
+                export_code = core_cli_main(
+                    [
+                        "persona-state-export",
+                        "--seed-file",
+                        str(root / "seed.json"),
+                        "--persona-file",
+                        str(root / "persona.json"),
+                        "--growth-file",
+                        str(root / "growth.json"),
+                        "--expected-immutability-stamp",
+                        stamp,
+                        "--redact-principal-id",
+                        "user-42",
+                    ]
+                )
+
+        self.assertEqual(export_code, 0)
+        payload = json.loads(export_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.5-persona-state-export-v1")
+        self.assertEqual(payload["command"], "persona-state-export")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["redaction_applied"])
+        self.assertTrue(payload["closure_gates"]["immutability_stamp_valid"])
+        self.assertEqual(payload["redacted_principal_ids"], ["user-42"])
+        self.assertEqual(payload["persona_state"]["relationship_summaries"], [])
+        self.assertEqual(payload["rational_summary"]["relationship_summaries"], [])
+        self.assertEqual(payload["evidence_summary"]["relationship_count"], 0)
+
+    def test_cli_persona_growth_apply_requires_runtime_evidence_and_advances_revision(self) -> None:
+        seed = PersonaSeedConfig(
+            seed_name="growth-seed",
+            mood="steady",
+            created_at="2026-05-11T09:30:00Z",
+        )
+        growth = initialize_persona_growth_state(seed)
+        persona = PersonaState.from_dict(
+            {
+                **initialize_persona_state_from_seed(seed, updated_at=seed.created_at).to_dict(),
+                "seed_config": seed.to_dict(),
+                "growth_state": growth.to_dict(),
+                "provenance_hash": growth.seed_fingerprint,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "seed.json").write_text(json.dumps(seed.to_dict()), encoding="utf-8")
+            (root / "persona.json").write_text(json.dumps(persona.to_dict()), encoding="utf-8")
+            (root / "growth.json").write_text(json.dumps(growth.to_dict()), encoding="utf-8")
+
+            growth_out = io.StringIO()
+            with redirect_stdout(growth_out):
+                growth_code = core_cli_main(
+                    [
+                        "persona-growth-apply",
+                        "--seed-file",
+                        str(root / "seed.json"),
+                        "--persona-file",
+                        str(root / "persona.json"),
+                        "--growth-file",
+                        str(root / "growth.json"),
+                        "--event-id",
+                        "evt-growth-001",
+                        "--source",
+                        "unit_event",
+                        "--reason",
+                        "network_recovery",
+                        "--recorded-at",
+                        "2026-05-11T09:35:00Z",
+                        "--summary",
+                        "Recovered cleanly after transient disconnect.",
+                    ]
+                )
+
+        self.assertEqual(growth_code, 0)
+        payload = json.loads(growth_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.5-persona-growth-apply-v1")
+        self.assertEqual(payload["command"], "persona-growth-apply")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["runtime_evidence_only"])
+        self.assertTrue(payload["closure_gates"]["growth_revision_advanced"])
+        self.assertEqual(payload["persona_growth"]["revision"], 1)
+        self.assertEqual(payload["persona_growth"]["last_evidence_source"], "unit_event")
+        self.assertIn("evt-growth-001", payload["persona_growth"]["evidence_event_ids"])
+
+    def test_cli_persona_state_inspect_can_return_rational_summary_only(self) -> None:
+        seed = PersonaSeedConfig(
+            seed_name="inspect-seed",
+            mood="curious",
+            created_at="2026-05-11T10:15:00Z",
+        )
+        growth = initialize_persona_growth_state(seed)
+        persona = apply_persona_signals(
+            initialize_persona_state_from_seed(seed, updated_at=seed.created_at),
+            [
+                PersonaSignal(
+                    reason="recent_interaction",
+                    principal_id="user-77",
+                    trust_delta=0.2,
+                    familiarity_delta=0.3,
+                    preferred_address="Operator",
+                )
+            ],
+            updated_at="2026-05-11T10:20:00Z",
+        )
+        persona = PersonaState.from_dict(
+            {
+                **persona.to_dict(),
+                "seed_config": seed.to_dict(),
+                "growth_state": growth.to_dict(),
+                "provenance_hash": growth.seed_fingerprint,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "seed.json").write_text(json.dumps(seed.to_dict()), encoding="utf-8")
+            (root / "persona.json").write_text(json.dumps(persona.to_dict()), encoding="utf-8")
+            (root / "growth.json").write_text(json.dumps(growth.to_dict()), encoding="utf-8")
+
+            inspect_out = io.StringIO()
+            with redirect_stdout(inspect_out):
+                inspect_code = core_cli_main(
+                    [
+                        "persona-state-inspect",
+                        "--seed-file",
+                        str(root / "seed.json"),
+                        "--persona-file",
+                        str(root / "persona.json"),
+                        "--growth-file",
+                        str(root / "growth.json"),
+                        "--rational-summary-only",
+                    ]
+                )
+
+        self.assertEqual(inspect_code, 0)
+        payload = json.loads(inspect_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.5-persona-state-inspect-v1")
+        self.assertEqual(payload["command"], "persona-state-inspect")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["rational_summary_only"])
+        self.assertIsNone(payload["persona_state"])
+        self.assertIsNone(payload["persona_growth"])
+        self.assertEqual(payload["rational_summary"]["relationship_summaries"][0]["principal_id"], "user-77")
+
+    def test_cli_persona_state_delete_supports_principal_redaction_and_full_delete(self) -> None:
+        seed = PersonaSeedConfig(
+            seed_name="delete-seed",
+            mood="steady",
+            created_at="2026-05-11T10:45:00Z",
+        )
+        growth = initialize_persona_growth_state(seed)
+        persona = apply_persona_signals(
+            initialize_persona_state_from_seed(seed, updated_at=seed.created_at),
+            [
+                PersonaSignal(
+                    reason="recent_interaction",
+                    principal_id="user-delete-1",
+                    trust_delta=0.2,
+                    familiarity_delta=0.1,
+                ),
+                PersonaSignal(
+                    reason="recent_interaction",
+                    principal_id="user-delete-2",
+                    trust_delta=0.1,
+                    familiarity_delta=0.2,
+                ),
+            ],
+            updated_at="2026-05-11T10:50:00Z",
+        )
+        persona = PersonaState.from_dict(
+            {
+                **persona.to_dict(),
+                "seed_config": seed.to_dict(),
+                "growth_state": growth.to_dict(),
+                "provenance_hash": growth.seed_fingerprint,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "seed.json").write_text(json.dumps(seed.to_dict()), encoding="utf-8")
+            (root / "persona.json").write_text(json.dumps(persona.to_dict()), encoding="utf-8")
+            (root / "growth.json").write_text(json.dumps(growth.to_dict()), encoding="utf-8")
+
+            redact_out = io.StringIO()
+            with redirect_stdout(redact_out):
+                redact_code = core_cli_main(
+                    [
+                        "persona-state-delete",
+                        "--seed-file",
+                        str(root / "seed.json"),
+                        "--persona-file",
+                        str(root / "persona.json"),
+                        "--growth-file",
+                        str(root / "growth.json"),
+                        "--principal-id",
+                        "user-delete-1",
+                    ]
+                )
+
+            full_delete_out = io.StringIO()
+            with redirect_stdout(full_delete_out):
+                full_delete_code = core_cli_main(
+                    [
+                        "persona-state-delete",
+                        "--seed-file",
+                        str(root / "seed.json"),
+                        "--persona-file",
+                        str(root / "persona.json"),
+                        "--growth-file",
+                        str(root / "growth.json"),
+                        "--delete-all",
+                    ]
+                )
+
+        self.assertEqual(redact_code, 0)
+        redact_payload = json.loads(redact_out.getvalue())
+        self.assertEqual(redact_payload["schema_version"], "2.2.5-persona-state-delete-v1")
+        self.assertFalse(redact_payload["delete_all"])
+        self.assertEqual(redact_payload["deleted_principal_ids"], ["user-delete-1"])
+        self.assertEqual(redact_payload["deleted_relationship_count"], 1)
+        self.assertEqual(
+            len(redact_payload["persona_state"]["relationship_summaries"]),
+            1,
+        )
+        self.assertTrue(redact_payload["closure_gates"]["growth_state_not_rewritten"])
+
+        self.assertEqual(full_delete_code, 0)
+        full_delete_payload = json.loads(full_delete_out.getvalue())
+        self.assertTrue(full_delete_payload["delete_all"])
+        self.assertIsNone(full_delete_payload["persona_state"])
+        self.assertIsNone(full_delete_payload["persona_growth"])
+        self.assertTrue(full_delete_payload["ok"])
+
+    def test_cli_persona_tamper_report_detects_modified_state(self) -> None:
+        seed = PersonaSeedConfig(
+            seed_name="tamper-seed",
+            mood="steady",
+            created_at="2026-05-11T10:00:00Z",
+        )
+        growth = initialize_persona_growth_state(seed)
+        persona = PersonaState.from_dict(
+            {
+                **initialize_persona_state_from_seed(
+                    seed,
+                    updated_at=seed.created_at,
+                ).to_dict(),
+                "seed_config": seed.to_dict(),
+                "growth_state": growth.to_dict(),
+                "provenance_hash": growth.seed_fingerprint,
+            }
+        )
+        stamp = compute_persona_immutability_stamp(
+            seed_config=seed,
+            persona_state=persona,
+            growth_state=growth,
+        )
+        tampered_persona = PersonaState.from_dict(
+            {
+                **persona.to_dict(),
+                "mood": "agitated",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "seed.json").write_text(json.dumps(seed.to_dict()), encoding="utf-8")
+            (root / "persona.json").write_text(
+                json.dumps(tampered_persona.to_dict()),
+                encoding="utf-8",
+            )
+            (root / "growth.json").write_text(json.dumps(growth.to_dict()), encoding="utf-8")
+
+            report_out = io.StringIO()
+            with redirect_stdout(report_out):
+                report_code = core_cli_main(
+                    [
+                        "persona-tamper-report",
+                        "--seed-file",
+                        str(root / "seed.json"),
+                        "--persona-file",
+                        str(root / "persona.json"),
+                        "--growth-file",
+                        str(root / "growth.json"),
+                        "--expected-immutability-stamp",
+                        stamp,
+                    ]
+                )
+
+        self.assertEqual(report_code, 2)
+        payload = json.loads(report_out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.5-persona-tamper-report-v1")
+        self.assertEqual(payload["command"], "persona-tamper-report")
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["tampered"])
+        self.assertFalse(payload["closure_gates"]["immutability_stamp_valid"])
+        self.assertNotEqual(
+            payload["expected_immutability_stamp"],
+            payload["actual_immutability_stamp"],
+        )
 
     def test_live_event_service_can_record_federation_route_evidence(self) -> None:
         class FakeLiveAdapter:
@@ -5124,11 +5626,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["closure_summary"]["ok"])
         self.assertTrue(payload["closure_summary"]["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["closure_summary"]["validation_gate_summary"]["passed_count"], 30)
+        self.assertEqual(payload["closure_summary"]["validation_gate_summary"]["passed_count"], 33)
         self.assertEqual(payload["closure_summary"]["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(payload["closure_summary"]["validation_gates"]["closure_summary_gate"])
         self.assertTrue(payload["closure_summary"]["validation_gates"]["coding_agent_route_gate"])
         self.assertTrue(payload["closure_summary"]["validation_gates"]["real_scene_e2e_gate"])
+        self.assertTrue(payload["closure_summary"]["validation_gates"]["persona_seed_gate"])
+        self.assertTrue(payload["closure_summary"]["validation_gates"]["persona_growth_gate"])
+        self.assertTrue(payload["closure_summary"]["validation_gates"]["memory_immutability_gate"])
         self.assertTrue(
             payload["closure_summary"]["coding_agent_route_summary"]["closure_gates"][
                 "plan_artifact_contract_supported"

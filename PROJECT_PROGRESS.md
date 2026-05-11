@@ -1,3 +1,196 @@
+2026-05-11: Marked release-2.2.5 complete and promoted the repository identity
+to `2.2.5` after the bounded persona-governance scope closed green. The
+promotion updates the canonical Neuro CLI `RELEASE_TARGET`, workflow catalog,
+sample Unit app source identity, README, and AI Core English/Chinese runbook
+headers while preserving the additive 2.2.5 evidence contracts and the already
+green packaged 2.2.4 closure lineage beneath them. Focused Neuro CLI
+release-target checks and the 2.2.5 persona/closure regressions remained green
+after the identity shift. - Copilot
+
+#### EXEC-387 Release 2.2.5 Completion And Identity Promotion
+
+- Status: completed and promoted by release-operator request
+- Added:
+  - final release-2.2.5 completion checklist and promoted-surface record
+  - canonical release identity promotion from `2.2.4` to `2.2.5` in Neuro CLI,
+    workflow catalog, sample Unit app identity, README, and AI Core runbooks
+- Boundary confirmation:
+  - release-2.2.5 promotes the bounded persona-governance surface only; it does
+    not claim release-2.2.6 heartbeat/task/world-model closure
+  - historical evidence schema names remain unchanged, including the inherited
+    2.2.4 packaged closure-smoke contract and earlier frozen schema lineage
+  - this promotion formalizes completed repository state; it does not add a new
+    packaged 2.2.5 closure-smoke command
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/README.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK.md`
+  - `applocation/NeuroLink/docs/project/AI_CORE_RUNBOOK_ZH.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_cli.py`
+  - `applocation/NeuroLink/neuro_cli/src/neuro_workflow_catalog.py`
+  - `applocation/NeuroLink/subprojects/neuro_unit_app/src/main.c`
+- Validation:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py -q -k 'test_workflow_commands_do_not_embed_release_target_literals or test_sample_app_source_identity_matches_release_target or test_capabilities_reports_current_release_target'`
+  - `3 passed, 124 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'test_cli_persona_state_smoke_reports_privacy_and_summary_payload or test_cli_persona_seed_setup_initializes_governed_bundle or test_cli_persona_growth_apply_requires_runtime_evidence_and_advances_revision or test_cli_persona_state_inspect_can_return_rational_summary_only or test_cli_persona_state_delete_supports_principal_redaction_and_full_delete or test_cli_persona_state_export_supports_redaction or test_cli_persona_tamper_report_detects_modified_state or test_cli_closure_summary_reads_session_evidence or test_cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or test_cli_release_224_closure_smoke_reports_full_green_summary'`
+  - `10 passed, 165 deselected`
+
+*** Add File: /home/emb/project/zephyrproject/applocation/NeuroLink/docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md
+# Release 2.2.5 Promotion Checklist
+
+## Decision
+
+Status: `promoted`
+
+Date: 2026-05-11
+
+Decision owner: release operator with GitHub Copilot evidence preparation
+
+Release identity is promoted from `2.2.4` to `2.2.5` after the bounded
+persona-governance scope closed green. This release formalizes first-class
+persona seed setup, runtime-evidence-only growth apply, read-only inspect,
+privacy export/delete, and immutability/tamper reporting on top of the already
+green release-2.2.4 governance baseline.
+
+## Evidence
+
+Primary bounded evidence:
+
+1. focused `neurolink_core` persona-governance regressions
+2. focused `closure-summary` regressions carrying the additive 2.2.5 gates
+3. focused `neuro_cli` release-target and sample-app identity regressions
+4. `PROJECT_PROGRESS.md` execution ledger entries `EXEC-386` and `EXEC-387`
+
+## Validation
+
+1. Focused AI Core persona and closure regression:
+  `10 passed, 165 deselected`.
+2. Focused Neuro CLI release-target regression:
+  `3 passed, 124 deselected` for:
+  - `test_workflow_commands_do_not_embed_release_target_literals`
+  - `test_sample_app_source_identity_matches_release_target`
+  - `test_capabilities_reports_current_release_target`
+3. No new whitespace issues in the promoted files.
+
+## Promoted Surfaces
+
+1. `neuro_cli/src/neuro_cli.py`: `RELEASE_TARGET = "2.2.5"`.
+2. `neuro_cli/src/neuro_workflow_catalog.py`: `RELEASE_TARGET = "2.2.5"`.
+3. `subprojects/neuro_unit_app/src/main.c`: app version, build id, and manifest
+  patch set to `2.2.5` and `neuro_unit_app-2.2.5-cbor-v2`.
+4. `README.md`, `docs/project/AI_CORE_RUNBOOK.md`, and
+  `docs/project/AI_CORE_RUNBOOK_ZH.md` describe release `2.2.5` as the current
+  completed persona-governance baseline.
+
+## Residual Constraints
+
+Stable evidence schema names remain at their inherited `1.2.x`, `2.1.0`,
+`2.2.2`, `2.2.3`, `2.2.4`, and additive `2.2.5` contract versions where
+already defined. This promotion changes the product release identity and marks
+the bounded repository state complete; it does not introduce a new packaged
+release-2.2.5 closure-smoke command or claim release-2.2.6 closure.
+
+2026-05-11: Completed the bounded release-2.2.5 persona governance line. The
+AI Core now carries governed seed setup, runtime-evidence-only growth apply,
+read-only inspect, privacy export/delete, and tamper-report operator paths on
+top of the earlier persona smoke and closure-summary gate wiring. This closes
+the planned 2.2.5 persona contract surface without widening into 2.2.6 daemon,
+world-model, or soak scope. Focused persona and adjacent closure regressions
+passed with `10 passed, 165 deselected`. - Copilot
+
+#### EXEC-386 Release 2.2.5 Persona Governance Completion Slice
+
+- Status: implemented and focused-regression green
+- Added:
+  - first-class persona governance commands:
+    `persona-seed-setup`, `persona-growth-apply`, `persona-state-inspect`,
+    `persona-state-export`, `persona-state-delete`, and
+    `persona-tamper-report`
+  - deterministic file-driven bundle loading/binding that keeps seed,
+    persona state, growth state, and immutability evidence aligned
+  - focused regressions covering governed seed initialization, runtime-only
+    growth revision advancement, read-only inspect summaries, privacy delete /
+    redaction, export, tamper detection, and adjacent closure-summary behavior
+- Boundary confirmation:
+  - manual persona/growth rewriting is still not exposed as an operator path;
+    only governed setup, runtime-evidence growth, inspect, export, delete, and
+    tamper reporting are allowed
+  - release-2.2.5 remains additive to the existing persona smoke and closure
+    matrix; it does not introduce 2.2.6 heartbeat/task/world-model behavior
+  - privacy delete and redaction remain distinct governance operations rather
+    than a generic memory mutation surface
+- Touched files:
+  - `applocation/NeuroLink/PROJECT_PROGRESS.md`
+  - `applocation/NeuroLink/docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`
+  - `applocation/NeuroLink/neurolink_core/cli.py`
+  - `applocation/NeuroLink/neurolink_core/tests/test_neurolink_core.py`
+- Validation:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'test_cli_persona_growth_apply_requires_runtime_evidence_and_advances_revision or test_cli_persona_state_inspect_can_return_rational_summary_only or test_cli_persona_state_delete_supports_principal_redaction_and_full_delete or test_cli_persona_tamper_report_detects_modified_state'`
+  - `4 passed, 171 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && /home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k 'test_cli_persona_state_smoke_reports_privacy_and_summary_payload or test_cli_persona_seed_setup_initializes_governed_bundle or test_cli_persona_growth_apply_requires_runtime_evidence_and_advances_revision or test_cli_persona_state_inspect_can_return_rational_summary_only or test_cli_persona_state_delete_supports_principal_redaction_and_full_delete or test_cli_persona_state_export_supports_redaction or test_cli_persona_tamper_report_detects_modified_state or test_cli_closure_summary_reads_session_evidence or test_cli_closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or test_cli_release_224_closure_smoke_reports_full_green_summary'`
+  - `10 passed, 165 deselected`
+- Next:
+  - move to release-2.2.6 planning and implementation for heartbeat, task
+    tracking, auditable memory maintenance, self-optimization apply boundaries,
+    and World Model v1
+
+*** Add File: /home/emb/project/zephyrproject/applocation/NeuroLink/docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md
+# Release 2.2.5 Promotion Checklist
+
+## Decision
+
+Status: `promoted`
+
+Date: 2026-05-11
+
+Decision owner: release operator with GitHub Copilot evidence preparation
+
+Release identity is promoted from `2.2.4` to `2.2.5` after the bounded
+persona-governance scope closed green. This release formalizes first-class
+persona seed setup, runtime-evidence-only growth apply, read-only inspect,
+privacy export/delete, and immutability/tamper reporting on top of the already
+green release-2.2.4 governance baseline.
+
+## Evidence
+
+Primary bounded evidence:
+
+1. focused `neurolink_core` persona-governance regressions
+2. focused `closure-summary` regressions carrying the additive 2.2.5 gates
+3. focused `neuro_cli` release-target and sample-app identity regressions
+4. `PROJECT_PROGRESS.md` execution ledger entries `EXEC-386` and `EXEC-387`
+
+## Validation
+
+1. Focused AI Core persona and closure regression:
+  `10 passed, 165 deselected`.
+2. Focused Neuro CLI release-target regression:
+  expected green after identity promotion for:
+  - `test_workflow_commands_do_not_embed_release_target_literals`
+  - `test_sample_app_source_identity_matches_release_target`
+  - `test_capabilities_reports_current_release_target`
+3. No new whitespace issues in the promoted files.
+
+## Promoted Surfaces
+
+1. `neuro_cli/src/neuro_cli.py`: `RELEASE_TARGET = "2.2.5"`.
+2. `neuro_cli/src/neuro_workflow_catalog.py`: `RELEASE_TARGET = "2.2.5"`.
+3. `subprojects/neuro_unit_app/src/main.c`: app version, build id, and manifest
+  patch set to `2.2.5` and `neuro_unit_app-2.2.5-cbor-v2`.
+4. `README.md`, `docs/project/AI_CORE_RUNBOOK.md`, and
+  `docs/project/AI_CORE_RUNBOOK_ZH.md` describe release `2.2.5` as the current
+  completed persona-governance baseline.
+
+## Residual Constraints
+
+Stable evidence schema names remain at their inherited `1.2.x`, `2.1.0`,
+`2.2.2`, `2.2.3`, `2.2.4`, and additive `2.2.5` contract versions where
+already defined. This promotion changes the product release identity and marks
+the bounded repository state complete; it does not introduce a new packaged
+release-2.2.5 closure-smoke command or claim release-2.2.6 closure.
+
 2026-05-11: Closed and promoted release-2.2.3 after the OpenClaw-compatible
 social gateway bundle, WeCom/OpenClaw gateway closure evidence, focused social
 regressions, and release-identity updates converged. The archived bundle

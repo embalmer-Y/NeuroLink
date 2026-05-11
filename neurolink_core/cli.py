@@ -36,8 +36,18 @@ from .motivation import VitalityState
 from .motivation import VitalitySignal
 from .motivation import apply_vitality_signals
 from .persona import PersonaState
+from .persona import PersonaSeedConfig
+from .persona import PersonaGrowthEvidence
+from .persona import PERSONA_GROWTH_RUNTIME_SOURCES
+from .persona import PersonaGrowthState
 from .persona import PersonaSignal
+from .persona import apply_persona_growth_evidence
 from .persona import apply_persona_signals
+from .persona import compute_persona_immutability_stamp
+from .persona import compute_persona_seed_fingerprint
+from .persona import initialize_persona_growth_state
+from .persona import initialize_persona_state_from_seed
+from .persona import persona_immutability_tampered
 from .persona import redact_relationships
 from .policy import classify_tool_contract_threats
 from .policy import ReadOnlyToolPolicy
@@ -97,6 +107,12 @@ RESOURCE_BUDGET_GOVERNANCE_SMOKE_SCHEMA_VERSION = "1.2.7-resource-budget-governa
 AUTONOMY_DAEMON_SMOKE_SCHEMA_VERSION = "2.1.0-autonomy-daemon-smoke-v1"
 VITALITY_SMOKE_SCHEMA_VERSION = "2.1.0-vitality-smoke-v1"
 PERSONA_STATE_SMOKE_SCHEMA_VERSION = "2.1.0-persona-state-smoke-v1"
+PERSONA_SEED_SETUP_SCHEMA_VERSION = "2.2.5-persona-seed-setup-v1"
+PERSONA_GROWTH_APPLY_SCHEMA_VERSION = "2.2.5-persona-growth-apply-v1"
+PERSONA_STATE_INSPECT_SCHEMA_VERSION = "2.2.5-persona-state-inspect-v1"
+PERSONA_STATE_DELETE_SCHEMA_VERSION = "2.2.5-persona-state-delete-v1"
+PERSONA_STATE_EXPORT_SCHEMA_VERSION = "2.2.5-persona-state-export-v1"
+PERSONA_TAMPER_REPORT_SCHEMA_VERSION = "2.2.5-persona-tamper-report-v1"
 APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION = "2.1.0-approval-social-smoke-v1"
 SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION = "2.1.0-social-adapter-smoke-v1"
 SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION = "2.1.0-self-improvement-smoke-v1"
@@ -241,6 +257,58 @@ def _build_coding_agent_route_closure_summary(
             dict[str, Any],
             coding_agent_route_payload.get("evidence_summary") or {},
         ),
+        "ok": all(gates.values()),
+    }
+
+
+def _build_persona_225_closure_summary(
+    persona_state_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if persona_state_payload is None:
+        gates = {
+            "persona_seed_recorded": False,
+            "persona_growth_recorded": False,
+            "growth_requires_runtime_evidence": False,
+            "immutability_stamp_recorded": False,
+            "immutability_stamp_valid": False,
+        }
+        return {
+            "supplied": False,
+            "status": "not_supplied",
+            "reason": "persona_state_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "persona_seed_ok": False,
+            "persona_growth_ok": False,
+            "memory_immutability_ok": False,
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], persona_state_payload.get("closure_gates") or {})
+    gates = {
+        "persona_seed_recorded": bool(payload_gates.get("persona_seed_recorded", False)),
+        "persona_growth_recorded": bool(payload_gates.get("persona_growth_recorded", False)),
+        "growth_requires_runtime_evidence": bool(
+            payload_gates.get("growth_requires_runtime_evidence", False)
+        ),
+        "immutability_stamp_recorded": bool(
+            payload_gates.get("immutability_stamp_recorded", False)
+        ),
+        "immutability_stamp_valid": bool(payload_gates.get("immutability_stamp_valid", False)),
+    }
+    return {
+        "supplied": True,
+        "status": str(persona_state_payload.get("status") or "unknown"),
+        "reason": str(persona_state_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any], persona_state_payload.get("evidence_summary") or {}
+        ),
+        "persona_seed_ok": gates["persona_seed_recorded"],
+        "persona_growth_ok": gates["persona_growth_recorded"]
+        and gates["growth_requires_runtime_evidence"],
+        "memory_immutability_ok": gates["immutability_stamp_recorded"]
+        and gates["immutability_stamp_valid"],
         "ok": all(gates.values()),
     }
 
@@ -1862,7 +1930,23 @@ def build_vitality_smoke(
 
 
 def build_persona_state_smoke() -> dict[str, Any]:
-    initial_state = PersonaState(persona_id="affective-main")
+    seed_config = PersonaSeedConfig(
+        persona_id="affective-main",
+        seed_name="warm-curious",
+        mood="steady",
+        curiosity=0.7,
+        social_openness=0.6,
+        immutable_boundaries=("privacy_delete_allowed", "redaction_allowed"),
+        created_at="2026-05-10T11:55:00Z",
+    )
+    growth_state = initialize_persona_growth_state(seed_config)
+    initial_state = PersonaState.from_dict(
+        {
+            **initialize_persona_state_from_seed(seed_config).to_dict(),
+            "seed_config": seed_config.to_dict(),
+            "growth_state": growth_state.to_dict(),
+        }
+    )
     evolved_state = apply_persona_signals(
         initial_state,
         [
@@ -1882,14 +1966,48 @@ def build_persona_state_smoke() -> dict[str, Any]:
         vitality_summary="attentive",
         updated_at="2026-05-10T12:00:00Z",
     )
+    updated_growth_state = apply_persona_growth_evidence(
+        growth_state,
+        PersonaGrowthEvidence(
+            event_id="evt-social-001",
+            source="social_interaction",
+            reason="supportive_user_feedback",
+            recorded_at="2026-05-10T12:00:00Z",
+            principal_id="user-01",
+            summary="User feedback increased trust and familiarity.",
+        ),
+    )
+    evolved_state = PersonaState.from_dict(
+        {
+            **evolved_state.to_dict(),
+            "seed_config": seed_config.to_dict(),
+            "growth_state": updated_growth_state.to_dict(),
+        }
+    )
     redacted_state = redact_relationships(evolved_state, ["user-01"])
+    immutability_stamp = compute_persona_immutability_stamp(
+        seed_config=seed_config,
+        persona_state=evolved_state,
+        growth_state=updated_growth_state,
+    )
     closure_gates = {
         "persona_state_recorded": bool(evolved_state.to_dict()),
+        "persona_seed_recorded": bool(seed_config.to_dict()),
+        "persona_growth_recorded": bool(updated_growth_state.to_dict()),
         "relationship_summary_recorded": len(evolved_state.relationship_summaries) == 1,
         "rational_summary_limited": "preferred_address"
         not in evolved_state.rational_summary()["relationship_summaries"][0],
         "privacy_redaction_supported": len(redacted_state.relationship_summaries) == 0,
         "vitality_summary_bound_to_persona": evolved_state.vitality_summary == "attentive",
+        "growth_requires_runtime_evidence": updated_growth_state.last_evidence_source
+        == "social_interaction",
+        "immutability_stamp_recorded": bool(immutability_stamp),
+        "immutability_stamp_valid": not persona_immutability_tampered(
+            expected_stamp=immutability_stamp,
+            seed_config=seed_config,
+            persona_state=evolved_state,
+            growth_state=updated_growth_state,
+        ),
     }
     return {
         "schema_version": PERSONA_STATE_SMOKE_SCHEMA_VERSION,
@@ -1897,7 +2015,10 @@ def build_persona_state_smoke() -> dict[str, Any]:
         "reason": "persona_state_ready" if all(closure_gates.values()) else "persona_state_gap",
         "command": "persona-state-smoke",
         "closure_gates": closure_gates,
+        "persona_seed": seed_config.to_dict(),
         "persona_state": evolved_state.to_dict(),
+        "persona_growth": updated_growth_state.to_dict(),
+        "immutability_stamp": immutability_stamp,
         "rational_summary": evolved_state.rational_summary(),
         "redacted_state": redacted_state.to_dict(),
         "evidence_summary": {
@@ -1905,6 +2026,389 @@ def build_persona_state_smoke() -> dict[str, Any]:
             "relationship_count": len(evolved_state.relationship_summaries),
             "redacted_relationship_count": len(redacted_state.relationship_summaries),
             "vitality_summary": evolved_state.vitality_summary,
+            "seed_name": seed_config.seed_name,
+            "growth_revision": updated_growth_state.revision,
+            "growth_source": updated_growth_state.last_evidence_source,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _load_json_object(file_path: str, *, label: str) -> dict[str, Any]:
+    payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label}_payload_must_be_object")
+    return cast(dict[str, Any], payload)
+
+
+def _bind_persona_bundle(
+    *,
+    seed_config: PersonaSeedConfig,
+    persona_state: PersonaState,
+    growth_state: PersonaGrowthState,
+) -> PersonaState:
+    expected_seed_fingerprint = compute_persona_seed_fingerprint(seed_config)
+    if persona_state.persona_id != seed_config.persona_id:
+        raise ValueError("persona_bundle_persona_id_mismatch")
+    if growth_state.persona_id != seed_config.persona_id:
+        raise ValueError("persona_growth_persona_id_mismatch")
+    if growth_state.seed_fingerprint != expected_seed_fingerprint:
+        raise ValueError("persona_growth_seed_fingerprint_mismatch")
+    return PersonaState.from_dict(
+        {
+            **persona_state.to_dict(),
+            "seed_config": seed_config.to_dict(),
+            "growth_state": growth_state.to_dict(),
+            "provenance_hash": persona_state.provenance_hash or growth_state.seed_fingerprint,
+            "updated_at": persona_state.updated_at or seed_config.created_at,
+        }
+    )
+
+
+def _build_persona_seed_setup_payload(
+    seed_config: PersonaSeedConfig,
+) -> dict[str, Any]:
+    growth_state = initialize_persona_growth_state(seed_config)
+    persona_state = _bind_persona_bundle(
+        seed_config=seed_config,
+        persona_state=initialize_persona_state_from_seed(
+            seed_config,
+            updated_at=seed_config.created_at,
+        ),
+        growth_state=growth_state,
+    )
+    immutability_stamp = compute_persona_immutability_stamp(
+        seed_config=seed_config,
+        persona_state=persona_state,
+        growth_state=growth_state,
+    )
+    closure_gates = {
+        "seed_config_recorded": bool(seed_config.to_dict()),
+        "persona_state_initialized": bool(persona_state.to_dict()),
+        "growth_state_initialized": bool(growth_state.to_dict()),
+        "provenance_hash_recorded": bool(persona_state.provenance_hash),
+        "immutability_stamp_valid": not persona_immutability_tampered(
+            expected_stamp=immutability_stamp,
+            seed_config=seed_config,
+            persona_state=persona_state,
+            growth_state=growth_state,
+        ),
+    }
+    return {
+        "schema_version": PERSONA_SEED_SETUP_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "persona_seed_initialized" if all(closure_gates.values()) else "persona_seed_gap",
+        "command": "persona-seed-setup",
+        "seed_config": seed_config.to_dict(),
+        "persona_state": persona_state.to_dict(),
+        "persona_growth": growth_state.to_dict(),
+        "immutability_stamp": immutability_stamp,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "persona_id": seed_config.persona_id,
+            "seed_name": seed_config.seed_name,
+            "immutable_boundary_count": len(seed_config.immutable_boundaries),
+            "growth_revision": growth_state.revision,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_persona_seed_config_from_args(args: argparse.Namespace) -> PersonaSeedConfig:
+    return PersonaSeedConfig(
+        persona_id=args.persona_id,
+        seed_name=args.seed_name,
+        mood=args.mood,
+        valence=args.valence,
+        arousal=args.arousal,
+        curiosity=args.curiosity,
+        fatigue=args.fatigue,
+        social_openness=args.social_openness,
+        vitality_summary=args.vitality_summary,
+        relationship_style=args.relationship_style,
+        immutable_boundaries=tuple(args.immutable_boundary),
+        created_at=args.created_at,
+    )
+
+
+def _load_persona_bundle_from_files(
+    *,
+    seed_file: str,
+    persona_file: str,
+    growth_file: str,
+) -> tuple[PersonaSeedConfig, PersonaState, PersonaGrowthState]:
+    seed_config = PersonaSeedConfig.from_dict(_load_json_object(seed_file, label="persona_seed"))
+    persona_state = PersonaState.from_dict(_load_json_object(persona_file, label="persona_state"))
+    growth_state = PersonaGrowthState.from_dict(_load_json_object(growth_file, label="persona_growth"))
+    return seed_config, _bind_persona_bundle(
+        seed_config=seed_config,
+        persona_state=persona_state,
+        growth_state=growth_state,
+    ), growth_state
+
+
+def build_persona_state_export(
+    *,
+    seed_config: PersonaSeedConfig,
+    persona_state: PersonaState,
+    growth_state: PersonaGrowthState,
+    redact_principal_ids: list[str],
+    expected_immutability_stamp: str | None = None,
+) -> dict[str, Any]:
+    exported_state = (
+        redact_relationships(persona_state, redact_principal_ids)
+        if redact_principal_ids
+        else persona_state
+    )
+    exported_state = _bind_persona_bundle(
+        seed_config=seed_config,
+        persona_state=exported_state,
+        growth_state=growth_state,
+    )
+    actual_stamp = compute_persona_immutability_stamp(
+        seed_config=seed_config,
+        persona_state=persona_state,
+        growth_state=growth_state,
+    )
+    tampered = False
+    if expected_immutability_stamp:
+        tampered = persona_immutability_tampered(
+            expected_stamp=expected_immutability_stamp,
+            seed_config=seed_config,
+            persona_state=persona_state,
+            growth_state=growth_state,
+        )
+    closure_gates = {
+        "export_ready": True,
+        "redaction_applied": (
+            not redact_principal_ids
+            or len(exported_state.relationship_summaries)
+            <= len(persona_state.relationship_summaries)
+        ),
+        "immutability_stamp_valid": not tampered,
+        "growth_state_attached": exported_state.growth_state is not None,
+    }
+    return {
+        "schema_version": PERSONA_STATE_EXPORT_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "tampered",
+        "reason": "persona_export_ready" if all(closure_gates.values()) else "persona_export_tampered",
+        "command": "persona-state-export",
+        "seed_config": seed_config.to_dict(),
+        "persona_state": exported_state.to_dict(),
+        "persona_growth": growth_state.to_dict(),
+        "immutability_stamp": actual_stamp,
+        "expected_immutability_stamp": expected_immutability_stamp,
+        "redacted_principal_ids": list(redact_principal_ids),
+        "rational_summary": exported_state.rational_summary(),
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "relationship_count": len(exported_state.relationship_summaries),
+            "redacted_principal_count": len(redact_principal_ids),
+            "tampered": tampered,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_persona_growth_apply(
+    *,
+    seed_config: PersonaSeedConfig,
+    persona_state: PersonaState,
+    growth_state: PersonaGrowthState,
+    evidence: PersonaGrowthEvidence,
+) -> dict[str, Any]:
+    updated_growth = apply_persona_growth_evidence(growth_state, evidence)
+    updated_persona = _bind_persona_bundle(
+        seed_config=seed_config,
+        persona_state=PersonaState.from_dict(
+            {
+                **persona_state.to_dict(),
+                "growth_state": updated_growth.to_dict(),
+                "updated_at": evidence.recorded_at,
+                "provenance_hash": updated_growth.provenance_hash,
+            }
+        ),
+        growth_state=updated_growth,
+    )
+    immutability_stamp = compute_persona_immutability_stamp(
+        seed_config=seed_config,
+        persona_state=updated_persona,
+        growth_state=updated_growth,
+    )
+    closure_gates = {
+        "runtime_evidence_only": evidence.source in PERSONA_GROWTH_RUNTIME_SOURCES,
+        "growth_revision_advanced": updated_growth.revision == growth_state.revision + 1,
+        "evidence_event_recorded": evidence.event_id in updated_growth.evidence_event_ids,
+        "immutability_stamp_valid": not persona_immutability_tampered(
+            expected_stamp=immutability_stamp,
+            seed_config=seed_config,
+            persona_state=updated_persona,
+            growth_state=updated_growth,
+        ),
+    }
+    return {
+        "schema_version": PERSONA_GROWTH_APPLY_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "persona_growth_recorded" if all(closure_gates.values()) else "persona_growth_gap",
+        "command": "persona-growth-apply",
+        "growth_evidence": evidence.to_dict(),
+        "seed_config": seed_config.to_dict(),
+        "persona_state": updated_persona.to_dict(),
+        "persona_growth": updated_growth.to_dict(),
+        "immutability_stamp": immutability_stamp,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "growth_revision": updated_growth.revision,
+            "last_evidence_source": updated_growth.last_evidence_source,
+            "last_evidence_reason": updated_growth.last_evidence_reason,
+            "evidence_event_count": len(updated_growth.evidence_event_ids),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_persona_state_inspect(
+    *,
+    seed_config: PersonaSeedConfig,
+    persona_state: PersonaState,
+    growth_state: PersonaGrowthState,
+    rational_summary_only: bool = False,
+) -> dict[str, Any]:
+    bound_persona = _bind_persona_bundle(
+        seed_config=seed_config,
+        persona_state=persona_state,
+        growth_state=growth_state,
+    )
+    immutability_stamp = compute_persona_immutability_stamp(
+        seed_config=seed_config,
+        persona_state=bound_persona,
+        growth_state=growth_state,
+    )
+    closure_gates = {
+        "read_only_view": True,
+        "growth_state_attached": bound_persona.growth_state is not None,
+        "immutability_stamp_valid": not persona_immutability_tampered(
+            expected_stamp=immutability_stamp,
+            seed_config=seed_config,
+            persona_state=bound_persona,
+            growth_state=growth_state,
+        ),
+        "prompt_safe_summary_available": bool(bound_persona.rational_summary()),
+    }
+    return {
+        "schema_version": PERSONA_STATE_INSPECT_SCHEMA_VERSION,
+        "status": "ready",
+        "reason": "persona_state_inspect_ready",
+        "command": "persona-state-inspect",
+        "rational_summary_only": rational_summary_only,
+        "seed_config": seed_config.to_dict(),
+        "persona_state": None if rational_summary_only else bound_persona.to_dict(),
+        "persona_growth": None if rational_summary_only else growth_state.to_dict(),
+        "immutability_stamp": immutability_stamp,
+        "rational_summary": bound_persona.rational_summary(),
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "relationship_count": len(bound_persona.relationship_summaries),
+            "growth_revision": growth_state.revision,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_persona_state_delete(
+    *,
+    seed_config: PersonaSeedConfig,
+    persona_state: PersonaState,
+    growth_state: PersonaGrowthState,
+    principal_ids: list[str],
+    delete_all: bool,
+) -> dict[str, Any]:
+    if delete_all:
+        deleted_persona: dict[str, Any] | None = None
+        deleted_growth: dict[str, Any] | None = None
+        deleted_relationship_count = len(persona_state.relationship_summaries)
+    else:
+        updated_persona = redact_relationships(persona_state, principal_ids)
+        updated_persona = _bind_persona_bundle(
+            seed_config=seed_config,
+            persona_state=updated_persona,
+            growth_state=growth_state,
+        )
+        deleted_persona = updated_persona.to_dict()
+        deleted_growth = growth_state.to_dict()
+        deleted_relationship_count = (
+            len(persona_state.relationship_summaries)
+            - len(updated_persona.relationship_summaries)
+        )
+    closure_gates = {
+        "delete_scope_declared": delete_all or bool(principal_ids),
+        "privacy_operation_only": True,
+        "growth_state_not_rewritten": delete_all or deleted_growth == growth_state.to_dict(),
+    }
+    return {
+        "schema_version": PERSONA_STATE_DELETE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "persona_state_deleted" if delete_all else "persona_state_redacted",
+        "command": "persona-state-delete",
+        "delete_all": delete_all,
+        "deleted_principal_ids": list(principal_ids),
+        "deleted_relationship_count": deleted_relationship_count,
+        "seed_config": None if delete_all else seed_config.to_dict(),
+        "persona_state": deleted_persona,
+        "persona_growth": deleted_growth,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "full_bundle_deleted": delete_all,
+            "deleted_relationship_count": deleted_relationship_count,
+            "remaining_relationship_count": (
+                0
+                if delete_all
+                else len(cast(dict[str, Any], deleted_persona)["relationship_summaries"])
+            ),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_persona_tamper_report(
+    *,
+    seed_config: PersonaSeedConfig,
+    persona_state: PersonaState,
+    growth_state: PersonaGrowthState,
+    expected_immutability_stamp: str,
+) -> dict[str, Any]:
+    actual_stamp = compute_persona_immutability_stamp(
+        seed_config=seed_config,
+        persona_state=persona_state,
+        growth_state=growth_state,
+    )
+    tampered = persona_immutability_tampered(
+        expected_stamp=expected_immutability_stamp,
+        seed_config=seed_config,
+        persona_state=persona_state,
+        growth_state=growth_state,
+    )
+    closure_gates = {
+        "expected_stamp_supplied": bool(expected_immutability_stamp),
+        "immutability_stamp_valid": not tampered,
+        "persona_growth_bound": persona_state.growth_state is not None,
+    }
+    return {
+        "schema_version": PERSONA_TAMPER_REPORT_SCHEMA_VERSION,
+        "status": "tampered" if tampered else "ready",
+        "reason": "persona_immutability_tampered" if tampered else "persona_immutability_verified",
+        "command": "persona-tamper-report",
+        "expected_immutability_stamp": expected_immutability_stamp,
+        "actual_immutability_stamp": actual_stamp,
+        "tampered": tampered,
+        "seed_config": seed_config.to_dict(),
+        "persona_state": persona_state.to_dict(),
+        "persona_growth": growth_state.to_dict(),
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "persona_id": seed_config.persona_id,
+            "growth_revision": growth_state.revision,
+            "expected_matches_actual": not tampered,
         },
         "ok": all(closure_gates.values()),
     }
@@ -4733,6 +5237,36 @@ def _build_validation_gate_checklist(
             ),
         ),
         _build_closure_checklist_entry(
+            "persona_seed_gate",
+            passed=bool(validation_gates.get("persona_seed_gate")),
+            title="Persona Seed Gate",
+            detail=(
+                "Persona seed evidence records the governed initial persona configuration used to initialize runtime state."
+                if validation_gates.get("persona_seed_gate")
+                else "Persona seed evidence is missing or does not record the governed initial persona configuration."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "persona_growth_gate",
+            passed=bool(validation_gates.get("persona_growth_gate")),
+            title="Persona Growth Gate",
+            detail=(
+                "Persona growth evidence proves growth-state updates are recorded and driven only by runtime evidence."
+                if validation_gates.get("persona_growth_gate")
+                else "Persona growth evidence is missing or does not prove runtime-evidence-only growth updates."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "memory_immutability_gate",
+            passed=bool(validation_gates.get("memory_immutability_gate")),
+            title="Memory Immutability Gate",
+            detail=(
+                "Persona memory evidence records a valid immutability stamp so tampering can be detected without allowing arbitrary rewrites."
+                if validation_gates.get("memory_immutability_gate")
+                else "Persona memory evidence is missing an immutability stamp or cannot prove tamper-detection validity."
+            ),
+        ),
+        _build_closure_checklist_entry(
             "social_adapter_gate",
             passed=bool(validation_gates.get("social_adapter_gate")),
             title="Social Adapter Gate",
@@ -4790,6 +5324,16 @@ def _build_validation_gate_checklist(
                 "Self-improvement evidence keeps proposal execution sandbox-only, approval-gated, and vitality-safe."
                 if validation_gates.get("self_improvement_sandbox_gate")
                 else "Self-improvement evidence is missing sandbox-only execution, approval gating, or vitality replenishment constraints."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "coding_agent_route_gate",
+            passed=bool(validation_gates.get("coding_agent_route_gate")),
+            title="Coding Agent Route Gate",
+            detail=(
+                "Coding-agent routing evidence records plan artifact, sandbox execution, and callback audit details."
+                if validation_gates.get("coding_agent_route_gate")
+                else "Coding-agent routing evidence is missing plan artifact, sandbox execution, or callback audit details."
             ),
         ),
         _build_closure_checklist_entry(
@@ -5385,6 +5929,7 @@ def _build_session_closure_summary(
         expected_schema=PERSONA_STATE_SMOKE_SCHEMA_VERSION,
         not_supplied_reason="persona_state_file_not_supplied",
     )
+    persona_225_summary = _build_persona_225_closure_summary(persona_state_payload)
     social_adapter_summary = _build_release_210_smoke_closure_summary(
         social_adapter_payload,
         expected_schema=SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION,
@@ -5583,6 +6128,11 @@ def _build_session_closure_summary(
         "autonomous_daemon_gate": bool(autonomy_daemon_summary.get("ok")),
         "vitality_governance_gate": bool(vitality_governance_summary.get("ok")),
         "persona_persistence_gate": bool(persona_persistence_summary.get("ok")),
+        "persona_seed_gate": bool(persona_225_summary.get("persona_seed_ok")),
+        "persona_growth_gate": bool(persona_225_summary.get("persona_growth_ok")),
+        "memory_immutability_gate": bool(
+            persona_225_summary.get("memory_immutability_ok")
+        ),
         "social_adapter_gate": bool(social_adapter_summary.get("ok")),
         "qq_official_gateway_gate": bool(qq_gateway_summary.get("ok")),
         "wecom_gateway_gate": bool(wecom_gateway_summary.get("ok")),
@@ -5663,6 +6213,7 @@ def _build_session_closure_summary(
         "autonomy_daemon_summary": autonomy_daemon_summary,
         "vitality_governance_summary": vitality_governance_summary,
         "persona_persistence_summary": persona_persistence_summary,
+        "persona_225_summary": persona_225_summary,
         "social_adapter_summary": social_adapter_summary,
         "qq_official_gateway_summary": qq_gateway_summary,
         "wecom_gateway_summary": wecom_gateway_summary,
@@ -7011,8 +7562,69 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vitality_smoke.add_argument("--output", choices=("json",), default="json")
 
+    persona_seed_setup = subparsers.add_parser("persona-seed-setup")
+    persona_seed_setup.add_argument("--persona-id", default="affective-main")
+    persona_seed_setup.add_argument("--seed-name", default="default")
+    persona_seed_setup.add_argument("--mood", default="steady")
+    persona_seed_setup.add_argument("--valence", type=float, default=0.0)
+    persona_seed_setup.add_argument("--arousal", type=float, default=0.0)
+    persona_seed_setup.add_argument("--curiosity", type=float, default=0.5)
+    persona_seed_setup.add_argument("--fatigue", type=float, default=0.0)
+    persona_seed_setup.add_argument("--social-openness", type=float, default=0.5)
+    persona_seed_setup.add_argument("--vitality-summary", default="attentive")
+    persona_seed_setup.add_argument("--relationship-style", default="warm")
+    persona_seed_setup.add_argument("--immutable-boundary", action="append", default=[])
+    persona_seed_setup.add_argument("--created-at", default=None)
+    persona_seed_setup.add_argument("--output", choices=("json",), default="json")
+
+    persona_growth_apply = subparsers.add_parser("persona-growth-apply")
+    persona_growth_apply.add_argument("--seed-file", required=True)
+    persona_growth_apply.add_argument("--persona-file", required=True)
+    persona_growth_apply.add_argument("--growth-file", required=True)
+    persona_growth_apply.add_argument("--event-id", required=True)
+    persona_growth_apply.add_argument(
+        "--source",
+        choices=tuple(sorted(PERSONA_GROWTH_RUNTIME_SOURCES)),
+        required=True,
+    )
+    persona_growth_apply.add_argument("--reason", required=True)
+    persona_growth_apply.add_argument("--recorded-at", required=True)
+    persona_growth_apply.add_argument("--principal-id", default=None)
+    persona_growth_apply.add_argument("--summary", default="")
+    persona_growth_apply.add_argument("--output", choices=("json",), default="json")
+
     persona_state_smoke = subparsers.add_parser("persona-state-smoke")
     persona_state_smoke.add_argument("--output", choices=("json",), default="json")
+
+    persona_state_inspect = subparsers.add_parser("persona-state-inspect")
+    persona_state_inspect.add_argument("--seed-file", required=True)
+    persona_state_inspect.add_argument("--persona-file", required=True)
+    persona_state_inspect.add_argument("--growth-file", required=True)
+    persona_state_inspect.add_argument("--rational-summary-only", action="store_true")
+    persona_state_inspect.add_argument("--output", choices=("json",), default="json")
+
+    persona_state_delete = subparsers.add_parser("persona-state-delete")
+    persona_state_delete.add_argument("--seed-file", required=True)
+    persona_state_delete.add_argument("--persona-file", required=True)
+    persona_state_delete.add_argument("--growth-file", required=True)
+    persona_state_delete.add_argument("--principal-id", action="append", default=[])
+    persona_state_delete.add_argument("--delete-all", action="store_true")
+    persona_state_delete.add_argument("--output", choices=("json",), default="json")
+
+    persona_state_export = subparsers.add_parser("persona-state-export")
+    persona_state_export.add_argument("--seed-file", required=True)
+    persona_state_export.add_argument("--persona-file", required=True)
+    persona_state_export.add_argument("--growth-file", required=True)
+    persona_state_export.add_argument("--expected-immutability-stamp", default="")
+    persona_state_export.add_argument("--redact-principal-id", action="append", default=[])
+    persona_state_export.add_argument("--output", choices=("json",), default="json")
+
+    persona_tamper_report = subparsers.add_parser("persona-tamper-report")
+    persona_tamper_report.add_argument("--seed-file", required=True)
+    persona_tamper_report.add_argument("--persona-file", required=True)
+    persona_tamper_report.add_argument("--growth-file", required=True)
+    persona_tamper_report.add_argument("--expected-immutability-stamp", required=True)
+    persona_tamper_report.add_argument("--output", choices=("json",), default="json")
 
     session_inspect = subparsers.add_parser("session-inspect")
     session_inspect.add_argument("--db", default=":memory:", help="SQLite database path")
@@ -7573,8 +8185,117 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
+    if args.command == "persona-seed-setup":
+        try:
+            payload = _build_persona_seed_setup_payload(
+                _build_persona_seed_config_from_args(args)
+            )
+        except ValueError as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "persona-growth-apply":
+        try:
+            seed_config, persona_state, growth_state = _load_persona_bundle_from_files(
+                seed_file=args.seed_file,
+                persona_file=args.persona_file,
+                growth_file=args.growth_file,
+            )
+            payload = build_persona_growth_apply(
+                seed_config=seed_config,
+                persona_state=persona_state,
+                growth_state=growth_state,
+                evidence=PersonaGrowthEvidence(
+                    event_id=args.event_id,
+                    source=args.source,
+                    reason=args.reason,
+                    recorded_at=args.recorded_at,
+                    principal_id=args.principal_id,
+                    summary=args.summary,
+                ),
+            )
+        except ValueError as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "persona-state-smoke":
         payload = build_persona_state_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "persona-state-inspect":
+        try:
+            seed_config, persona_state, growth_state = _load_persona_bundle_from_files(
+                seed_file=args.seed_file,
+                persona_file=args.persona_file,
+                growth_file=args.growth_file,
+            )
+            payload = build_persona_state_inspect(
+                seed_config=seed_config,
+                persona_state=persona_state,
+                growth_state=growth_state,
+                rational_summary_only=args.rational_summary_only,
+            )
+        except ValueError as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "persona-state-delete":
+        try:
+            seed_config, persona_state, growth_state = _load_persona_bundle_from_files(
+                seed_file=args.seed_file,
+                persona_file=args.persona_file,
+                growth_file=args.growth_file,
+            )
+            payload = build_persona_state_delete(
+                seed_config=seed_config,
+                persona_state=persona_state,
+                growth_state=growth_state,
+                principal_ids=args.principal_id,
+                delete_all=args.delete_all,
+            )
+        except ValueError as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "persona-state-export":
+        try:
+            seed_config, persona_state, growth_state = _load_persona_bundle_from_files(
+                seed_file=args.seed_file,
+                persona_file=args.persona_file,
+                growth_file=args.growth_file,
+            )
+            payload = build_persona_state_export(
+                seed_config=seed_config,
+                persona_state=persona_state,
+                growth_state=growth_state,
+                redact_principal_ids=args.redact_principal_id,
+                expected_immutability_stamp=args.expected_immutability_stamp or None,
+            )
+        except ValueError as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "persona-tamper-report":
+        try:
+            seed_config, persona_state, growth_state = _load_persona_bundle_from_files(
+                seed_file=args.seed_file,
+                persona_file=args.persona_file,
+                growth_file=args.growth_file,
+            )
+            payload = build_persona_tamper_report(
+                seed_config=seed_config,
+                persona_state=persona_state,
+                growth_state=growth_state,
+                expected_immutability_stamp=args.expected_immutability_stamp,
+            )
+        except ValueError as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
     if args.command == "live-event-smoke":
