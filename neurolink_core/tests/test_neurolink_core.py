@@ -614,6 +614,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "persona_persistence_gate",
                 "social_adapter_gate",
                 "qq_official_gateway_gate",
+                "wecom_gateway_gate",
+                "openclaw_gateway_gate",
                 "approval_over_social_gate",
                 "self_improvement_sandbox_gate",
                 "multimodal_normalization_gate",
@@ -658,6 +660,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "persona_persistence_gate",
                 "social_adapter_gate",
                 "qq_official_gateway_gate",
+                "wecom_gateway_gate",
+                "openclaw_gateway_gate",
                 "approval_over_social_gate",
                 "self_improvement_sandbox_gate",
                 "multimodal_normalization_gate",
@@ -1583,8 +1587,18 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["closure_gates"]["tool_manifest_supplied"])
         self.assertTrue(payload["closure_gates"]["workflow_catalog_consistent"])
+        self.assertTrue(payload["closure_gates"]["skill_registry_supplied"])
+        self.assertTrue(payload["closure_gates"]["skill_registry_contract_supported"])
+        self.assertTrue(payload["closure_gates"]["skill_registry_records_canonical_entry"])
         self.assertTrue(payload["closure_gates"]["mcp_descriptor_read_only"])
+        self.assertTrue(payload["closure_gates"]["mcp_read_only_execute_supported"])
+        self.assertTrue(payload["closure_gates"]["mcp_governance_descriptor_supported"])
+        self.assertTrue(payload["closure_gates"]["coding_agent_self_improvement_routed"])
         self.assertTrue(payload["closure_gates"]["hallucinated_tool_rejected_by_available_manifest"])
+        self.assertEqual(payload["evidence_summary"]["skill_registry_entry_count"], 2)
+        self.assertEqual(payload["evidence_summary"]["mcp_read_only_probe_tool"], "system_state_sync")
+        self.assertEqual(payload["evidence_summary"]["mcp_governance_probe_tool"], "system_restart_app")
+        self.assertEqual(payload["evidence_summary"]["coding_agent_probe_runner"], "copilot")
 
     def test_cli_closure_summary_can_pass_agent_excellence_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2152,6 +2166,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         adapter = NeuroCliToolAdapter(runner=runner)
         with tempfile.TemporaryDirectory() as tmpdir:
             live_event_file = Path(tmpdir) / "live-event-smoke.json"
+            coding_agent_route_file = Path(tmpdir) / "coding-agent-route.json"
             live_out = io.StringIO()
             with mock.patch("neurolink_core.cli.NeuroCliToolAdapter", return_value=adapter):
                 with redirect_stdout(live_out):
@@ -2167,6 +2182,26 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         ]
                     )
             live_event_file.write_text(live_out.getvalue(), encoding="utf-8")
+            coding_agent_route_out = io.StringIO()
+            with redirect_stdout(coding_agent_route_out):
+                coding_agent_route_code = core_cli_main(
+                    [
+                        "coding-agent-self-improvement-route",
+                        "--runner",
+                        "copilot",
+                        "--summary",
+                        "Repair deterministic regression in sandbox",
+                        "--decision",
+                        "approve",
+                        "--tests-passed",
+                        "--lint-passed",
+                        "--smoke-passed",
+                        "--evidence-ref=pytest.txt",
+                    ]
+                )
+            coding_agent_route_file.write_text(
+                coding_agent_route_out.getvalue(), encoding="utf-8"
+            )
 
             e2e_out = io.StringIO()
             with redirect_stdout(e2e_out):
@@ -2175,10 +2210,13 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         "real-scene-e2e-smoke",
                         "--live-event-smoke-file",
                         str(live_event_file),
+                        "--coding-agent-route-file",
+                        str(coding_agent_route_file),
                     ]
                 )
 
         self.assertEqual(live_code, 0)
+        self.assertEqual(coding_agent_route_code, 0)
         self.assertEqual(e2e_code, 0)
         payload = json.loads(e2e_out.getvalue())
         self.assertEqual(payload["schema_version"], "1.2.7-real-scene-e2e-smoke-v1")
@@ -2186,6 +2224,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["closure_gates"]["live_event_source_real"])
         self.assertTrue(payload["closure_gates"]["real_tool_execution_succeeded"])
         self.assertTrue(payload["closure_gates"]["state_sync_tool_used"])
+        self.assertTrue(payload["closure_gates"]["coding_agent_route_valid_if_supplied"])
+        self.assertTrue(payload["closure_gates"]["coding_agent_callback_audit_recorded_if_supplied"])
+        self.assertTrue(payload["closure_gates"]["coding_agent_sandbox_recorded_if_supplied"])
+        self.assertEqual(payload["evidence_summary"]["coding_agent_runner"], "copilot")
 
     def test_cli_closure_summary_can_pass_real_scene_e2e_gate(self) -> None:
         def runner(argv: list[str], timeout_seconds: int) -> CommandExecutionResult:
@@ -2285,6 +2327,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             db_path = str(Path(tmpdir) / "core.db")
             live_event_file = Path(tmpdir) / "live-event-smoke.json"
             e2e_file = Path(tmpdir) / "real-scene-e2e.json"
+            coding_agent_route_file = Path(tmpdir) / "coding-agent-route.json"
 
             run_no_model_dry_run(db_path, session_id="closure-summary-real-scene-001")
             live_out = io.StringIO()
@@ -2303,6 +2346,27 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     )
             live_event_file.write_text(live_out.getvalue(), encoding="utf-8")
 
+            coding_agent_route_out = io.StringIO()
+            with redirect_stdout(coding_agent_route_out):
+                coding_agent_route_code = core_cli_main(
+                    [
+                        "coding-agent-self-improvement-route",
+                        "--runner",
+                        "copilot",
+                        "--summary",
+                        "Repair deterministic regression in sandbox",
+                        "--decision",
+                        "approve",
+                        "--tests-passed",
+                        "--lint-passed",
+                        "--smoke-passed",
+                        "--evidence-ref=pytest.txt",
+                    ]
+                )
+            coding_agent_route_file.write_text(
+                coding_agent_route_out.getvalue(), encoding="utf-8"
+            )
+
             e2e_out = io.StringIO()
             with redirect_stdout(e2e_out):
                 e2e_code = core_cli_main(
@@ -2310,6 +2374,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         "real-scene-e2e-smoke",
                         "--live-event-smoke-file",
                         str(live_event_file),
+                        "--coding-agent-route-file",
+                        str(coding_agent_route_file),
                     ]
                 )
             e2e_file.write_text(e2e_out.getvalue(), encoding="utf-8")
@@ -2325,15 +2391,30 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         "closure-summary-real-scene-001",
                         "--real-scene-e2e-file",
                         str(e2e_file),
+                        "--coding-agent-route-file",
+                        str(coding_agent_route_file),
                     ]
                 )
 
         self.assertEqual(live_code, 0)
+        self.assertEqual(coding_agent_route_code, 0)
         self.assertEqual(e2e_code, 0)
         self.assertEqual(summary_code, 0)
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["validation_gates"]["real_scene_e2e_gate"])
+        self.assertTrue(payload["validation_gates"]["coding_agent_route_gate"])
         self.assertTrue(payload["real_scene_e2e_summary"]["ok"])
+        self.assertTrue(payload["coding_agent_route_summary"]["ok"])
+        self.assertTrue(
+            payload["coding_agent_route_summary"]["closure_gates"][
+                "plan_artifact_contract_supported"
+            ]
+        )
+        self.assertTrue(
+            payload["coding_agent_route_summary"]["closure_gates"][
+                "plan_steps_recorded"
+            ]
+        )
 
     def test_cli_closure_summary_includes_memory_governance_bundle_for_local_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2586,6 +2667,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             openclaw_gateway_file = Path(tmpdir) / "openclaw-gateway-closure.json"
             approval_social_file = Path(tmpdir) / "approval-social.json"
             self_improvement_file = Path(tmpdir) / "self-improvement.json"
+            coding_agent_route_file = Path(tmpdir) / "coding-agent-route.json"
 
             run_payload = run_no_model_dry_run(
                 db_path,
@@ -2947,6 +3029,26 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             self_improvement_file.write_text(
                 self_improvement_out.getvalue(), encoding="utf-8"
             )
+            coding_agent_route_out = io.StringIO()
+            with redirect_stdout(coding_agent_route_out):
+                coding_agent_route_code = core_cli_main(
+                    [
+                        "coding-agent-self-improvement-route",
+                        "--runner",
+                        "copilot",
+                        "--summary",
+                        "Repair deterministic regression in sandbox",
+                        "--decision",
+                        "approve",
+                        "--tests-passed",
+                        "--lint-passed",
+                        "--smoke-passed",
+                        "--evidence-ref=pytest.txt",
+                    ]
+                )
+            coding_agent_route_file.write_text(
+                coding_agent_route_out.getvalue(), encoding="utf-8"
+            )
             relay_failure_file.write_text(
                 json.dumps(
                     {
@@ -3097,6 +3199,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         str(approval_social_file),
                         "--self-improvement-file",
                         str(self_improvement_file),
+                        "--coding-agent-route-file",
+                        str(coding_agent_route_file),
                     ]
                 )
 
@@ -3119,12 +3223,13 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(openclaw_gateway_code, 0)
         self.assertEqual(approval_social_code, 0)
         self.assertEqual(self_improvement_code, 0)
+        self.assertEqual(coding_agent_route_code, 0)
         self.assertEqual(summary_code, 0)
         self.assertEqual(run_payload["execution_evidence"]["audit_record"]["payload"]["session_context"]["federation_route_evidence"]["route_decision"]["route_kind"], "delegated_core")
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 29)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 30)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
         self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
@@ -3140,6 +3245,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["validation_gates"]["openclaw_gateway_gate"])
         self.assertTrue(payload["validation_gates"]["approval_over_social_gate"])
         self.assertTrue(payload["validation_gates"]["self_improvement_sandbox_gate"])
+        self.assertTrue(payload["validation_gates"]["coding_agent_route_gate"])
         self.assertTrue(payload["validation_gates"]["agent_excellence_gate"])
         self.assertTrue(payload["validation_gates"]["release_rollback_hardening_gate"])
         self.assertTrue(payload["validation_gates"]["signing_provenance_gate"])
@@ -4934,6 +5040,183 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["closure_gates"]["sandbox_mode_isolated"])
         self.assertTrue(payload["closure_gates"]["vitality_replenishment_after_verified_success"])
+
+    def test_cli_coding_agent_descriptor_reports_governed_runner_contract(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "coding-agent-descriptor",
+                "--runner",
+                "copilot",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.4-coding-agent-descriptor-v1")
+        self.assertEqual(payload["runner_name"], "copilot")
+        self.assertTrue(payload["approval_required"])
+        self.assertTrue(payload["safety_boundaries"]["sandbox_only_execution"])
+        self.assertTrue(payload["safety_boundaries"]["autonomous_commit_push_forbidden"])
+
+    def test_cli_coding_agent_self_improvement_route_reports_approved_sandbox_review(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "coding-agent-self-improvement-route",
+                "--runner",
+                "copilot",
+                "--summary",
+                "Repair deterministic regression in sandbox",
+                "--decision",
+                "approve",
+                "--tests-passed",
+                "--lint-passed",
+                "--smoke-passed",
+                "--evidence-ref=pytest.txt",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.4-coding-agent-self-improvement-route-v1")
+        self.assertEqual(payload["runner_name"], "copilot")
+        self.assertEqual(payload["status"], "approved")
+        self.assertTrue(payload["closure_gates"]["review_routing_required"])
+        self.assertTrue(payload["closure_gates"]["sandbox_only_execution"])
+        self.assertTrue(payload["closure_gates"]["sandbox_execution_recorded"])
+        self.assertTrue(payload["closure_gates"]["plan_artifact_recorded"])
+        self.assertTrue(payload["closure_gates"]["plan_artifact_contract_supported"])
+        self.assertTrue(payload["closure_gates"]["plan_steps_recorded"])
+        self.assertTrue(payload["closure_gates"]["callback_audit_recorded"])
+        self.assertTrue(payload["closure_gates"]["callback_payload_recorded"])
+        self.assertEqual(
+            payload["plan_artifact"]["schema_version"],
+            "2.2.4-coding-agent-sandbox-plan-v1",
+        )
+        self.assertEqual(payload["plan_artifact"]["artifact_kind"], "coding_agent_plan")
+        self.assertEqual(len(payload["plan_artifact"]["plan_steps"]), 3)
+        self.assertEqual(
+            payload["plan_artifact"]["callback_contract"]["callback_name"],
+            "self_improvement_review_complete",
+        )
+        self.assertEqual(
+            payload["sandbox_execution_record"]["plan_artifact"]["artifact_id"],
+            payload["plan_artifact"]["artifact_id"],
+        )
+        self.assertEqual(payload["sandbox_execution_record"]["status"], "recorded")
+        self.assertEqual(payload["callback_audit_record"]["status"], "recorded")
+        self.assertEqual(
+            payload["callback_audit_record"]["callback_payload"]["plan_artifact_id"],
+            payload["plan_artifact"]["artifact_id"],
+        )
+        self.assertTrue(payload["evidence_summary"]["verified_success"])
+
+    def test_cli_release_224_closure_smoke_reports_full_green_summary(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "release-2.2.4-closure-smoke",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.4-release-closure-smoke-v1")
+        self.assertEqual(payload["command"], "release-2.2.4-closure-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_summary"]["ok"])
+        self.assertTrue(payload["closure_summary"]["validation_gate_summary"]["ok"])
+        self.assertEqual(payload["closure_summary"]["validation_gate_summary"]["passed_count"], 30)
+        self.assertEqual(payload["closure_summary"]["validation_gate_summary"]["failed_gate_ids"], [])
+        self.assertTrue(payload["closure_summary"]["validation_gates"]["closure_summary_gate"])
+        self.assertTrue(payload["closure_summary"]["validation_gates"]["coding_agent_route_gate"])
+        self.assertTrue(payload["closure_summary"]["validation_gates"]["real_scene_e2e_gate"])
+        self.assertTrue(
+            payload["closure_summary"]["coding_agent_route_summary"]["closure_gates"][
+                "plan_artifact_contract_supported"
+            ]
+        )
+        self.assertTrue(
+            payload["closure_summary"]["coding_agent_route_summary"]["closure_gates"][
+                "plan_steps_recorded"
+            ]
+        )
+
+    def test_cli_release_224_closure_smoke_can_export_evidence_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-224-evidence"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main([
+                    "release-2.2.4-closure-smoke",
+                    "--evidence-dir",
+                    str(evidence_dir),
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["evidence_dir"], str(evidence_dir))
+            self.assertGreaterEqual(payload["evidence_summary"]["exported_file_count"], 2)
+            self.assertTrue(evidence_dir.is_dir())
+            self.assertTrue((evidence_dir / "closure-summary.json").is_file())
+            self.assertTrue((evidence_dir / "coding-agent-route.json").is_file())
+            self.assertIn("closure_summary", payload["evidence_manifest"])
+            self.assertIn("coding_agent_route", payload["evidence_manifest"])
+
+    def test_cli_tool_threat_descriptor_reports_high_risk_argument_mix(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "tool-threat-descriptor",
+                "--tool",
+                "system_restart_app",
+                "--arg=--lease-id=lease-001",
+                "--arg=--gateway-url=ws://127.0.0.1:8811/openclaw",
+                "--arg=--access-token-env-var=WECOM_BOT_TOKEN",
+                "--arg=--note=status && echo risky",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["tool_name"], "system_restart_app")
+        self.assertEqual(payload["overall_severity"], "high")
+        self.assertTrue(payload["requires_operator_approval"])
+        self.assertTrue(payload["network_target_arguments_present"])
+        self.assertTrue(payload["credential_arguments_present"])
+        self.assertTrue(payload["shell_metachar_arguments_present"])
+
+    def test_cli_mcp_read_only_execute_reports_executed_tool_payload(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "mcp-read-only-execute",
+                "--tool",
+                "system_query_device",
+                "--arg=--node=unit-01",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["command"], "mcp-read-only-execute")
+        self.assertEqual(payload["tool_name"], "system_query_device")
+        self.assertEqual(payload["mcp_descriptor"]["bridge_mode"], "core_governed_read_only_execution")
+        self.assertTrue(payload["policy_decision"]["allowed"])
+        self.assertEqual(payload["tool_result"]["status"], "ok")
+
+    def test_cli_mcp_tool_governance_descriptor_reports_governed_restart_contract(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "mcp-tool-governance-descriptor",
+                "--tool",
+                "system_restart_app",
+                "--arg=--lease-id=lease-001",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["tool_name"], "system_restart_app")
+        self.assertEqual(payload["governance_path"], "core_approval_required_proposal")
+        self.assertTrue(payload["execution_requirements"]["operator_approval_required"])
+        self.assertTrue(payload["execution_requirements"]["approval_proposal_allowed"])
 
     def test_cli_agent_run_routes_user_query_to_apps_tool(self) -> None:
         out = io.StringIO()

@@ -1,6 +1,6 @@
 # NeuroLink AI Core 中文运行手册
 
-本文档说明如何在已提升的 release-2.2.3 social-gateway baseline 之上启动、验证和收尾 `neurolink_core`。这个基线是在已闭环的 release-2.2.2 QQ/social-adapter baseline 之上继续加入 direct WeCom enterprise ingress、bounded OpenClaw gateway closure，以及 `wechat_ilink` 和 `qq_openclaw` hosted compatibility surface 后形成的。它也继续覆盖已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线、已闭环的 release-1.2.7 HLD completion bundle，以及仍作为 release evidence 继承的 release-1.2.4 到 release-2.2.2 runtime/governance surface。canonical release identity 现已提升到 `2.2.3`，release-2.2.3 promotion bundle 已通过，并新增了独立的 WeCom gateway gate 与 OpenClaw gateway gate。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core release evidence 的开发者和操作者。面向日常启动和使用的任务式入口请先阅读 `docs/project/AI_CORE_USER_GUIDE.md`；当前实现计划、promotion 记录与关版日志见 `docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md`、`docs/project/RELEASE_2.2.3_PROMOTION_CHECKLIST.md` 与 `PROJECT_PROGRESS.md`。
+本文档说明如何在已提升的 release-2.2.4 Tool/Skill/MCP 与 coding-agent governance baseline 之上启动、验证和收尾 `neurolink_core`。这个基线是在已闭环的 release-2.2.3 social-gateway baseline 之上继续加入 governed MCP read-only execution、per-tool governance descriptor、coding-agent sandbox route evidence，以及可直接导出 release evidence bundle 的 packaged closure-smoke 流程后形成的。它也继续覆盖已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线、已闭环的 release-1.2.7 HLD completion bundle，以及仍作为 release evidence 继承的 release-1.2.4 到 release-2.2.3 runtime/governance surface。canonical release identity 现已提升到 `2.2.4`，release-2.2.4 promotion bundle 已通过，并新增了独立的 coding-agent route gate 与扩展后的 30-gate closure matrix。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core release evidence 的开发者和操作者。面向日常启动和使用的任务式入口请先阅读 `docs/project/AI_CORE_USER_GUIDE.md`；当前实现路线、promotion 记录与关版日志见 `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`、`docs/project/RELEASE_2.2.4_PROMOTION_CHECKLIST.md` 与 `PROJECT_PROGRESS.md`。
 
 ## 1. Core 运行形态
 
@@ -893,3 +893,35 @@ evidence 流程，并把新增的两个独立 gate 接入最后一次 `closure-s
 21. 以 `closure-summary.validation_gate_summary.failed_gate_ids=[]` 作为
   release-1.2.7 bundle 级别的最终证明，确认这两个独立 gate 已经在最终
   closure surface 中显式归档。
+
+对于已提升的 release-2.2.4，最终 closure 优先使用已经打包好的
+evidence-bundle 流程，而不是手工重新拼接最终 closure 命令：
+
+22. 先运行带显式归档目录的 packaged closure smoke：
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+source /home/emb/project/zephyrproject/.venv/bin/activate
+PYTHONPATH=. python -m neurolink_core.cli release-2.2.4-closure-smoke \
+  --evidence-dir smoke-evidence/release-2.2.4-promotion-<timestamp>
+```
+
+23. 将该命令的 stdout 视为 promotion summary，并把导出的 evidence
+  目录归档为 canonical release-2.2.4 bundle。当前命令至少会写出：
+
+   1. `closure-summary.json`
+   2. `coding-agent-route.json`
+   3. `agent-excellence-smoke.json`
+   4. `real-scene-e2e.json`
+   5. `documentation-closure.json`
+
+24. 在提升 release identity 前，确认 stdout summary 中
+  `ok=true`、`closure_summary.validation_gate_summary.ok=true`、
+  `closure_summary.validation_gate_summary.passed_count=30`，且
+  `closure_summary.validation_gate_summary.failed_gate_ids=[]`。
+
+25. 只有在 packaged bundle 已全绿后，才把导出的
+  `closure-summary.json` 作为主 promotion artifact，并同步更新
+  `neuro_cli/src/neuro_cli.py`、`neuro_cli/src/neuro_workflow_catalog.py`
+  与 `subprojects/neuro_unit_app/src/main.c` 等 canonical release identity
+  文件。

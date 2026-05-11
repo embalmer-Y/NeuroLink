@@ -8,12 +8,15 @@ from typing import Any
 
 from neurolink_core.cli import main as core_cli_main
 from neurolink_core.policy import ReadOnlyToolPolicy
+from neurolink_core.policy import ThreatCategory
 from neurolink_core.tools import (
     ACTIVATION_HEALTH_SCHEMA_VERSION,
+    CODING_AGENT_DESCRIPTOR_SCHEMA_VERSION,
     CommandExecutionResult,
     MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION,
     NeuroCliToolAdapter,
     SKILL_DESCRIPTOR_SCHEMA_VERSION,
+    SKILL_REGISTRY_SCHEMA_VERSION,
     STATE_SYNC_SCHEMA_VERSION,
     StateSyncSnapshot,
     StateSyncSurface,
@@ -22,10 +25,13 @@ from neurolink_core.tools import (
     FakeUnitToolAdapter,
     SideEffectLevel,
     ToolContract,
+    load_coding_agent_runner_descriptor_payload,
     load_mcp_bridge_descriptor_payload,
     load_neuro_cli_skill_descriptor_payload,
+    load_skill_descriptor_registry_payload,
     validate_tool_workflow_catalog_consistency,
 )
+from neurolink_core.policy import classify_tool_contract_threats
 
 
 class TestFakeUnitToolAdapterContract(unittest.TestCase):
@@ -80,6 +86,33 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
             )
         )
 
+    def test_coding_agent_descriptor_payload_exposes_sandbox_only_runner_contract(self) -> None:
+        payload = load_coding_agent_runner_descriptor_payload("copilot")
+
+        self.assertEqual(payload["schema_version"], CODING_AGENT_DESCRIPTOR_SCHEMA_VERSION)
+        self.assertEqual(payload["runner_name"], "copilot")
+        self.assertTrue(payload["disabled_by_default"])
+        self.assertTrue(payload["approval_required"])
+        self.assertTrue(payload["sandbox_required"])
+        self.assertFalse(payload["can_apply_changes"])
+        self.assertIn("GITHUB_COPILOT_CLI_PATH", payload["masked_env_vars"])
+        self.assertIn("git_push", payload["prohibited_actions"])
+        self.assertTrue(payload["safety_boundaries"]["self_improvement_routing_required"])
+        self.assertTrue(payload["safety_boundaries"]["direct_shell_execution_forbidden"])
+
+    def test_skill_registry_payload_reports_canonical_and_adapter_entries(self) -> None:
+        payload = load_skill_descriptor_registry_payload()
+
+        self.assertEqual(payload["schema_version"], SKILL_REGISTRY_SCHEMA_VERSION)
+        self.assertEqual(payload["entry_count"], 2)
+        self.assertEqual(payload["canonical_entry_count"], 1)
+        skill_ids = set(payload["skill_ids"])
+        self.assertIn("neuro-cli:canonical_package_skill", skill_ids)
+        self.assertIn("neuro-cli:vscode_discovery_adapter", skill_ids)
+        canonical_entries = [entry for entry in payload["entries"] if entry["canonical"]]
+        self.assertEqual(len(canonical_entries), 1)
+        self.assertEqual(canonical_entries[0]["source_kind"], "canonical_package_skill")
+
     def test_read_only_policy_allows_read_only_contracts(self) -> None:
         contract = ToolContract(
             tool_name="system_state_sync",
@@ -119,6 +152,45 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertTrue(decision.approval_required)
         self.assertEqual(decision.reason, "approval_required_tool_blocked_in_no_model_slice")
+
+    def test_tool_threat_assessment_flags_approval_and_lease_scope(self) -> None:
+        contract = ToolContract(
+            tool_name="system_restart_app",
+            description="restart app",
+            side_effect_level=SideEffectLevel.APPROVAL_REQUIRED,
+            approval_required=True,
+            required_resources=("app_control_lease",),
+        )
+
+        assessment = classify_tool_contract_threats(contract)
+
+        self.assertEqual(assessment.overall_severity.value, "medium")
+        categories = {item.category for item in assessment.findings}
+        self.assertIn(ThreatCategory.STATE_MUTATION, categories)
+        self.assertIn(ThreatCategory.APPROVAL_GATE, categories)
+        self.assertIn(ThreatCategory.LEASE_SCOPE, categories)
+
+    def test_tool_threat_assessment_flags_network_credential_and_shell_arguments(self) -> None:
+        contract = ToolContract(
+            tool_name="openclaw_gateway_probe",
+            description="probe gateway",
+            side_effect_level=SideEffectLevel.READ_ONLY,
+        )
+
+        assessment = classify_tool_contract_threats(
+            contract,
+            {
+                "--gateway-url": "ws://127.0.0.1:8811/openclaw",
+                "--access-token-env-var": "WECOM_BOT_TOKEN",
+                "--note": "status && cat /etc/passwd",
+            },
+        )
+
+        self.assertEqual(assessment.overall_severity.value, "high")
+        categories = {item.category for item in assessment.findings}
+        self.assertIn(ThreatCategory.NETWORK_TARGET, categories)
+        self.assertIn(ThreatCategory.CREDENTIAL_REFERENCE, categories)
+        self.assertIn(ThreatCategory.SHELL_METACHAR, categories)
 
     def test_manifest_exposes_state_sync_contract(self) -> None:
         adapter = FakeUnitToolAdapter()
@@ -371,6 +443,19 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
         self.assertEqual(payload["name"], "neuro-cli")
         self.assertTrue(payload["workflow_plan_required"])
 
+    def test_cli_skill_registry_outputs_governed_multi_source_contracts(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["skill-registry"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["schema_version"], SKILL_REGISTRY_SCHEMA_VERSION)
+        self.assertEqual(payload["entry_count"], 2)
+        self.assertEqual(payload["canonical_entry_count"], 1)
+
     def test_cli_mcp_descriptor_outputs_bounded_read_only_contract(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
@@ -407,6 +492,63 @@ class TestFakeUnitToolAdapterContract(unittest.TestCase):
             payload["safety_boundaries"]["approval_required_tool_proposals_allowed"]
         )
         self.assertFalse(payload["safety_boundaries"]["external_mcp_connection_enabled"])
+
+    def test_cli_mcp_read_only_execute_runs_state_sync_through_governed_path(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "mcp-read-only-execute",
+                "--tool",
+                "system_state_sync",
+                "--arg=--node=unit-01",
+                "--arg=event_ids=evt-001",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema_version"], "2.2.4-mcp-read-only-execution-v1")
+        self.assertEqual(payload["tool_name"], "system_state_sync")
+        self.assertEqual(payload["mcp_descriptor"]["bridge_mode"], "core_governed_read_only_execution")
+        self.assertEqual(payload["tool_result"]["status"], "ok")
+        self.assertTrue(payload["policy_decision"]["allowed"])
+
+    def test_cli_mcp_read_only_execute_rejects_approval_required_tool(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "mcp-read-only-execute",
+                "--tool",
+                "system_restart_app",
+                "--arg=--app=demo",
+            ])
+
+        self.assertEqual(code, 2)
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "tool_policy_denied")
+        self.assertEqual(payload["policy_decision"]["reason"], "approval_required_tool_blocked_in_no_model_slice")
+
+    def test_cli_mcp_tool_governance_descriptor_reports_proposal_only_path(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main([
+                "mcp-tool-governance-descriptor",
+                "--tool",
+                "system_restart_app",
+                "--arg=--lease-id=lease-001",
+                "--arg=--gateway-url=ws://127.0.0.1:8811/openclaw",
+                "--arg=--access-token-env-var=WECOM_BOT_TOKEN",
+                "--arg=--note=status && echo risky",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["schema_version"], "2.2.4-mcp-tool-governance-descriptor-v1")
+        self.assertEqual(payload["governance_path"], "core_approval_required_proposal")
+        self.assertTrue(payload["execution_requirements"]["approval_proposal_allowed"])
+        self.assertEqual(payload["threat_assessment"]["overall_severity"], "high")
 
     def test_workflow_catalog_consistency_treats_state_sync_as_internal_core_tool(self) -> None:
         contract = FakeUnitToolAdapter().describe_tool("system_state_sync")

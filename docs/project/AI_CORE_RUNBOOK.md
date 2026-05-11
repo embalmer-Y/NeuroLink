@@ -1,25 +1,25 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` on top of the
-promoted release-2.2.3 social-gateway baseline, which extends the closed
-release-2.2.2 QQ/social-adapter baseline with direct WeCom enterprise ingress,
-bounded OpenClaw gateway closure, and hosted compatibility surfaces for
-`wechat_ilink` and `qq_openclaw`. It still covers the inherited closed
-release-1.2.6 federation/relay/Agent-platform baseline, the closed
-release-1.2.7 HLD-completion bundle, and the inherited release-1.2.4 through
-release-2.2.2 runtime/governance surfaces that remain part of release
-evidence. Release identity is now promoted to `2.2.3` after the release-2.2.3
-promotion bundle passed with the dedicated WeCom and OpenClaw gateway gates.
+promoted release-2.2.4 Tool/Skill/MCP and coding-agent governance baseline,
+which extends the closed release-2.2.3 social-gateway baseline with governed
+MCP read-only execution, per-tool governance descriptors, coding-agent sandbox
+route evidence, and a packaged closure-smoke export flow. It still covers the
+inherited closed release-1.2.6 federation/relay/Agent-platform baseline, the
+closed release-1.2.7 HLD-completion bundle, and the inherited release-1.2.4
+through release-2.2.3 runtime/governance surfaces that remain part of release
+evidence. Release identity is now promoted to `2.2.4` after the release-2.2.4
+promotion bundle passed with the dedicated coding-agent route gate and the
+expanded 30-gate closure matrix.
 This runbook is written for operators and developers who need to run Core
 locally, check provider and memory readiness, execute the Core-owned
 build/deploy gates, or close bounded live service and AI Core release evidence.
 
 For a task-oriented startup and daily-use guide, start with
-`docs/project/AI_CORE_USER_GUIDE.md`. For the implementation plan and promotion
-record that define the current baseline, use
-`docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md`,
-`docs/project/RELEASE_2.2.3_PROMOTION_CHECKLIST.md`, and
-`PROJECT_PROGRESS.md`.
+`docs/project/AI_CORE_USER_GUIDE.md`. For the implementation roadmap and
+promotion record that define the current baseline, use
+`docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`,
+`docs/project/RELEASE_2.2.4_PROMOTION_CHECKLIST.md`, and `PROJECT_PROGRESS.md`.
 
 ## 1. Runtime Shape
 
@@ -989,3 +989,37 @@ add the newer independent evidence payloads before running the last
 21. treat `closure-summary.validation_gate_summary.failed_gate_ids=[]` as the
   release-1.2.7 bundle-level proof that the two new independent gates are no
   longer implicit inside lower-level relay, activate, or rollback evidence.
+
+For the promoted release-2.2.4 closure path, prefer the packaged evidence-bundle
+workflow instead of manually rebuilding the final closure command line:
+
+22. run the packaged closure smoke with an explicit archive directory:
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+source /home/emb/project/zephyrproject/.venv/bin/activate
+PYTHONPATH=. python -m neurolink_core.cli release-2.2.4-closure-smoke \
+  --evidence-dir smoke-evidence/release-2.2.4-promotion-<timestamp>
+```
+
+23. treat the command stdout as the promotion summary, and archive the exported
+  evidence directory as the canonical release-2.2.4 bundle. The command now
+  writes the full structured bundle, including at minimum:
+
+   1. `closure-summary.json`
+   2. `coding-agent-route.json`
+   3. `agent-excellence-smoke.json`
+   4. `real-scene-e2e.json`
+   5. `documentation-closure.json`
+
+24. verify the stdout summary reports `ok=true`,
+  `closure_summary.validation_gate_summary.ok=true`,
+  `closure_summary.validation_gate_summary.passed_count=30`, and
+  `closure_summary.validation_gate_summary.failed_gate_ids=[]` before release
+  identity promotion.
+
+25. after the packaged bundle is green, treat the exported
+  `closure-summary.json` as the primary promotion artifact and only then update
+  canonical release identity files such as `neuro_cli/src/neuro_cli.py`,
+  `neuro_cli/src/neuro_workflow_catalog.py`, and
+  `subprojects/neuro_unit_app/src/main.c`.

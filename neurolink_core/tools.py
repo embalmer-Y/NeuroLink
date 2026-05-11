@@ -12,12 +12,16 @@ from pathlib import Path
 from typing import Any, cast
 
 from .common import new_id
+from .policy import ReadOnlyToolPolicy
 from .policy import SideEffectLevel
 
 
 TOOL_MANIFEST_SCHEMA_VERSION = "1.2.0-tool-manifest-v1"
 SKILL_DESCRIPTOR_SCHEMA_VERSION = "1.2.5-skill-descriptor-v1"
+SKILL_REGISTRY_SCHEMA_VERSION = "2.2.4-skill-registry-v1"
 MCP_BRIDGE_DESCRIPTOR_SCHEMA_VERSION = "1.2.6-mcp-bridge-descriptor-v2"
+MCP_TOOL_GOVERNANCE_DESCRIPTOR_SCHEMA_VERSION = "2.2.4-mcp-tool-governance-descriptor-v1"
+CODING_AGENT_DESCRIPTOR_SCHEMA_VERSION = "2.2.4-coding-agent-descriptor-v1"
 STATE_SYNC_SCHEMA_VERSION = "1.2.0-state-sync-v1"
 ACTIVATION_HEALTH_SCHEMA_VERSION = "1.2.3-activation-health-v1"
 APP_CONTROL_TOOL_ACTIONS = {
@@ -108,8 +112,103 @@ class SkillDescriptor:
         }
 
 
+@dataclass(frozen=True)
+class SkillRegistryEntry:
+    skill_id: str
+    source_kind: str
+    canonical: bool
+    descriptor: SkillDescriptor
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.descriptor.to_dict()
+        payload.update(
+            {
+                "skill_id": self.skill_id,
+                "source_kind": self.source_kind,
+                "canonical": self.canonical,
+            }
+        )
+        return payload
+
+
+@dataclass(frozen=True)
+class SkillDescriptorRegistry:
+    entries: tuple[SkillRegistryEntry, ...]
+    schema_version: str = SKILL_REGISTRY_SCHEMA_VERSION
+
+    def get_entry(self, skill_id: str) -> SkillRegistryEntry | None:
+        for entry in self.entries:
+            if entry.skill_id == skill_id:
+                return entry
+        return None
+
+    def canonical_entries(self) -> tuple[SkillRegistryEntry, ...]:
+        return tuple(entry for entry in self.entries if entry.canonical)
+
+    def to_dict(self) -> dict[str, Any]:
+        canonical_entries = self.canonical_entries()
+        return {
+            "ok": True,
+            "status": "ok",
+            "schema_version": self.schema_version,
+            "entry_count": len(self.entries),
+            "canonical_entry_count": len(canonical_entries),
+            "skill_ids": [entry.skill_id for entry in self.entries],
+            "canonical_skill_ids": [entry.skill_id for entry in canonical_entries],
+            "entries": [entry.to_dict() for entry in self.entries],
+        }
+
+
+@dataclass(frozen=True)
+class CodingAgentRunnerDescriptor:
+    runner_name: str
+    display_name: str
+    invocation_mode: str
+    disabled_by_default: bool
+    approval_required: bool
+    sandbox_required: bool
+    direct_execution_forbidden: bool
+    can_apply_changes: bool
+    release_target_promotion_blocked: bool
+    masked_env_vars: tuple[str, ...]
+    prohibited_actions: tuple[str, ...]
+    allowed_operations: tuple[str, ...]
+    evidence_requirements: tuple[str, ...]
+    safety_boundaries: dict[str, Any]
+    schema_version: str = CODING_AGENT_DESCRIPTOR_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "status": "ok",
+            "schema_version": self.schema_version,
+            "runner_name": self.runner_name,
+            "display_name": self.display_name,
+            "invocation_mode": self.invocation_mode,
+            "disabled_by_default": self.disabled_by_default,
+            "approval_required": self.approval_required,
+            "sandbox_required": self.sandbox_required,
+            "direct_execution_forbidden": self.direct_execution_forbidden,
+            "can_apply_changes": self.can_apply_changes,
+            "release_target_promotion_blocked": self.release_target_promotion_blocked,
+            "masked_env_vars": list(self.masked_env_vars),
+            "prohibited_actions": list(self.prohibited_actions),
+            "allowed_operations": list(self.allowed_operations),
+            "evidence_requirements": list(self.evidence_requirements),
+            "safety_boundaries": dict(self.safety_boundaries),
+        }
+
+
 def _default_skill_contract_path() -> Path:
     return Path(__file__).resolve().parent.parent / "neuro_cli" / "skill" / "SKILL.md"
+
+
+def _default_skill_registry_paths() -> tuple[Path, ...]:
+    project_root = Path(__file__).resolve().parent.parent
+    return (
+        project_root / "neuro_cli" / "skill" / "SKILL.md",
+        project_root / ".github" / "skills" / "neuro-cli" / "SKILL.md",
+    )
 
 
 def _default_workflow_catalog_path() -> Path:
@@ -364,6 +463,50 @@ def load_neuro_cli_skill_descriptor_payload(
     return load_neuro_cli_skill_descriptor(skill_path).to_dict()
 
 
+def _skill_source_kind(skill_path: Path) -> str:
+    normalized = skill_path.as_posix()
+    if "/.github/skills/" in normalized:
+        return "vscode_discovery_adapter"
+    if "/neuro_cli/skill/" in normalized:
+        return "canonical_package_skill"
+    return "external_skill"
+
+
+def _skill_registry_entry_id(skill_path: Path, descriptor: SkillDescriptor) -> str:
+    source_kind = _skill_source_kind(skill_path)
+    return f"{descriptor.name}:{source_kind}"
+
+
+@lru_cache(maxsize=4)
+def load_skill_descriptor_registry(
+    skill_paths: tuple[str, ...] | None = None,
+) -> SkillDescriptorRegistry:
+    resolved_paths = (
+        tuple(Path(path) for path in skill_paths)
+        if skill_paths is not None
+        else _default_skill_registry_paths()
+    )
+    entries: list[SkillRegistryEntry] = []
+    for skill_path in resolved_paths:
+        descriptor = load_neuro_cli_skill_descriptor(skill_path)
+        source_kind = _skill_source_kind(skill_path)
+        entries.append(
+            SkillRegistryEntry(
+                skill_id=_skill_registry_entry_id(skill_path, descriptor),
+                source_kind=source_kind,
+                canonical=source_kind == "canonical_package_skill",
+                descriptor=descriptor,
+            )
+        )
+    return SkillDescriptorRegistry(entries=tuple(entries))
+
+
+def load_skill_descriptor_registry_payload(
+    skill_paths: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    return load_skill_descriptor_registry(skill_paths=skill_paths).to_dict()
+
+
 def _summarize_mcp_tool(contract: "ToolContract") -> dict[str, Any]:
     return {
         "name": contract.tool_name,
@@ -485,6 +628,147 @@ def load_mcp_bridge_descriptor_payload(
     bridge_mode: str = "read_only_descriptor_only",
 ) -> dict[str, Any]:
     return load_mcp_bridge_descriptor(tool_adapter, bridge_mode=bridge_mode).to_dict()
+
+
+def load_mcp_tool_governance_descriptor_payload(
+    tool_name: str,
+    tool_adapter: Any | None = None,
+) -> dict[str, Any]:
+    adapter = tool_adapter or FakeUnitToolAdapter()
+    contract = adapter.describe_tool(tool_name)
+    if contract is None:
+        return {
+            "ok": False,
+            "status": "tool_not_found",
+            "reason": "mcp_tool_missing_from_manifest",
+            "schema_version": MCP_TOOL_GOVERNANCE_DESCRIPTOR_SCHEMA_VERSION,
+            "tool_name": tool_name,
+        }
+
+    policy_decision = ReadOnlyToolPolicy().evaluate_contract(contract).to_dict()
+    bridge_mode = "read_only_descriptor_only"
+    governance_path = "descriptor_only"
+    if bool(policy_decision.get("allowed", False)):
+        bridge_mode = "core_governed_read_only_execution"
+        governance_path = "core_read_only_execute"
+    elif contract.approval_required or contract.required_resources:
+        bridge_mode = "core_governed_approval_required_proposal"
+        governance_path = "core_approval_required_proposal"
+
+    mcp_descriptor = load_mcp_bridge_descriptor_payload(
+        adapter,
+        bridge_mode=bridge_mode,
+    )
+    allowed_operations = cast(list[str], mcp_descriptor.get("allowed_operations") or [])
+    execution_requirements = {
+        "read_only_execution_allowed": bool(policy_decision.get("allowed", False))
+        and "execute_read_only_tool_via_core" in allowed_operations,
+        "approval_proposal_allowed": bool(contract.approval_required or contract.required_resources)
+        and "submit_approval_required_tool_proposal" in allowed_operations,
+        "operator_approval_required": bool(contract.approval_required),
+        "required_resources_present": bool(contract.required_resources),
+        "blocked_from_direct_mcp_execution": bool(
+            cast(dict[str, Any], mcp_descriptor.get("safety_boundaries") or {}).get(
+                "side_effecting_tools_execute_directly_forbidden",
+                False,
+            )
+        ) or bool(contract.approval_required or contract.required_resources),
+    }
+    return {
+        "ok": True,
+        "status": "ok",
+        "schema_version": MCP_TOOL_GOVERNANCE_DESCRIPTOR_SCHEMA_VERSION,
+        "tool_name": tool_name,
+        "governance_path": governance_path,
+        "contract": contract.to_dict(),
+        "policy_decision": policy_decision,
+        "mcp_descriptor": mcp_descriptor,
+        "execution_requirements": execution_requirements,
+    }
+
+
+def load_coding_agent_runner_descriptor(
+    runner_name: str = "copilot",
+) -> CodingAgentRunnerDescriptor:
+    normalized_runner = runner_name.strip().lower() or "copilot"
+    runner_catalog: dict[str, dict[str, str | tuple[str, ...]]] = {
+        "copilot": {
+            "display_name": "GitHub Copilot Coding Runner",
+            "invocation_mode": "cli_json_plan_only",
+            "masked_env_vars": ("GITHUB_COPILOT_CLI_PATH", "GITHUB_COPILOT_MODEL"),
+        },
+        "qwen-code": {
+            "display_name": "Qwen Code Runner",
+            "invocation_mode": "external_cli_plan_only",
+            "masked_env_vars": ("QWEN_CODE_MODEL",),
+        },
+        "opencode": {
+            "display_name": "OpenCode Runner",
+            "invocation_mode": "external_cli_plan_only",
+            "masked_env_vars": ("OPENCODE_MODEL",),
+        },
+        "local-command": {
+            "display_name": "Local Command Coding Runner",
+            "invocation_mode": "local_wrapper_plan_only",
+            "masked_env_vars": (),
+        },
+    }
+    runner_metadata: dict[str, str | tuple[str, ...]] | None = runner_catalog.get(normalized_runner)
+    if runner_metadata is None:
+        raise ValueError("unsupported_coding_agent_runner")
+    display_name = cast(str, runner_metadata["display_name"])
+    invocation_mode = cast(str, runner_metadata["invocation_mode"])
+    masked_env_vars = cast(tuple[str, ...], runner_metadata["masked_env_vars"])
+
+    prohibited_actions = (
+        "direct_shell_execution",
+        "direct_mcp_execution",
+        "git_push",
+        "firmware_flash",
+        "credential_mutation",
+        "production_deploy",
+    )
+    return CodingAgentRunnerDescriptor(
+        runner_name=normalized_runner,
+        display_name=display_name,
+        invocation_mode=invocation_mode,
+        disabled_by_default=True,
+        approval_required=True,
+        sandbox_required=True,
+        direct_execution_forbidden=True,
+        can_apply_changes=False,
+        release_target_promotion_blocked=True,
+        masked_env_vars=masked_env_vars,
+        prohibited_actions=prohibited_actions,
+        allowed_operations=(
+            "describe_runner",
+            "submit_plan_for_self_improvement_review",
+            "sandbox_only_execution_after_operator_approval",
+        ),
+        evidence_requirements=(
+            "approval_record",
+            "sandbox_execution_record",
+            "verified_test_evidence",
+            "audit_callback_record",
+        ),
+        safety_boundaries={
+            "disabled_by_default": True,
+            "self_improvement_routing_required": True,
+            "operator_approval_required": True,
+            "sandbox_only_execution": True,
+            "direct_shell_execution_forbidden": True,
+            "direct_file_mutation_forbidden": True,
+            "direct_mcp_execution_forbidden": True,
+            "release_identity_promotion_forbidden": True,
+            "autonomous_commit_push_forbidden": True,
+        },
+    )
+
+
+def load_coding_agent_runner_descriptor_payload(
+    runner_name: str = "copilot",
+) -> dict[str, Any]:
+    return load_coding_agent_runner_descriptor(runner_name=runner_name).to_dict()
 
 
 @dataclass(frozen=True)

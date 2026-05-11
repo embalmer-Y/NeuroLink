@@ -23,8 +23,11 @@ from .inference import provider_model_list
 from .inference import set_active_provider_profile
 from .session import CoreSessionManager
 from .tools import FakeUnitToolAdapter, NeuroCliToolAdapter
+from .tools import load_coding_agent_runner_descriptor_payload
 from .tools import load_mcp_bridge_descriptor_payload
+from .tools import load_mcp_tool_governance_descriptor_payload
 from .tools import load_neuro_cli_skill_descriptor_payload
+from .tools import load_skill_descriptor_registry_payload
 from .tools import observe_activation_health
 from .tools import validate_tool_workflow_catalog_consistency
 from .data import CoreDataStore
@@ -36,6 +39,8 @@ from .persona import PersonaState
 from .persona import PersonaSignal
 from .persona import apply_persona_signals
 from .persona import redact_relationships
+from .policy import classify_tool_contract_threats
+from .policy import ReadOnlyToolPolicy
 from .social import MockSocialAdapter
 from .social import SocialMessageEnvelope
 from .social import build_social_approval_summary
@@ -99,6 +104,10 @@ REAL_SCENE_CHECKLIST_TEMPLATE_SCHEMA_VERSION = "2.0.0-real-scene-checklist-templ
 QQ_OFFICIAL_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.2-qq-official-gateway-closure-v1"
 WECOM_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.3-wecom-gateway-closure-v1"
 OPENCLAW_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.3-openclaw-gateway-closure-v1"
+MCP_READ_ONLY_EXECUTION_SCHEMA_VERSION = "2.2.4-mcp-read-only-execution-v1"
+CODING_AGENT_SELF_IMPROVEMENT_ROUTE_SCHEMA_VERSION = "2.2.4-coding-agent-self-improvement-route-v1"
+CODING_AGENT_SANDBOX_PLAN_SCHEMA_VERSION = "2.2.4-coding-agent-sandbox-plan-v1"
+RELEASE_224_CLOSURE_SMOKE_SCHEMA_VERSION = "2.2.4-release-closure-smoke-v1"
 
 
 def _build_closure_checklist_entry(
@@ -178,6 +187,60 @@ def _build_provider_smoke_closure_summary(
         "call_status": str(provider_smoke_payload.get("call_status") or ""),
         "executes_model_call": executes_model_call,
         "closure_gates": gates,
+        "ok": all(gates.values()),
+    }
+
+
+def _build_coding_agent_route_closure_summary(
+    coding_agent_route_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if coding_agent_route_payload is None:
+        gates = {
+            "coding_agent_route_evidence_supplied": False,
+            "coding_agent_route_contract_supported": False,
+            "review_routing_required": False,
+            "sandbox_execution_recorded": False,
+            "plan_artifact_recorded": False,
+            "plan_artifact_contract_supported": False,
+            "plan_steps_recorded": False,
+            "callback_audit_recorded": False,
+            "callback_payload_recorded": False,
+        }
+        return {
+            "schema_version": "",
+            "status": "missing",
+            "reason": "coding_agent_route_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], coding_agent_route_payload.get("closure_gates") or {})
+    gates = {
+        "coding_agent_route_evidence_supplied": True,
+        "coding_agent_route_contract_supported": str(
+            coding_agent_route_payload.get("schema_version") or ""
+        )
+        == CODING_AGENT_SELF_IMPROVEMENT_ROUTE_SCHEMA_VERSION,
+        "review_routing_required": bool(payload_gates.get("review_routing_required")),
+        "sandbox_execution_recorded": bool(payload_gates.get("sandbox_execution_recorded")),
+        "plan_artifact_recorded": bool(payload_gates.get("plan_artifact_recorded")),
+        "plan_artifact_contract_supported": bool(
+            payload_gates.get("plan_artifact_contract_supported")
+        ),
+        "plan_steps_recorded": bool(payload_gates.get("plan_steps_recorded")),
+        "callback_audit_recorded": bool(payload_gates.get("callback_audit_recorded")),
+        "callback_payload_recorded": bool(payload_gates.get("callback_payload_recorded")),
+    }
+    return {
+        "schema_version": str(coding_agent_route_payload.get("schema_version") or ""),
+        "status": str(coding_agent_route_payload.get("status") or "unknown"),
+        "reason": str(coding_agent_route_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any],
+            coding_agent_route_payload.get("evidence_summary") or {},
+        ),
         "ok": all(gates.values()),
     }
 
@@ -1092,6 +1155,7 @@ def build_agent_excellence_smoke(
     tool_manifest_payload = cast(dict[str, Any], adapter.tool_manifest_payload())
     available_tools = cast(list[dict[str, Any]], tool_manifest_payload.get("tools") or [])
     skill_descriptor = load_neuro_cli_skill_descriptor_payload()
+    skill_registry = load_skill_descriptor_registry_payload()
     mcp_descriptor = load_mcp_bridge_descriptor_payload(
         adapter,
         bridge_mode=bridge_mode,
@@ -1112,6 +1176,26 @@ def build_agent_excellence_smoke(
     available_tool_names = {
         str(tool.get("name") or "") for tool in available_tools if str(tool.get("name") or "")
     }
+    mcp_read_only_probe = build_mcp_read_only_execution(
+        tool_name="system_state_sync",
+        tool_args={"--node": "unit-01"},
+        tool_adapter=adapter,
+    )
+    mcp_governance_probe = load_mcp_tool_governance_descriptor_payload(
+        "system_restart_app",
+        tool_adapter=adapter,
+    )
+    coding_agent_probe = build_coding_agent_self_improvement_route(
+        runner_name="copilot",
+        summary="Repair a deterministic regression through governed review",
+        decision="approve",
+        evidence=ImprovementEvidence(
+            tests_passed=True,
+            lint_passed=True,
+            smoke_passed=True,
+            evidence_refs=("pytest.txt", "ruff.txt", "agent-excellence-smoke.json"),
+        ),
+    )
     hallucinated_tool_name = "system_unknown_write"
     safety_boundaries = cast(
         dict[str, Any],
@@ -1138,6 +1222,14 @@ def build_agent_excellence_smoke(
             skill_descriptor.get("schema_version") or ""
         )
         == "1.2.5-skill-descriptor-v1",
+        "skill_registry_supplied": bool(skill_registry.get("ok")),
+        "skill_registry_contract_supported": str(
+            skill_registry.get("schema_version") or ""
+        )
+        == "2.2.4-skill-registry-v1",
+        "skill_registry_records_canonical_entry": bool(
+            skill_registry.get("canonical_entry_count")
+        ),
         "workflow_plan_required_for_governed_tools": (
             not governed_tools
             or bool(skill_descriptor.get("workflow_plan_required", False))
@@ -1164,6 +1256,17 @@ def build_agent_excellence_smoke(
         "approval_required_tool_proposals_blocked": not bool(
             safety_boundaries.get("approval_required_tool_proposals_allowed", False)
         ),
+        "mcp_read_only_execute_supported": bool(mcp_read_only_probe.get("ok")),
+        "mcp_governance_descriptor_supported": bool(mcp_governance_probe.get("ok"))
+        and str(mcp_governance_probe.get("governance_path") or "")
+        == "core_approval_required_proposal",
+        "coding_agent_self_improvement_routed": bool(coding_agent_probe.get("ok"))
+        and bool(
+            cast(dict[str, Any], coding_agent_probe.get("closure_gates") or {}).get(
+                "review_routing_required",
+                False,
+            )
+        ),
         "hallucinated_tool_rejected_by_available_manifest": (
             hallucinated_tool_name not in available_tool_names
         ),
@@ -1177,7 +1280,11 @@ def build_agent_excellence_smoke(
         "command": "agent-excellence-smoke",
         "tool_manifest": tool_manifest_payload,
         "skill_descriptor": skill_descriptor,
+        "skill_registry": skill_registry,
         "mcp_descriptor": mcp_descriptor,
+        "mcp_read_only_probe": mcp_read_only_probe,
+        "mcp_governance_probe": mcp_governance_probe,
+        "coding_agent_probe": coding_agent_probe,
         "workflow_catalog_results": workflow_catalog_results,
         "policy_probe": {
             "hallucinated_tool_name": hallucinated_tool_name,
@@ -1189,7 +1296,11 @@ def build_agent_excellence_smoke(
             "governed_tool_count": len(governed_tools),
             "approval_required_tool_count": approval_required_tool_count,
             "skill_name": str(skill_descriptor.get("name") or ""),
+            "skill_registry_entry_count": int(skill_registry.get("entry_count") or 0),
             "mcp_bridge_mode": str(mcp_descriptor.get("bridge_mode") or ""),
+            "mcp_read_only_probe_tool": str(mcp_read_only_probe.get("tool_name") or ""),
+            "mcp_governance_probe_tool": str(mcp_governance_probe.get("tool_name") or ""),
+            "coding_agent_probe_runner": str(coding_agent_probe.get("runner_name") or ""),
             "workflow_catalog_failure_statuses": [
                 str(result.get("failure_status") or "")
                 for result in workflow_catalog_results
@@ -1197,6 +1308,284 @@ def build_agent_excellence_smoke(
             ],
         },
         "ok": all(closure_gates.values()),
+    }
+
+
+def build_mcp_read_only_execution(
+    *,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    tool_adapter: Any | None = None,
+) -> dict[str, Any]:
+    adapter = tool_adapter or FakeUnitToolAdapter()
+    contract = adapter.describe_tool(tool_name)
+    if contract is None:
+        return {
+            "ok": False,
+            "status": "tool_not_found",
+            "reason": "mcp_read_only_tool_missing_from_manifest",
+            "schema_version": MCP_READ_ONLY_EXECUTION_SCHEMA_VERSION,
+            "command": "mcp-read-only-execute",
+            "tool_name": tool_name,
+        }
+
+    mcp_descriptor = load_mcp_bridge_descriptor_payload(
+        adapter,
+        bridge_mode="core_governed_read_only_execution",
+    )
+    allowed_operations = set(cast(list[str], mcp_descriptor.get("allowed_operations") or []))
+    policy_decision = ReadOnlyToolPolicy().evaluate_contract(contract).to_dict()
+    if "execute_read_only_tool_via_core" not in allowed_operations:
+        return {
+            "ok": False,
+            "status": "mcp_read_only_execution_not_allowed",
+            "reason": "mcp_bridge_mode_missing_execute_operation",
+            "schema_version": MCP_READ_ONLY_EXECUTION_SCHEMA_VERSION,
+            "command": "mcp-read-only-execute",
+            "tool_name": tool_name,
+            "contract": contract.to_dict(),
+            "mcp_descriptor": mcp_descriptor,
+            "policy_decision": policy_decision,
+        }
+    if not policy_decision.get("allowed", False):
+        return {
+            "ok": False,
+            "status": "tool_policy_denied",
+            "reason": str(policy_decision.get("reason") or "tool_policy_denied"),
+            "schema_version": MCP_READ_ONLY_EXECUTION_SCHEMA_VERSION,
+            "command": "mcp-read-only-execute",
+            "tool_name": tool_name,
+            "contract": contract.to_dict(),
+            "mcp_descriptor": mcp_descriptor,
+            "policy_decision": policy_decision,
+        }
+
+    tool_result = adapter.execute(tool_name, tool_args)
+    ok = tool_result.status == "ok"
+    return {
+        "ok": ok,
+        "status": "ok" if ok else tool_result.status,
+        "reason": "mcp_read_only_tool_executed" if ok else "mcp_read_only_tool_execution_failed",
+        "schema_version": MCP_READ_ONLY_EXECUTION_SCHEMA_VERSION,
+        "command": "mcp-read-only-execute",
+        "tool_name": tool_name,
+        "tool_args": dict(tool_args),
+        "contract": contract.to_dict(),
+        "mcp_descriptor": mcp_descriptor,
+        "policy_decision": policy_decision,
+        "tool_result": tool_result.to_dict(),
+    }
+
+
+def build_coding_agent_self_improvement_route(
+    *,
+    runner_name: str,
+    summary: str,
+    source: str = "maintenance_finding",
+    decision: str = "pending",
+    evidence: ImprovementEvidence | None = None,
+) -> dict[str, Any]:
+    descriptor = load_coding_agent_runner_descriptor_payload(runner_name=runner_name)
+    proposal = propose_self_improvement(
+        proposal_id=f"coding-agent-{runner_name}-proposal-001",
+        source=source,
+        summary=summary,
+        touches_code=True,
+        targets_runtime=False,
+        evidence=evidence,
+    )
+    effective_evidence = evidence or ImprovementEvidence()
+    if decision == "approve":
+        review = review_self_improvement(
+            proposal,
+            approved=True,
+            evidence=effective_evidence,
+        )
+    elif decision == "deny":
+        review = review_self_improvement(
+            proposal,
+            approved=False,
+            evidence=effective_evidence,
+        )
+    else:
+        review = None
+
+    plan_artifact: dict[str, Any] = {
+        "schema_version": CODING_AGENT_SANDBOX_PLAN_SCHEMA_VERSION,
+        "artifact_id": f"plan-{runner_name}-001",
+        "artifact_kind": "coding_agent_plan",
+        "runner_name": runner_name,
+        "summary": summary,
+        "source": source,
+        "sandbox_mode": proposal.sandbox_mode,
+        "approval_required": proposal.approval_required,
+        "touches_code": proposal.touches_code,
+        "targets_runtime": proposal.targets_runtime,
+        "invocation_mode": str(descriptor.get("invocation_mode") or ""),
+        "prohibited_actions": list(proposal.prohibited_actions),
+        "execution_target": "isolated_workspace",
+        "plan_steps": [
+            {
+                "step_id": "review-proposal",
+                "kind": "approval_gate",
+                "required": True,
+                "status": "completed" if review is not None else "pending",
+                "evidence_refs": list(effective_evidence.evidence_refs),
+            },
+            {
+                "step_id": "prepare-sandbox-workspace",
+                "kind": "sandbox_prepare",
+                "required": True,
+                "status": (
+                    "completed"
+                    if review is not None and review.decision == "approved"
+                    else "pending"
+                ),
+                "workspace_policy": "isolated_workspace",
+            },
+            {
+                "step_id": "run-verification",
+                "kind": "verification",
+                "required": True,
+                "status": (
+                    "completed" if effective_evidence.verified_success() else "pending"
+                ),
+                "verification_requirements": {
+                    "tests_passed": effective_evidence.tests_passed,
+                    "lint_passed": effective_evidence.lint_passed,
+                    "smoke_passed": effective_evidence.smoke_passed,
+                },
+            },
+        ],
+        "sandbox_policy": {
+            "workspace_mode": proposal.sandbox_mode,
+            "network_access": "forbidden_by_default",
+            "direct_mcp_execution": "forbidden",
+            "apply_changes": False,
+            "release_target_promotion": "forbidden",
+        },
+        "callback_contract": {
+            "callback_name": "self_improvement_review_complete",
+            "callback_audit_required": True,
+            "must_reference_plan_artifact": True,
+            "must_record_verified_success": True,
+        },
+    }
+
+    sandbox_execution_record: dict[str, Any] = {
+        "status": (
+            "recorded"
+            if review is not None and review.decision == "approved"
+            else "not_executed"
+        ),
+        "runner_name": runner_name,
+        "sandbox_mode": proposal.sandbox_mode,
+        "execution_mode": review.execution_mode if review is not None else "not_executed",
+        "approval_required": proposal.approval_required,
+        "plan_only_invocation": str(descriptor.get("invocation_mode") or "").endswith(
+            "plan_only"
+        ),
+        "plan_artifact": plan_artifact,
+        "can_apply_changes": review.can_apply_changes if review is not None else False,
+        "evidence_refs": list(effective_evidence.evidence_refs),
+    }
+    callback_audit_record: dict[str, Any] = {
+        "status": (
+            "recorded"
+            if review is not None and review.decision == "approved"
+            else "not_recorded"
+        ),
+        "runner_name": runner_name,
+        "callback_name": "self_improvement_review_complete",
+        "operator_decision": review.decision if review is not None else "pending_approval",
+        "verified_success": effective_evidence.verified_success(),
+        "release_target_promotion_blocked": bool(
+            descriptor.get("release_target_promotion_blocked", False)
+        ),
+        "callback_payload": {
+            "runner_name": runner_name,
+            "plan_artifact_id": str(plan_artifact.get("artifact_id") or ""),
+            "decision": review.decision if review is not None else "pending_approval",
+            "sandbox_execution_status": sandbox_execution_record.get("status"),
+            "verified_success": effective_evidence.verified_success(),
+            "evidence_refs": list(effective_evidence.evidence_refs),
+        },
+        "prohibited_actions": list(proposal.prohibited_actions),
+    }
+
+    closure_gates: dict[str, bool] = {
+        "review_routing_required": bool(
+            cast(dict[str, Any], descriptor.get("safety_boundaries") or {}).get(
+                "self_improvement_routing_required",
+                False,
+            )
+        ),
+        "operator_approval_required": bool(descriptor.get("approval_required", False))
+        and proposal.approval_required,
+        "sandbox_only_execution": bool(
+            cast(dict[str, Any], descriptor.get("safety_boundaries") or {}).get(
+                "sandbox_only_execution",
+                False,
+            )
+        )
+        and proposal.sandbox_mode == "isolated_workspace",
+        "direct_execution_still_forbidden": bool(
+            descriptor.get("direct_execution_forbidden", False)
+        ),
+        "verified_evidence_required_for_vitality": (
+            review is None
+            or not review.vitality_replenishment_allowed
+            or review.proposal.evidence.verified_success()
+        ),
+        "sandbox_execution_recorded": (
+            sandbox_execution_record["status"] == "recorded"
+            if review is not None and review.decision == "approved"
+            else True
+        ),
+        "plan_artifact_recorded": bool(plan_artifact.get("artifact_id")),
+        "plan_artifact_contract_supported": str(
+            plan_artifact.get("schema_version") or ""
+        )
+        == CODING_AGENT_SANDBOX_PLAN_SCHEMA_VERSION,
+        "plan_steps_recorded": bool(plan_artifact.get("plan_steps")),
+        "callback_audit_recorded": (
+            callback_audit_record["status"] == "recorded"
+            if review is not None and review.decision == "approved"
+            else True
+        ),
+        "callback_payload_recorded": bool(
+            cast(dict[str, Any], callback_audit_record.get("callback_payload") or {}).get(
+                "plan_artifact_id"
+            )
+        ),
+    }
+    route_status = "pending_approval"
+    if review is not None:
+        route_status = review.decision
+    return {
+        "ok": all(closure_gates.values()),
+        "status": route_status,
+        "schema_version": CODING_AGENT_SELF_IMPROVEMENT_ROUTE_SCHEMA_VERSION,
+        "command": "coding-agent-self-improvement-route",
+        "runner_name": runner_name,
+        "descriptor": descriptor,
+        "proposal": proposal.to_dict(),
+        "review": review.to_dict() if review is not None else None,
+        "plan_artifact": plan_artifact,
+        "sandbox_execution_record": sandbox_execution_record,
+        "callback_audit_record": callback_audit_record,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "decision": decision,
+            "verified_success": effective_evidence.verified_success(),
+            "sandbox_mode": proposal.sandbox_mode,
+            "plan_artifact_id": str(plan_artifact.get("artifact_id") or ""),
+            "can_apply_changes": review.can_apply_changes if review is not None else False,
+            "vitality_replenishment_allowed": (
+                review.vitality_replenishment_allowed if review is not None else False
+            ),
+            "callback_audit_recorded": callback_audit_record["status"] == "recorded",
+        },
     }
 
 
@@ -2447,6 +2836,7 @@ def _build_signing_provenance_closure_summary(
 def build_real_scene_e2e_smoke(
     *,
     live_event_smoke_payload: dict[str, Any],
+    coding_agent_route_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     live_event_ingest = cast(
         dict[str, Any],
@@ -2468,6 +2858,10 @@ def build_real_scene_e2e_smoke(
     top_level_event_source = str(live_event_smoke_payload.get("event_source") or "")
     allowed_sources = {"neuro_cli_app_events_live", "neuro_cli_events_live"}
     tool_results = cast(list[Any], live_event_smoke_payload.get("tool_results") or [])
+    coding_agent_closure_gates = cast(
+        dict[str, Any],
+        (coding_agent_route_payload or {}).get("closure_gates") or {},
+    )
     closure_gates = {
         "live_event_smoke_payload_supplied": bool(live_event_smoke_payload),
         "live_event_smoke_command_recorded": str(
@@ -2500,9 +2894,26 @@ def build_real_scene_e2e_smoke(
         ),
         "tool_results_recorded": bool(tool_results),
         "state_sync_tool_used": any(
-            isinstance(item, dict)
-            and str(item.get("tool_name") or "") == "system_state_sync"
+            str(cast(dict[str, Any], item).get("tool_name") or "")
+            == "system_state_sync"
             for item in tool_results
+            if isinstance(item, dict)
+        ),
+        "coding_agent_route_valid_if_supplied": (
+            coding_agent_route_payload is None
+            or (
+                str(coding_agent_route_payload.get("command") or "")
+                == "coding-agent-self-improvement-route"
+                and bool(coding_agent_route_payload.get("ok", False))
+            )
+        ),
+        "coding_agent_callback_audit_recorded_if_supplied": (
+            coding_agent_route_payload is None
+            or bool(coding_agent_closure_gates.get("callback_audit_recorded", False))
+        ),
+        "coding_agent_sandbox_recorded_if_supplied": (
+            coding_agent_route_payload is None
+            or bool(coding_agent_closure_gates.get("sandbox_execution_recorded", False))
         ),
     }
     return {
@@ -2513,6 +2924,7 @@ def build_real_scene_e2e_smoke(
         else "real_scene_e2e_gap",
         "command": "real-scene-e2e-smoke",
         "live_event_smoke": live_event_smoke_payload,
+        "coding_agent_route": coding_agent_route_payload,
         "closure_gates": closure_gates,
         "evidence_summary": {
             "event_source": top_level_event_source,
@@ -2521,6 +2933,9 @@ def build_real_scene_e2e_smoke(
             "target_app_id": str(live_event_ingest.get("app_id") or session_context.get("target_app_id") or ""),
             "tool_result_count": len(tool_results),
             "execution_span_id": str(execution_span.get("execution_span_id") or ""),
+            "coding_agent_runner": str(
+                (coding_agent_route_payload or {}).get("runner_name") or ""
+            ),
         },
         "ok": all(closure_gates.values()),
     }
@@ -2696,6 +3111,609 @@ def build_release_rollback_hardening_smoke(
         },
         "ok": all(closure_gates.values()),
     }
+
+
+def _write_release_closure_fake_app_source(
+    source_dir: Path,
+    *,
+    app_id: str,
+    app_version: str,
+    build_id: str,
+) -> None:
+    source_dir.mkdir(parents=True, exist_ok=True)
+    main_c = source_dir / "src" / "main.c"
+    main_c.parent.mkdir(parents=True, exist_ok=True)
+    major, minor, patch = app_version.split(".")
+    main_c.write_text(
+        (
+            'static const char app_id[] = "{app_id}";\n'
+            'static const char app_version[] = "{app_version}";\n'
+            'static const char app_build_id[] = "{build_id}";\n'
+            'const struct app_runtime_manifest app_runtime_manifest = {{\n'
+            '  .version = {{\n'
+            '    .major = {major},\n'
+            '    .minor = {minor},\n'
+            '    .patch = {patch},\n'
+            '  }},\n'
+            '  .app_name = "{app_id}",\n'
+            '}};\n'
+        ).format(
+            app_id=app_id,
+            app_version=app_version,
+            build_id=build_id,
+            major=major,
+            minor=minor,
+            patch=patch,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_release_closure_fake_llext(
+    artifact_path: Path,
+    *,
+    app_id: str,
+    app_version: str,
+    build_id: str,
+) -> None:
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    elf_ident = b"\x7fELF\x01\x01\x01" + (b"\x00" * 9)
+    elf_header = (
+        elf_ident
+        + (1).to_bytes(2, "little")
+        + (94).to_bytes(2, "little")
+        + (1).to_bytes(4, "little")
+    )
+    payload = (
+        elf_header
+        + b"\x00" * 32
+        + app_id.encode("utf-8")
+        + b"\x00"
+        + app_version.encode("utf-8")
+        + b"\x00"
+        + build_id.encode("utf-8")
+        + b"\x00"
+    )
+    artifact_path.write_bytes(payload)
+
+
+def _write_release_closure_payload(
+    evidence_dir: Path,
+    file_name: str,
+    payload: dict[str, Any],
+) -> str:
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    path = evidence_dir / file_name
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    return str(path)
+
+
+def build_release_224_closure_smoke(
+    *,
+    session_id: str = "release-2.2.4-closure-smoke-001",
+    runner_name: str = "copilot",
+    summary: str = "Repair deterministic regression in sandbox",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    tempdir = tempfile.TemporaryDirectory()
+    try:
+        root = Path(tempdir.name)
+        db_path = root / "closure.db"
+        source_dir = root / "source"
+        artifact_path = root / "artifacts" / "neuro_unit_app.llext"
+        app_id = "neuro_unit_app"
+        app_version = "1.2.2"
+        build_id = "neuro_unit_app-1.2.2-cbor-v2"
+
+        _write_release_closure_fake_app_source(
+            source_dir,
+            app_id=app_id,
+            app_version=app_version,
+            build_id=build_id,
+        )
+        _write_release_closure_fake_llext(
+            artifact_path,
+            app_id=app_id,
+            app_version=app_version,
+            build_id=build_id,
+        )
+
+        run_payload = run_no_model_dry_run(
+            str(db_path),
+            session_id=session_id,
+            memory_backend="local",
+            federation_route_provider=lambda frame, session_context: federation_route_smoke(
+                target_node="unit-remote-01",
+                now="2026-05-10T12:00:00Z",
+                required_trust_scope="lab-federation",
+                peer_expires_at="2026-05-10T12:30:00Z",
+                peer_relay_via=("gateway-b-01",),
+                peer_network_transports=("ethernet", "serial_bridge"),
+            ),
+        )
+
+        documentation_payload: dict[str, Any] = {
+            "schema_version": DOCUMENTATION_CLOSURE_SCHEMA_VERSION,
+            "status": "ready",
+            "reason": "documentation_aligned",
+            "closure_gates": {
+                "release_plan_aligned": True,
+                "readme_aligned": True,
+                "progress_recorded": True,
+                "runbooks_aligned": True,
+                "release_identity_unpromoted": True,
+            },
+            "evidence_summary": {"release_identity": "2.2.4"},
+        }
+        provider_smoke_payload: dict[str, Any] = {
+            "schema_version": "1.2.5-maf-provider-smoke-v2",
+            "status": "ready",
+            "reason": "provider_available_no_call",
+            "call_status": "skipped",
+            "executes_model_call": False,
+            "closure_gates": {
+                "closure_smoke_outcome_recorded": True,
+                "real_provider_call_opt_in_respected": True,
+                "provider_requirements_ready": True,
+                "missing_requirements_cleanly_reported": False,
+                "model_call_evidence_present": False,
+            },
+        }
+        multimodal_profile_payload: dict[str, Any] = {
+            "schema_version": "1.2.5-inference-route-v1",
+            "status": "ready",
+            "reason": "route_ready",
+            "executes_model_call": False,
+            "closure_gates": {
+                "multimodal_input_recorded": True,
+                "route_decision_recorded": True,
+                "profile_readiness_recorded": True,
+                "route_ready": True,
+                "no_model_call_executed": True,
+            },
+            "evidence_summary": {
+                "input_modes": ["text"],
+                "selected_profile": "local_16g",
+            },
+        }
+        regression_payload: dict[str, Any] = {
+            "schema_version": REGRESSION_CLOSURE_SCHEMA_VERSION,
+            "status": "ready",
+            "reason": "focused_release_224_regressions_green",
+            "closure_gates": {
+                "core_tests_passed": True,
+                "agent_closure_regression_passed": True,
+                "app_lifecycle_regression_passed": True,
+                "event_service_regression_passed": True,
+                "federation_regression_passed": True,
+                "relay_regression_passed": True,
+                "hardware_compatibility_regression_passed": True,
+            },
+            "evidence_summary": {"command_count": 6},
+        }
+        relay_failure_payload: dict[str, Any] = {
+            "schema_version": RELAY_FAILURE_CLOSURE_SCHEMA_VERSION,
+            "status": "ready",
+            "reason": "route_failure_runbook_reviewed",
+            "closure_gates": {
+                "route_failure_recorded": True,
+                "fallback_path_recorded": True,
+                "operator_runbook_recorded": True,
+                "deterministic_validation_recorded": True,
+            },
+            "evidence_summary": {
+                "route_failure_reason": "peer_unreachable",
+                "fallback_action": "direct_local_retry_then_manual_operator_review",
+                "runbook_id": "relay-route-failure-v1",
+            },
+        }
+        activate_failure_payload: dict[str, Any] = {
+            "ok": False,
+            "status": "error",
+            "command": "app-deploy-activate",
+            "failure_class": "app_deploy_activate_failed",
+            "failure_status": "rollback_required",
+            "recovery_candidate_summary": {
+                "app_id": "neuro_demo_gpio",
+                "rollback_decision": "operator_review_required",
+                "lease_resource": "update/app/neuro_demo_gpio/rollback",
+                "matching_lease_ids": [f"lease-gpio-rollback-{session_id}"],
+            },
+            "rollback_approval": {
+                "status": "pending_approval",
+                "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+            },
+        }
+        rollback_payload: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "command": "app-deploy-rollback",
+            "rollback_decision": {
+                "approval_required": True,
+                "status": "approved",
+                "rollback_resource": "update/app/neuro_demo_gpio/rollback",
+                "resolved_app_id": "neuro_demo_gpio",
+                "rollback_reason": "guarded_rollback_after_activation_health_failure",
+            },
+            "rollback_execution": {
+                "completed_through": "query_leases",
+                "rollback": {"ok": True},
+                "query_apps": {
+                    "ok": True,
+                    "app_present": False,
+                    "observed_app_state": "missing",
+                },
+                "query_leases": {"ok": True, "matching_lease_ids": []},
+            },
+        }
+        live_event_smoke_payload: dict[str, Any] = {
+            "command": "live-event-smoke",
+            "event_source": "neuro_cli_events_live",
+            "live_event_ingest": {
+                "collected_event_count": 1,
+                "app_id": "neuro_demo_app",
+            },
+            "event_service": {"bounded_runtime": True},
+            "execution_evidence": {
+                "execution_span": {
+                    "status": "ok",
+                    "execution_span_id": f"span-{session_id}",
+                    "session_id": session_id,
+                    "payload": {"event_source": "neuro_cli_events_live"},
+                },
+                "audit_record": {
+                    "payload": {
+                        "session_context": {"target_app_id": "neuro_demo_app"}
+                    }
+                },
+            },
+            "agent_run_evidence": {
+                "event_source": "neuro_cli_events_live",
+                "release_gate_require_real_tool_adapter": True,
+                "real_tool_adapter_present": True,
+                "real_tool_execution_succeeded": True,
+            },
+            "tool_results": [{"tool_name": "system_state_sync", "status": "ok"}],
+            "session_id": session_id,
+        }
+        qq_gateway_run_payload: dict[str, Any] = {
+            "schema_version": "2.2.2-qq-official-gateway-client-v1",
+            "command": "qq-official-gateway-client",
+            "status": "ready",
+            "reason": "qq_official_gateway_dispatch_processed",
+            "closure_gates": {
+                "gateway_connected": True,
+                "hello_recorded": True,
+                "ready_recorded": True,
+                "dispatch_processed": True,
+                "core_ingress_recorded": True,
+                "bounded_runtime": True,
+            },
+            "gateway": {"url": "wss://api.sgroup.qq.com/websocket"},
+            "session_id": f"qq-{session_id}",
+            "bot_user_id": "bot-001",
+            "dispatch_event_count": 1,
+            "core_results": [{"events_persisted": 1}],
+            "reconnect_count": 1,
+            "resume_attempt_count": 1,
+            "resume_success_count": 1,
+            "resumed_event_count": 1,
+            "session_state_file": "/tmp/qq-gateway-session.json",
+            "session_state_persisted": True,
+        }
+        wecom_gateway_run_payload: dict[str, Any] = {
+            "schema_version": "2.2.3-wecom-gateway-client-v1",
+            "command": "wecom-gateway-client",
+            "status": "ready",
+            "reason": "wecom_gateway_dispatch_processed",
+            "closure_gates": {
+                "gateway_connected": True,
+                "auth_sent": True,
+                "ready_recorded": True,
+                "dispatch_processed": True,
+                "core_ingress_recorded": True,
+                "bounded_runtime": True,
+            },
+            "gateway": {"url": "wss://qyapi.weixin.qq.com/cgi-bin/websocket"},
+            "bot_user_id": "wecom-bot-001",
+            "dispatch_event_count": 1,
+            "core_results": [{"events_persisted": 1}],
+        }
+        openclaw_gateway_run_payload: dict[str, Any] = {
+            "schema_version": OPENCLAW_GATEWAY_CLIENT_SCHEMA_VERSION,
+            "command": "openclaw-gateway-client",
+            "status": "ready",
+            "reason": "openclaw_gateway_dispatch_processed",
+            "adapter_kind": "qq_openclaw",
+            "closure_gates": {
+                "gateway_connected": True,
+                "bind_sent": True,
+                "ready_recorded": True,
+                "plugin_identified": True,
+                "dispatch_processed": True,
+                "core_ingress_recorded": True,
+                "bounded_runtime": True,
+            },
+            "gateway": {
+                "url": "ws://127.0.0.1:8811/openclaw",
+                "transport_kind": "openclaw_gateway",
+                "runtime_host": "openclaw",
+            },
+            "plugin": {
+                "plugin_id": "qq_openclaw",
+                "plugin_package": "operator-supplied-qq-openclaw-package",
+                "installer_package": "operator-supplied-qq-openclaw-installer",
+                "host_version": "0.9.2",
+                "ready": True,
+            },
+            "dispatch_event_count": 1,
+            "core_results": [{"events_persisted": 1}],
+        }
+
+        hardware_payload = build_hardware_compatibility_smoke(
+            app_id=app_id,
+            app_source_dir=str(source_dir),
+            artifact_file=str(artifact_path),
+            required_heap_free_bytes=4096,
+            required_app_slot_bytes=32768,
+        )
+        resource_budget_payload = build_resource_budget_governance_smoke(
+            hardware_compatibility_payload=hardware_payload,
+        )
+        hardware_acceptance_matrix_payload = build_hardware_acceptance_matrix(
+            app_id=app_id,
+            app_source_dir=str(source_dir),
+            artifact_file=str(artifact_path),
+        )
+        agent_excellence_payload = build_agent_excellence_smoke()
+        signing_provenance_payload = build_signing_provenance_smoke(
+            app_id=app_id,
+            app_source_dir=str(source_dir),
+            artifact_file=str(artifact_path),
+        )
+        coding_agent_route_payload = build_coding_agent_self_improvement_route(
+            runner_name=runner_name,
+            summary=summary,
+            decision="approve",
+            evidence=ImprovementEvidence(
+                tests_passed=True,
+                lint_passed=True,
+                smoke_passed=True,
+                evidence_refs=("pytest.txt",),
+            ),
+        )
+        real_scene_e2e_payload = build_real_scene_e2e_smoke(
+            live_event_smoke_payload=live_event_smoke_payload,
+            coding_agent_route_payload=coding_agent_route_payload,
+        )
+        autonomy_daemon_payload = build_autonomy_daemon_smoke()
+        vitality_smoke_payload = build_vitality_smoke()
+        persona_state_payload = build_persona_state_smoke()
+        social_adapter_payload = build_social_adapter_smoke()
+        approval_social_payload = build_approval_social_smoke()
+        self_improvement_payload = build_self_improvement_smoke()
+        observability_diagnosis_payload = build_observability_diagnosis_smoke(
+            relay_failure_payload=relay_failure_payload,
+            activate_failure_payload=activate_failure_payload,
+        )
+        release_rollback_payload = build_release_rollback_hardening_smoke(
+            activate_failure_payload=activate_failure_payload,
+            rollback_payload=rollback_payload,
+        )
+        qq_gateway_payload = build_qq_official_gateway_closure(
+            gateway_run_payload=qq_gateway_run_payload,
+            require_resume_evidence=True,
+        )
+        wecom_gateway_payload = build_wecom_gateway_closure(
+            gateway_run_payload=wecom_gateway_run_payload,
+        )
+        openclaw_gateway_payload = build_openclaw_gateway_closure(
+            gateway_run_payload=openclaw_gateway_run_payload,
+        )
+
+        closure_summary = _build_session_closure_summary(
+            CoreDataStore(str(db_path)),
+            session_id,
+            limit=20,
+            documentation_payload=documentation_payload,
+            provider_smoke_payload=provider_smoke_payload,
+            multimodal_profile_payload=multimodal_profile_payload,
+            regression_payload=regression_payload,
+            relay_failure_payload=relay_failure_payload,
+            hardware_compatibility_payload=hardware_payload,
+            hardware_acceptance_matrix_payload=hardware_acceptance_matrix_payload,
+            resource_budget_governance_payload=resource_budget_payload,
+            agent_excellence_payload=agent_excellence_payload,
+            signing_provenance_payload=signing_provenance_payload,
+            observability_diagnosis_payload=observability_diagnosis_payload,
+            release_rollback_payload=release_rollback_payload,
+            real_scene_e2e_payload=real_scene_e2e_payload,
+            autonomy_daemon_payload=autonomy_daemon_payload,
+            vitality_smoke_payload=vitality_smoke_payload,
+            persona_state_payload=persona_state_payload,
+            social_adapter_payload=social_adapter_payload,
+            qq_gateway_payload=qq_gateway_payload,
+            wecom_gateway_payload=wecom_gateway_payload,
+            openclaw_gateway_payload=openclaw_gateway_payload,
+            approval_social_payload=approval_social_payload,
+            self_improvement_payload=self_improvement_payload,
+            coding_agent_route_payload=coding_agent_route_payload,
+        )
+        evidence_manifest: dict[str, str] = {}
+        if evidence_dir:
+            resolved_evidence_dir = Path(evidence_dir)
+            evidence_manifest = {
+                "run_payload": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "run-payload.json",
+                    run_payload,
+                ),
+                "documentation": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "documentation-closure.json",
+                    documentation_payload,
+                ),
+                "provider_smoke": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "provider-smoke.json",
+                    provider_smoke_payload,
+                ),
+                "multimodal_profile": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "multimodal-profile.json",
+                    multimodal_profile_payload,
+                ),
+                "regression": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "regression-closure.json",
+                    regression_payload,
+                ),
+                "relay_failure": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "relay-failure-closure.json",
+                    relay_failure_payload,
+                ),
+                "hardware_compatibility": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "hardware-compatibility.json",
+                    hardware_payload,
+                ),
+                "hardware_acceptance_matrix": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "hardware-acceptance-matrix.json",
+                    hardware_acceptance_matrix_payload,
+                ),
+                "resource_budget": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "resource-budget-governance.json",
+                    resource_budget_payload,
+                ),
+                "agent_excellence": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "agent-excellence-smoke.json",
+                    agent_excellence_payload,
+                ),
+                "signing_provenance": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "signing-provenance.json",
+                    signing_provenance_payload,
+                ),
+                "observability_diagnosis": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "observability-diagnosis.json",
+                    observability_diagnosis_payload,
+                ),
+                "release_rollback": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "release-rollback-hardening.json",
+                    release_rollback_payload,
+                ),
+                "real_scene_e2e": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "real-scene-e2e.json",
+                    real_scene_e2e_payload,
+                ),
+                "autonomy_daemon": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "autonomy-daemon-smoke.json",
+                    autonomy_daemon_payload,
+                ),
+                "vitality": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "vitality-smoke.json",
+                    vitality_smoke_payload,
+                ),
+                "persona_state": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "persona-state-smoke.json",
+                    persona_state_payload,
+                ),
+                "social_adapter": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "social-adapter-smoke.json",
+                    social_adapter_payload,
+                ),
+                "qq_gateway": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "qq-official-gateway-closure.json",
+                    qq_gateway_payload,
+                ),
+                "wecom_gateway": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "wecom-gateway-closure.json",
+                    wecom_gateway_payload,
+                ),
+                "openclaw_gateway": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "openclaw-gateway-closure.json",
+                    openclaw_gateway_payload,
+                ),
+                "approval_social": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "approval-social-smoke.json",
+                    approval_social_payload,
+                ),
+                "self_improvement": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "self-improvement-smoke.json",
+                    self_improvement_payload,
+                ),
+                "coding_agent_route": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "coding-agent-route.json",
+                    coding_agent_route_payload,
+                ),
+                "closure_summary": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "closure-summary.json",
+                    closure_summary,
+                ),
+            }
+        validation_gate_summary = cast(
+            dict[str, Any], closure_summary.get("validation_gate_summary") or {}
+        )
+        return {
+            "schema_version": RELEASE_224_CLOSURE_SMOKE_SCHEMA_VERSION,
+            "status": "ready" if bool(closure_summary.get("ok")) else "incomplete",
+            "reason": (
+                "release_224_closure_ready"
+                if bool(closure_summary.get("ok"))
+                else "release_224_closure_gap"
+            ),
+            "command": "release-2.2.4-closure-smoke",
+            "session_id": session_id,
+            "runner_name": runner_name,
+            "evidence_dir": evidence_dir,
+            "evidence_manifest": evidence_manifest,
+            "run_payload": run_payload,
+            "closure_summary": closure_summary,
+            "evidence_summary": {
+                "validation_gate_ok": bool(validation_gate_summary.get("ok")),
+                "passed_count": int(validation_gate_summary.get("passed_count") or 0),
+                "failed_gate_ids": list(
+                    cast(list[str], validation_gate_summary.get("failed_gate_ids") or [])
+                ),
+                "exported_file_count": len(evidence_manifest),
+                "coding_agent_route_gate": bool(
+                    cast(dict[str, Any], closure_summary.get("validation_gates") or {}).get(
+                        "coding_agent_route_gate"
+                    )
+                ),
+                "real_scene_e2e_gate": bool(
+                    cast(dict[str, Any], closure_summary.get("validation_gates") or {}).get(
+                        "real_scene_e2e_gate"
+                    )
+                ),
+                "closure_summary_gate": bool(
+                    cast(dict[str, Any], closure_summary.get("validation_gates") or {}).get(
+                        "closure_summary_gate"
+                    )
+                ),
+            },
+            "ok": bool(closure_summary.get("ok")),
+        }
+    finally:
+        tempdir.cleanup()
 
 
 def _build_real_scene_checklist_rows() -> list[dict[str, Any]]:
@@ -4297,6 +5315,7 @@ def _build_session_closure_summary(
     openclaw_gateway_payload: dict[str, Any] | None = None,
     approval_social_payload: dict[str, Any] | None = None,
     self_improvement_payload: dict[str, Any] | None = None,
+    coding_agent_route_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     snapshot = CoreSessionManager(data_store).load_snapshot(session_id, limit=limit)
     execution_summaries: list[dict[str, Any]] = []
@@ -4387,6 +5406,9 @@ def _build_session_closure_summary(
         self_improvement_payload,
         expected_schema=SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION,
         not_supplied_reason="self_improvement_file_not_supplied",
+    )
+    coding_agent_route_summary = _build_coding_agent_route_closure_summary(
+        coding_agent_route_payload
     )
     aggregate_gates = {
         "session_has_execution_evidence": bool(execution_summaries),
@@ -4500,6 +5522,16 @@ def _build_session_closure_summary(
                 else "Multimodal/profile evidence is missing, incomplete, or not route-ready."
             ),
         ),
+        _build_closure_checklist_entry(
+            "coding_agent_route_bundle",
+            passed=bool(coding_agent_route_summary.get("ok")),
+            title="Coding Agent Route Bundle",
+            detail=(
+                "Coding-agent routing recorded plan artifact, sandbox execution, and callback audit evidence."
+                if coding_agent_route_summary.get("ok")
+                else "Coding-agent routing evidence is missing plan artifact, sandbox execution, or callback audit details."
+            ),
+        ),
     ]
     multimodal_gates = cast(
         dict[str, Any],
@@ -4557,6 +5589,7 @@ def _build_session_closure_summary(
         "openclaw_gateway_gate": bool(openclaw_gateway_summary.get("ok")),
         "approval_over_social_gate": bool(approval_social_summary.get("ok")),
         "self_improvement_sandbox_gate": bool(self_improvement_summary.get("ok")),
+        "coding_agent_route_gate": bool(coding_agent_route_summary.get("ok")),
         "multimodal_normalization_gate": bool(
             multimodal_gates.get("multimodal_profile_smoke_supplied")
             and multimodal_gates.get("multimodal_profile_contract_supported")
@@ -4636,6 +5669,7 @@ def _build_session_closure_summary(
         "openclaw_gateway_summary": openclaw_gateway_summary,
         "approval_social_summary": approval_social_summary,
         "self_improvement_summary": self_improvement_summary,
+        "coding_agent_route_summary": coding_agent_route_summary,
         "aggregate_gates": aggregate_gates,
         "validation_gates": validation_gates,
         "validation_gate_summary": validation_gate_summary,
@@ -5376,6 +6410,121 @@ def build_parser() -> argparse.ArgumentParser:
     skill_descriptor = subparsers.add_parser("skill-descriptor")
     skill_descriptor.add_argument("--output", choices=("json",), default="json")
 
+    skill_registry = subparsers.add_parser("skill-registry")
+    skill_registry.add_argument("--output", choices=("json",), default="json")
+
+    coding_agent_descriptor = subparsers.add_parser("coding-agent-descriptor")
+    coding_agent_descriptor.add_argument("--output", choices=("json",), default="json")
+    coding_agent_descriptor.add_argument(
+        "--runner",
+        choices=("copilot", "qwen-code", "opencode", "local-command"),
+        default="copilot",
+        help="Select the governed coding-agent runner descriptor to inspect.",
+    )
+
+    tool_threat_descriptor = subparsers.add_parser("tool-threat-descriptor")
+    tool_threat_descriptor.add_argument("--output", choices=("json",), default="json")
+    tool_threat_descriptor.add_argument("--tool", required=True)
+    tool_threat_descriptor.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation used to resolve the tool contract.",
+    )
+    tool_threat_descriptor.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        help="Repeatable tool argument in name=value form for threat classification.",
+    )
+
+    mcp_tool_governance_descriptor = subparsers.add_parser("mcp-tool-governance-descriptor")
+    mcp_tool_governance_descriptor.add_argument("--output", choices=("json",), default="json")
+    mcp_tool_governance_descriptor.add_argument("--tool", required=True)
+    mcp_tool_governance_descriptor.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation used to resolve the tool contract.",
+    )
+    mcp_tool_governance_descriptor.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        help="Repeatable tool argument in name=value form for additive threat classification context.",
+    )
+
+    coding_agent_self_improvement_route = subparsers.add_parser("coding-agent-self-improvement-route")
+    coding_agent_self_improvement_route.add_argument("--output", choices=("json",), default="json")
+    coding_agent_self_improvement_route.add_argument(
+        "--runner",
+        choices=("copilot", "qwen-code", "opencode", "local-command"),
+        default="copilot",
+    )
+    coding_agent_self_improvement_route.add_argument("--summary", required=True)
+    coding_agent_self_improvement_route.add_argument(
+        "--source",
+        default="maintenance_finding",
+        help="Governed source classification for the coding-agent request.",
+    )
+    coding_agent_self_improvement_route.add_argument(
+        "--decision",
+        choices=("pending", "approve", "deny"),
+        default="pending",
+        help="Optional operator review decision to apply to the routed self-improvement proposal.",
+    )
+    coding_agent_self_improvement_route.add_argument("--tests-passed", action="store_true")
+    coding_agent_self_improvement_route.add_argument("--lint-passed", action="store_true")
+    coding_agent_self_improvement_route.add_argument("--smoke-passed", action="store_true")
+    coding_agent_self_improvement_route.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Repeatable evidence reference recorded on the governed proposal review.",
+    )
+
+    release_224_closure_smoke = subparsers.add_parser("release-2.2.4-closure-smoke")
+    release_224_closure_smoke.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+    release_224_closure_smoke.add_argument(
+        "--session-id",
+        default="release-2.2.4-closure-smoke-001",
+        help="Optional session identifier used for the release-2.2.4 closure smoke run.",
+    )
+    release_224_closure_smoke.add_argument(
+        "--runner",
+        choices=("copilot", "qwen-code", "opencode", "local-command"),
+        default="copilot",
+        help="Coding-agent runner name recorded in the governed route payload.",
+    )
+    release_224_closure_smoke.add_argument(
+        "--summary",
+        default="Repair deterministic regression in sandbox",
+        help="Improvement summary recorded in the governed coding-agent route payload.",
+    )
+    release_224_closure_smoke.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory where the release-2.2.4 closure smoke will export structured evidence JSON files.",
+    )
+
+    mcp_read_only_execute = subparsers.add_parser("mcp-read-only-execute")
+    mcp_read_only_execute.add_argument("--output", choices=("json",), default="json")
+    mcp_read_only_execute.add_argument("--tool", required=True)
+    mcp_read_only_execute.add_argument(
+        "--tool-adapter",
+        choices=("fake", "neuro-cli"),
+        default="fake",
+        help="Select the tool adapter implementation used to resolve and execute the tool.",
+    )
+    mcp_read_only_execute.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        help="Repeatable tool argument in name=value form for the read-only MCP execution payload.",
+    )
+
     mcp_descriptor = subparsers.add_parser("mcp-descriptor")
     mcp_descriptor.add_argument("--output", choices=("json",), default="json")
     mcp_descriptor.add_argument(
@@ -5464,6 +6613,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--live-event-smoke-file",
         required=True,
         help="JSON payload emitted by live-event-smoke to validate as a real Core/Unit end-to-end scenario.",
+    )
+    real_scene_e2e_smoke.add_argument(
+        "--coding-agent-route-file",
+        default="",
+        help="Optional JSON payload emitted by coding-agent-self-improvement-route to validate governed coding-agent execution evidence in the same real-scene review.",
     )
     real_scene_e2e_smoke.add_argument("--output", choices=("json",), default="json")
 
@@ -5893,6 +7047,7 @@ def build_parser() -> argparse.ArgumentParser:
     closure_summary.add_argument("--openclaw-gateway-file", default="", help="Optional openclaw-gateway-closure JSON payload to include in the bounded OpenClaw gateway live gate")
     closure_summary.add_argument("--approval-social-file", default="", help="Optional approval-social-smoke JSON payload to include in the approval-over-social gate")
     closure_summary.add_argument("--self-improvement-file", default="", help="Optional self-improvement-smoke JSON payload to include in the self-improvement sandbox gate")
+    closure_summary.add_argument("--coding-agent-route-file", default="", help="Optional coding-agent-self-improvement-route JSON payload to include in the governed coding-agent route gate")
     closure_summary.add_argument("--output", choices=("json",), default="json")
 
     approval_inspect = subparsers.add_parser("approval-inspect")
@@ -7295,6 +8450,15 @@ def main(argv: list[str] | None = None) -> int:
         payload = build_self_improvement_smoke()
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.4-closure-smoke":
+        payload = build_release_224_closure_smoke(
+            session_id=args.session_id,
+            runner_name=args.runner,
+            summary=args.summary,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "tool-manifest":
         if args.tool_adapter == "neuro-cli":
             adapter = NeuroCliToolAdapter()
@@ -7307,6 +8471,111 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "skill-descriptor":
         print(json.dumps(load_neuro_cli_skill_descriptor_payload(), sort_keys=True))
         return 0
+    if args.command == "skill-registry":
+        print(json.dumps(load_skill_descriptor_registry_payload(), sort_keys=True))
+        return 0
+    if args.command == "coding-agent-descriptor":
+        print(
+            json.dumps(
+                load_coding_agent_runner_descriptor_payload(runner_name=args.runner),
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "coding-agent-self-improvement-route":
+        evidence = ImprovementEvidence(
+            tests_passed=bool(args.tests_passed),
+            lint_passed=bool(args.lint_passed),
+            smoke_passed=bool(args.smoke_passed),
+            evidence_refs=tuple(str(item) for item in args.evidence_ref),
+        )
+        payload = build_coding_agent_self_improvement_route(
+            runner_name=args.runner,
+            summary=args.summary,
+            source=args.source,
+            decision=args.decision,
+            evidence=evidence,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "tool-threat-descriptor":
+        tool_adapter = NeuroCliToolAdapter() if args.tool_adapter == "neuro-cli" else FakeUnitToolAdapter()
+        contract = tool_adapter.describe_tool(args.tool)
+        if contract is None:
+            payload = {
+                "ok": False,
+                "status": "tool_not_found",
+                "tool_name": args.tool,
+            }
+            print(json.dumps(payload, sort_keys=True))
+            return 2
+        parsed_arguments: dict[str, str] = {}
+        for item in args.arg:
+            name, separator, value = str(item).partition("=")
+            if not separator:
+                payload = {
+                    "ok": False,
+                    "status": "invalid_argument_format",
+                    "argument": item,
+                }
+                print(json.dumps(payload, sort_keys=True))
+                return 2
+            parsed_arguments[name] = value
+        print(
+            json.dumps(
+                classify_tool_contract_threats(contract, parsed_arguments).to_dict(),
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "mcp-tool-governance-descriptor":
+        tool_adapter = NeuroCliToolAdapter() if args.tool_adapter == "neuro-cli" else FakeUnitToolAdapter()
+        parsed_arguments: dict[str, str] = {}
+        for item in args.arg:
+            name, separator, value = str(item).partition("=")
+            if not separator:
+                payload = {
+                    "ok": False,
+                    "status": "invalid_argument_format",
+                    "argument": item,
+                }
+                print(json.dumps(payload, sort_keys=True))
+                return 2
+            parsed_arguments[name] = value
+        payload = load_mcp_tool_governance_descriptor_payload(
+            args.tool,
+            tool_adapter=tool_adapter,
+        )
+        if payload.get("ok", False):
+            contract = tool_adapter.describe_tool(args.tool)
+            assert contract is not None
+            payload["threat_assessment"] = classify_tool_contract_threats(
+                contract,
+                parsed_arguments,
+            ).to_dict()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "mcp-read-only-execute":
+        tool_adapter = NeuroCliToolAdapter() if args.tool_adapter == "neuro-cli" else FakeUnitToolAdapter()
+        parsed_arguments: dict[str, str] = {}
+        for item in args.arg:
+            name, separator, value = str(item).partition("=")
+            if not separator:
+                payload = {
+                    "ok": False,
+                    "status": "invalid_argument_format",
+                    "argument": item,
+                }
+                print(json.dumps(payload, sort_keys=True))
+                return 2
+            parsed_arguments[name] = value
+        payload = build_mcp_read_only_execution(
+            tool_name=args.tool,
+            tool_args=parsed_arguments,
+            tool_adapter=tool_adapter,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "mcp-descriptor":
         tool_adapter = NeuroCliToolAdapter() if args.tool_adapter == "neuro-cli" else FakeUnitToolAdapter()
         print(
@@ -7417,8 +8686,17 @@ def main(argv: list[str] | None = None) -> int:
                 dict[str, Any],
                 json.loads(Path(args.live_event_smoke_file).read_text(encoding="utf-8")),
             )
+            coding_agent_route_payload = None
+            if args.coding_agent_route_file:
+                coding_agent_route_payload = cast(
+                    dict[str, Any],
+                    json.loads(
+                        Path(args.coding_agent_route_file).read_text(encoding="utf-8")
+                    ),
+                )
             payload = build_real_scene_e2e_smoke(
                 live_event_smoke_payload=live_event_smoke_payload,
+                coding_agent_route_payload=coding_agent_route_payload,
             )
         except (ValueError, OSError, json.JSONDecodeError) as exc:
             print(
@@ -7598,6 +8876,12 @@ def main(argv: list[str] | None = None) -> int:
                 dict[str, Any],
                 json.loads(Path(args.self_improvement_file).read_text(encoding="utf-8")),
             )
+        coding_agent_route_payload = None
+        if args.coding_agent_route_file:
+            coding_agent_route_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.coding_agent_route_file).read_text(encoding="utf-8")),
+            )
         data_store = CoreDataStore(args.db)
         try:
             payload = _build_session_closure_summary(
@@ -7628,6 +8912,7 @@ def main(argv: list[str] | None = None) -> int:
                 openclaw_gateway_payload=openclaw_gateway_payload,
                 approval_social_payload=approval_social_payload,
                 self_improvement_payload=self_improvement_payload,
+                coding_agent_route_payload=coding_agent_route_payload,
             )
         finally:
             data_store.close()
