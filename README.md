@@ -6,7 +6,7 @@ governed AI Core workflows, and release-grade smoke validation.
 
 ## 🚀 Current Release Line
 
-The project has now entered the promoted release `2.2.2` baseline after closing the QQ-focused social adapter line on top of the promoted release `2.1.0` autonomous/social baseline. The fresh release-2.2.2 closure bundle is green with the expanded 27-gate closure matrix, and the canonical host CLI now advertises `RELEASE_TARGET = "2.2.2"`.
+The project has now entered the promoted release `2.2.3` baseline after closing the OpenClaw-compatible social gateway line on top of the promoted release `2.2.2` QQ/social baseline. The fresh release-2.2.3 promotion bundle is green with the expanded 29-gate closure matrix, and the canonical host CLI now advertises `RELEASE_TARGET = "2.2.3"`.
 
 ## ✨ What NeuroLink Provides
 
@@ -58,7 +58,7 @@ Release `1.2.5` is the closed multimodal Agent runtime and governance slice. It 
 
 Release `1.2.6` is the closed federation, relay, and Agent platform slice. It carried the project to about 94% HLD completion by making Core-to-Core topology sync, delegated execution planning, Gateway Unit relay route evidence, hardware-agnostic capability descriptors, and higher-quality Agent Tool/Skill/MCP governance executable without hardcoding the current validation hardware.
 
-Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is the closed stabilized product baseline. Release `2.1.0` is the closed autonomous/social AI Core baseline. Release `2.2.2` is now the promoted QQ-focused social adapter baseline after registry/config surfaces, official QQ and OneBot normalization, bounded official QQ webhook/gateway ingress, bounded resume continuity, and archived gateway closure evidence passed.
+Release `1.2.7` is now closed as the HLD-completion and release-2.0.0-readiness slice. Release `2.0.0` is the closed stabilized product baseline. Release `2.1.0` is the closed autonomous/social AI Core baseline. Release `2.2.2` is the closed QQ-focused social adapter baseline. Release `2.2.3` is now the promoted OpenClaw-compatible social gateway baseline after direct WeCom enterprise ingress, bounded OpenClaw gateway closure, hosted `wechat_ilink` and `qq_openclaw` compatibility surfaces, and the 29-gate promotion bundle passed.
 
 ## 📁 Project Layout
 
@@ -328,10 +328,12 @@ Capability map:
 - `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md` -
 	QwenPaw-informed post-2.1 implementation train, extension contracts,
 	license boundary, small-version roadmap, and future evidence gates.
-- `docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md` - completed
-	release-2.2.3 OpenClaw-compatible social gateway implementation, direct
-	WeCom enterprise path, hosted-plugin compatibility boundary, and bounded
-	handoff validation path.
+- `docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md` - promoted
+	release-2.2.3 OpenClaw-compatible social gateway baseline, direct WeCom
+	enterprise path, hosted-plugin compatibility boundary, and bounded closure
+	shape.
+- `docs/project/RELEASE_2.2.3_PROMOTION_CHECKLIST.md` - final release-2.2.3
+	promotion decision, bundle path, and promoted identity surfaces.
 - `docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` - release-2.2.2
 	QQ official / OneBot social adapter registry, config, compliance, and smoke
 	implementation plan.
@@ -370,4 +372,4 @@ Release progress and architecture closure notes live in:
 - `docs/project/RELEASE_1.2.2_REAL_LLM_CORE_PLAN.md`
 - `docs/project/RELEASE_1.2.1_MAF_CORE_AGENT_PLAN.md`
 
-Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is closed as the multimodal Agent runtime and governance baseline. Releases `1.2.6`, `1.2.7`, `2.0.0`, and `2.1.0` are closed, and release `2.2.2` is now the promoted QQ/social adapter runtime baseline rather than an in-progress branch.
+Release `1.2.4` is closed as the Core App Build/Deploy Orchestrator and production live event service baseline. Release `1.2.5` is closed as the multimodal Agent runtime and governance baseline. Releases `1.2.6`, `1.2.7`, `2.0.0`, `2.1.0`, and `2.2.2` are closed, and release `2.2.3` is now the promoted social gateway runtime baseline rather than an in-progress branch.

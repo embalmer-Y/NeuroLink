@@ -1,9 +1,11 @@
 # Release 2.2.3 OpenClaw-Compatible Social Gateway Plan
 
-Status: completed on 2026-05-11 for the scoped development and handoff slice.
-The release-2.2.3 implementation, documentation alignment, focused regression
-packaging, and git submission are finished. A future promotion bundle may still
-be generated separately if formal release-identity promotion is requested.
+Status: promoted on 2026-05-11.
+The release-2.2.3 implementation, documentation alignment, bounded gateway
+closure, and final promotion bundle are complete. The archived promotion bundle
+is `smoke-evidence/release-2.2.3-promotion-20260511T045344Z/`, whose
+`closure-summary-final.json` passed 29 of 29 validation gates before release
+identity moved to `2.2.3`.
 
 Release 2.2.3 now pivots from a channel-specific WeCom/WeChat expansion into an
 OpenClaw-compatible social gateway architecture. The promoted release-2.2.2

@@ -3,7 +3,7 @@ from __future__ import annotations
 import neuro_protocol as protocol
 
 
-RELEASE_TARGET = "2.2.2"
+RELEASE_TARGET = "2.2.3"
 
 
 def release_label(suffix: str) -> str:

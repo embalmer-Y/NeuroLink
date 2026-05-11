@@ -1,4 +1,28 @@
+2026-05-11: Closed and promoted release-2.2.3 after the OpenClaw-compatible
+social gateway bundle, WeCom/OpenClaw gateway closure evidence, focused social
+regressions, and release-identity updates converged. The archived bundle
+`smoke-evidence/release-2.2.3-promotion-20260511T045344Z/` reports a green
+`closure-summary-final.json` with `validation_gate_summary.ok=true`,
+`passed_count=29`, and `failed_gate_ids=[]`. After that green bundle,
+canonical identity moved to `2.2.3` in the Neuro CLI, workflow catalog, sample
+Unit app source identity, README, and AI Core English/Chinese runbooks. This
+promotes direct WeCom plus bounded OpenClaw-hosted compatibility closure into
+the active baseline while keeping schema-version stability intact. - Copilot
+
 2026-05-11: Closed and promoted release-2.2.2 after the QQ/social adapter closure bundle, focused AI Core regressions, and release-target validation all converged. The archived bundle `smoke-evidence/release-2.2.2-closure-20260511T021545Z/` now reports a green `closure-summary-final.json` with `validation_gate_summary.ok=true`, `passed_count=27`, and `failed_gate_ids=[]`. The bundle carries forward unchanged 2.1.0 execution evidence for federation/relay route gates, adds fresh release-2.2.2 documentation/regression/social-adapter evidence, and archives the dedicated QQ gateway live closure artifact from the real bounded Tencent gateway run. After that green bundle, canonical identity moved to `2.2.2` in the Neuro CLI, workflow catalog, sample Unit app source identity, README, and AI Core English/Chinese runbooks. Focused AI Core validation passed with `23 passed` for `test_social_adapters.py`, `17 passed, 137 deselected` for the closure-summary and QQ gateway closure slice, `295 passed, 6 subtests passed` for the full `neurolink_core/tests` suite, `5 passed` for the focused Neuro CLI release-target checks, and direct capabilities output now reports `release_target=2.2.2`. - Copilot
+
+2026-05-11: Materialized the release-2.2.3 final promotion bundle after
+recovering from a draft bundle that had fresh social/gateway evidence but the
+wrong execution baseline for federation/relay carry-forward. The superseding
+bundle `smoke-evidence/release-2.2.3-promotion-20260511T045344Z/` now combines
+the landed release-2.2.3 documentation, regression, WeCom gateway, OpenClaw
+gateway, `qq_openclaw`, and social-adapter evidence with the verified
+release-2.1.0 execution baseline required for federation/relay route gates.
+Its `closure-summary-final.json` is green with `validation_gate_summary.ok=true`,
+`passed_count=29`, and `failed_gate_ids=[]`, and the bundle manifest records the
+earlier `release-2.2.3-promotion-20260511T043601Z/` directory as a superseded
+draft. This materializes the pre-promotion bundle only; canonical release
+identity is not changed by this step. - Copilot
 
 2026-05-11: Realigned release-2.2.3 planning from a narrow WeCom/WeChat
 adapter expansion to an OpenClaw-compatible social gateway architecture. The

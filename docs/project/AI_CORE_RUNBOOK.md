@@ -1,23 +1,25 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` on top of the
-promoted release-2.2.2 QQ/social-adapter baseline, which extends the closed
-release-2.1.0 autonomous/social baseline with configurable social adapter
-registry/config surfaces, official QQ and OneBot normalization, bounded
-official QQ webhook/gateway ingress, and archived QQ gateway closure evidence.
-It still covers the inherited closed release-1.2.6 federation/relay/
-Agent-platform baseline, the closed release-1.2.7 HLD-completion bundle, and
-the inherited release-1.2.4 through release-2.1.0 runtime/governance surfaces
-that remain part of release evidence. Release identity is now promoted to
-`2.2.2` after the release-2.2.2 closure bundle passed with the dedicated QQ
-gateway gate. This runbook is written for operators and developers who need to
-run Core locally, check provider and memory readiness, execute the Core-owned
+promoted release-2.2.3 social-gateway baseline, which extends the closed
+release-2.2.2 QQ/social-adapter baseline with direct WeCom enterprise ingress,
+bounded OpenClaw gateway closure, and hosted compatibility surfaces for
+`wechat_ilink` and `qq_openclaw`. It still covers the inherited closed
+release-1.2.6 federation/relay/Agent-platform baseline, the closed
+release-1.2.7 HLD-completion bundle, and the inherited release-1.2.4 through
+release-2.2.2 runtime/governance surfaces that remain part of release
+evidence. Release identity is now promoted to `2.2.3` after the release-2.2.3
+promotion bundle passed with the dedicated WeCom and OpenClaw gateway gates.
+This runbook is written for operators and developers who need to run Core
+locally, check provider and memory readiness, execute the Core-owned
 build/deploy gates, or close bounded live service and AI Core release evidence.
 
 For a task-oriented startup and daily-use guide, start with
 `docs/project/AI_CORE_USER_GUIDE.md`. For the implementation plan and promotion
 record that define the current baseline, use
-`docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` and `PROJECT_PROGRESS.md`.
+`docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md`,
+`docs/project/RELEASE_2.2.3_PROMOTION_CHECKLIST.md`, and
+`PROJECT_PROGRESS.md`.
 
 ## 1. Runtime Shape
 
