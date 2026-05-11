@@ -131,6 +131,32 @@ Chinese AI Core runbooks plus the release-2.2.3 plan now point to this command
 as the default rerun path, so the release no longer depends on manually
 reconstructed pytest filters at handoff time. - Copilot
 
+2026-05-11: Marked release-2.2.3 complete for the scoped development target and
+resubmitted the code after the final status pass. The release plan now carries
+an explicit completion marker, the README documentation map now describes
+release-2.2.3 as completed rather than in-flight, and the implementation/docs
+remain bounded to the landed OpenClaw-compatible social gateway, direct WeCom,
+and hosted compatibility handoff surfaces. This completion mark closes the
+development line itself; a separate promotion bundle may still be generated
+later if canonical release-identity promotion is needed. - Copilot
+
+#### EXEC-385 Release 2.2.3 Completion Mark And Resubmission
+
+- Status: completed and resubmitted
+- Added:
+  - explicit completion marker in the release-2.2.3 plan document
+  - README wording update so release-2.2.3 is described as completed
+  - progress-ledger completion record before the resubmission commit
+- Boundary confirmation:
+  - this marks the release-2.2.3 development scope as finished
+  - this does not claim a fresh promotion bundle or release-identity change
+  - any later promotion workflow remains a separate follow-up action
+- Validation:
+  - `get_errors docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md`
+  - `get_errors README.md`
+  - `get_errors PROJECT_PROGRESS.md`
+  - resubmission commit and push after the status update
+
 #### EXEC-384 Release 2.2.3 Fixed Pre-Promotion Validation Command Slice
 
 - Status: implemented and focused-validation green

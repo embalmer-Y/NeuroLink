@@ -328,10 +328,10 @@ Capability map:
 - `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md` -
 	QwenPaw-informed post-2.1 implementation train, extension contracts,
 	license boundary, small-version roadmap, and future evidence gates.
-- `docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md` - release-2.2.3
-	OpenClaw-compatible social gateway architecture, direct WeCom enterprise
-	path, hosted-plugin compatibility boundary, and bounded implementation
-	order.
+- `docs/project/RELEASE_2.2.3_WECOM_WECHAT_ADAPTER_PLAN.md` - completed
+	release-2.2.3 OpenClaw-compatible social gateway implementation, direct
+	WeCom enterprise path, hosted-plugin compatibility boundary, and bounded
+	handoff validation path.
 - `docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` - release-2.2.2
 	QQ official / OneBot social adapter registry, config, compliance, and smoke
 	implementation plan.

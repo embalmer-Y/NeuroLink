@@ -1,5 +1,10 @@
 # Release 2.2.3 OpenClaw-Compatible Social Gateway Plan
 
+Status: completed on 2026-05-11 for the scoped development and handoff slice.
+The release-2.2.3 implementation, documentation alignment, focused regression
+packaging, and git submission are finished. A future promotion bundle may still
+be generated separately if formal release-identity promotion is requested.
+
 Release 2.2.3 now pivots from a channel-specific WeCom/WeChat expansion into an
 OpenClaw-compatible social gateway architecture. The promoted release-2.2.2
 baseline remains the bounded `qq_official` / `onebot_qq` social adapter line,
