@@ -1,24 +1,23 @@
 # NeuroLink AI Core Runbook
 
 This runbook explains how to start and validate `neurolink_core` on top of the
-promoted release-2.1.0 autonomous/social baseline, which extends the closed
-release-2.0.0 stabilized baseline with autonomous daemon cycles, Vitality,
-Persona persistence, social adapter ingress/egress, approval-aware social
-control, and self-improvement sandbox evidence. It still covers the inherited
-closed release-1.2.6 federation/relay/Agent-platform baseline, the closed
-release-1.2.7 HLD-completion bundle, and the inherited release-1.2.4 through
-release-1.2.5 runtime/governance surfaces that remain part of release evidence.
-Release identity is now promoted to `2.1.0` after the release-2.1.0 promotion
-bundle and real-provider integration evidence passed. This runbook is written
-for operators and developers who need to run Core locally, check provider and
-memory readiness, execute the Core-owned build/deploy gates, or close bounded
-live service and AI Core release evidence.
+promoted release-2.2.2 QQ/social-adapter baseline, which extends the closed
+release-2.1.0 autonomous/social baseline with configurable social adapter
+registry/config surfaces, official QQ and OneBot normalization, bounded
+official QQ webhook/gateway ingress, and archived QQ gateway closure evidence.
+It still covers the inherited closed release-1.2.6 federation/relay/
+Agent-platform baseline, the closed release-1.2.7 HLD-completion bundle, and
+the inherited release-1.2.4 through release-2.1.0 runtime/governance surfaces
+that remain part of release evidence. Release identity is now promoted to
+`2.2.2` after the release-2.2.2 closure bundle passed with the dedicated QQ
+gateway gate. This runbook is written for operators and developers who need to
+run Core locally, check provider and memory readiness, execute the Core-owned
+build/deploy gates, or close bounded live service and AI Core release evidence.
 
 For a task-oriented startup and daily-use guide, start with
 `docs/project/AI_CORE_USER_GUIDE.md`. For the implementation plan and promotion
 record that define the current baseline, use
-`docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md` and
-`docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md`.
+`docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` and `PROJECT_PROGRESS.md`.
 
 ## 1. Runtime Shape
 
@@ -284,6 +283,255 @@ Expected evidence:
 7. `memory_runtime.fallback_active=false`
 8. `real_tool_adapter_present=true`
 9. `real_tool_execution_succeeded=true`
+
+### 4.7 QQ Social Adapter Real-Scene Preflight
+
+For release-2.2.2 real-scene validation, use `qq_official` as the default QQ
+path first. It is the preferred production-facing route. Treat `onebot_qq` as
+an optional compatibility bridge only after the official path is understood.
+
+The bounded release-2.2.2 real-scene objective is not a long-running live
+social daemon. The objective is to validate the official adapter profile,
+scenario normalization, and an optional bounded transport probe while keeping
+Core policy and Affective-only response boundaries intact.
+
+Before the real-scene run, the operator should provide or confirm:
+
+1. the official QQ endpoint URL;
+2. the environment variable names that hold the QQ credentials;
+3. one direct-message test target;
+4. one group where the bot can be mentioned;
+5. one group path where a non-mention message can be observed safely;
+6. whether bounded transport probing is approved for this profile.
+
+If the platform or current bot capability does not allow the official QQ bot to
+join a target group, do not treat that as a Core implementation failure. In
+that case, record the limitation explicitly and continue with a direct-only
+real-scene fallback first. Release-2.2.2 may still close the official adapter
+preflight with:
+
+1. official profile readiness;
+2. bounded endpoint reachability;
+3. direct-message target binding;
+4. deterministic group and non-mention contract evidence.
+
+Configure the official profile explicitly:
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-config \
+  --adapter qq_official \
+  --enable \
+  --active \
+  --endpoint-url <qq-official-endpoint> \
+  --credential-env-var <qq-token-env-var> \
+  --credential-env-var <qq-secret-env-var> \
+  --mention-policy mention_or_direct \
+  --transport-kind https \
+  --live-network-allowed true
+```
+
+Confirm the profile shape and readiness summary:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-list
+```
+
+Run all required deterministic scenarios before any transport probe:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario group
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario direct
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario group_no_mention
+```
+
+Inspect these fields in the JSON outputs:
+
+1. `sample_scenario`
+2. `results[0].social_envelope.channel_kind`
+3. `results[0].social_envelope.metadata.session_scope`
+4. `results[0].social_envelope.metadata.mentioned_user_ids`
+5. `evidence_summary.deterministic_normalization.ready_count`
+
+When group attachment is blocked externally, keep the `group` and
+`group_no_mention` scenarios as deterministic contract checks and treat the
+operator-provided direct target as the only live-scene target for this pass.
+
+When bounded live-network probing is explicitly approved, run the transport
+reachability probe on the same profile:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario group \
+  --probe-transport \
+  --probe-timeout-seconds 1.5
+```
+
+Inspect these fields in the probe output:
+
+1. `probe_requested=true`
+2. `results[0].transport_probe.status`
+3. `results[0].transport_probe.reason`
+4. `results[0].closure_gates.network_execution_policy_respected`
+5. `evidence_summary.transport_reachability.status_counts`
+
+The transport probe only proves bounded endpoint reachability. It does not
+prove inbound callback delivery, outbound send success, or permission to bypass
+existing Core governance. Keep all live social checks bounded, explicit, and
+operator-approved.
+
+If you are ready to validate official QQ callback ingress locally, start the
+bounded webhook server instead of inventing a long-running daemon first:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli qq-official-webhook-server \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --host 127.0.0.1 \
+  --port 8091 \
+  --path /qq/callback \
+  --duration 30 \
+  --max-events 1 \
+  --ready-file /tmp/qq-official-webhook-ready.json
+```
+
+Inspect these fields after the bounded run:
+
+1. `listen_address.host`, `listen_address.port`, and `listen_address.path`
+2. `validation_request_count`
+3. `dispatch_event_count`
+4. `events[0].event_type`
+5. `core_results[0].events_persisted`
+
+Use this command only for bounded callback verification and local ingress
+validation. It is the first live ingress step for release-2.2.2, not the final
+production serving topology.
+
+If the QQ platform keeps rejecting callback verification even after the request
+path, `AppID`, and request-signature diagnostics are confirmed, switch to the
+bounded official gateway path instead of blocking all live-ingress work on the
+callback page:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli qq-official-gateway-client \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --duration 30 \
+  --max-events 1 \
+  --ready-file /tmp/qq-official-gateway-ready.json \
+  --session-state-file /tmp/qq-official-gateway-session.json \
+  --max-resume-attempts 2
+```
+
+Inspect these fields after the bounded run:
+
+1. `gateway.url`
+2. `hello_count`
+3. `ready_event_count`
+4. `dispatch_event_count`
+5. `core_results[0].events_persisted`
+6. `resume_attempt_count`
+7. `resume_success_count`
+8. `reconnect_count`
+
+When the current shell is stable enough to hold a local state file, prefer
+`--session-state-file` during bounded gateway runs. It lets the client persist
+`session_id` and the latest gateway sequence and make bounded `RESUME` attempts
+after disconnects without promoting the command into a long-running daemon.
+
+Use this path when official websocket/gateway ingress is available and the
+callback verification page is still unstable. It is bounded live ingress, not a
+claim that Neurolink now runs a long-lived QQ resident.
+
+When the bounded gateway run needs to feed release closure, archive the raw run
+JSON and convert it into a stable closure payload before the final
+`closure-summary` pass:
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli qq-official-gateway-closure \
+  --gateway-run-file /tmp/qq-official-gateway-run.json \
+  --require-resume-evidence > /tmp/qq-official-gateway-closure.json
+```
+
+Then add `--qq-gateway-file /tmp/qq-official-gateway-closure.json` to the final
+`closure-summary` command and verify `validation_gates.qq_official_gateway_gate=true`.
+
+### 4.7.1 Official QQ Webhook Callback Drill
+
+Use this drill when you are ready to connect the official QQ developer console
+to the bounded local ingress path and prove a real callback can reach Core.
+
+Before opening the QQ developer console, confirm these local prerequisites:
+
+1. `QQ_BOT_APP_ID` and `QQ_BOT_APP_SECRET` are present in the current shell.
+2. `social-adapter-list` shows `qq_official` as active and ready.
+3. deterministic `group`, `direct`, and `group_no_mention` checks have already passed.
+4. the operator has a temporary public HTTPS entrypoint that forwards to `127.0.0.1:<local-port>`.
+
+Start the bounded listener and keep its terminal attached while configuring the
+official callback:
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+source /home/emb/project/zephyrproject/.venv/bin/activate
+python -m neurolink_core.cli qq-official-webhook-server \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --host 127.0.0.1 \
+  --port 8091 \
+  --path /qq/callback \
+  --duration 120 \
+  --max-events 1 \
+  --ready-file /tmp/qq-official-webhook-ready.json
+```
+
+Read the ready file in a second terminal so you can confirm the exact local
+socket before exposing it publicly:
+
+```bash
+cat /tmp/qq-official-webhook-ready.json
+```
+
+Expected ready-file shape:
+
+```json
+{
+  "host": "127.0.0.1",
+  "path": "/qq/callback",
+  "port": 8091
+}
+```
+
+Then configure the official QQ platform callback with operator-managed public
+HTTPS forwarding:
+
+1. create or reuse a temporary public HTTPS URL that forwards to `http://127.0.0.1:8091/qq/callback`;
+2. fill the QQ developer console callback URL with `<public-https-base>/qq/callback`;
+3. keep the same `AppID` and `AppSecret` already used by the active `qq_official` profile;
+4. save the platform callback settings while the bounded local listener is still running.
+
+Interpret the bounded run result in two stages:
+
+1. `validation_request_count=1` means QQ reached the callback and the local signer answered the verification challenge.
+2. `dispatch_event_count=1` plus `core_results[0].events_persisted=1` means at least one supported live event crossed the webhook boundary and entered Core.
+
+If callback validation succeeds but no dispatch arrives before timeout, treat the
+run as a transport-only proof. That still closes ingress reachability, but not a
+full message event proof. In that case, send one direct message to the bot or
+trigger one supported mention event during the same bounded run and retry.
+
+If the QQ console rejects the callback immediately, check these items first:
+
+1. the public URL is HTTPS and forwards to the same `path` in the ready file;
+2. the running shell contains the same `AppSecret` bound to the active profile;
+3. the bounded listener has not already exited because of `duration` or `max-events`;
+4. the forwarding layer is preserving the POST body and content type.
 
 ## 5. Release-1.2.4 Orchestrator And Live Service Commands
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import tempfile
 from typing import Any, cast
@@ -36,10 +37,19 @@ from .persona import PersonaSignal
 from .persona import apply_persona_signals
 from .persona import redact_relationships
 from .social import MockSocialAdapter
+from .social import SocialMessageEnvelope
 from .social import build_social_approval_summary
 from .self_improvement import ImprovementEvidence
 from .self_improvement import propose_self_improvement
 from .self_improvement import review_self_improvement
+from .social_adapters import social_adapter_config_update
+from .social_adapters import social_adapter_list
+from .social_adapters.registry import SocialAdapterProfile
+from .social_adapters.registry import social_adapter_registry
+from .social_adapters.qq_official_gateway import run_qq_official_gateway_client
+from .social_adapters.qq_official import QQOfficialSocialAdapter
+from .social_adapters.qq_official_webhook import run_qq_official_webhook_server
+from .social_adapters import social_adapter_test
 from .workflow import (
     APP_ARTIFACT_ADMISSION_SCHEMA_VERSION,
     apply_approval_decision,
@@ -60,7 +70,7 @@ from .workflow import (
 )
 
 
-CLOSURE_SUMMARY_SCHEMA_VERSION = "1.2.7-closure-summary-v14"
+CLOSURE_SUMMARY_SCHEMA_VERSION = "1.2.7-closure-summary-v15"
 DOCUMENTATION_CLOSURE_SCHEMA_VERSION = "1.2.5-documentation-closure-v1"
 REGRESSION_CLOSURE_SCHEMA_VERSION = "1.2.6-regression-closure-v2"
 LEGACY_REGRESSION_CLOSURE_SCHEMA_VERSION = "1.2.5-regression-closure-v1"
@@ -80,6 +90,7 @@ APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION = "2.1.0-approval-social-smoke-v1"
 SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION = "2.1.0-social-adapter-smoke-v1"
 SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION = "2.1.0-self-improvement-smoke-v1"
 REAL_SCENE_CHECKLIST_TEMPLATE_SCHEMA_VERSION = "2.0.0-real-scene-checklist-template-v1"
+QQ_OFFICIAL_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.2-qq-official-gateway-closure-v1"
 
 
 def _build_closure_checklist_entry(
@@ -1613,6 +1624,21 @@ def _build_social_user_prompt_event(
         is_admin=social_admin,
     )
     social_event = social_adapter.to_perception_event(social_envelope)
+    return _merge_social_prompt_event(
+        social_event=social_event,
+        social_text=social_text,
+        social_adapter_kind=social_adapter_kind,
+        social_metadata=social_envelope.metadata,
+    )
+
+
+def _merge_social_prompt_event(
+    *,
+    social_event: dict[str, Any],
+    social_text: str,
+    social_adapter_kind: str,
+    social_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     classified_event = build_user_prompt_event(social_text)[0]
     merged_policy_tags = list(
         dict.fromkeys(
@@ -1636,8 +1662,23 @@ def _build_social_user_prompt_event(
         **cast(dict[str, Any], social_event.get("payload") or {}),
         **cast(dict[str, Any], classified_event.get("payload") or {}),
         "social_adapter": social_adapter_kind,
+        "social_metadata": dict(social_metadata or {}),
     }
     return social_event
+
+
+def _build_social_event_from_envelope(
+    envelope: SocialMessageEnvelope,
+    *,
+    social_adapter: Any,
+) -> dict[str, Any]:
+    social_event = cast(dict[str, Any], social_adapter.to_perception_event(envelope))
+    return _merge_social_prompt_event(
+        social_event=social_event,
+        social_text=envelope.text,
+        social_adapter_kind=envelope.adapter_kind,
+        social_metadata=envelope.metadata,
+    )
 
 
 def _run_social_agent_payload(
@@ -1681,10 +1722,193 @@ def _run_social_agent_payload(
     )
 
 
-def build_social_adapter_smoke() -> dict[str, Any]:
+def _pick_profile_env_value(
+    profile: SocialAdapterProfile,
+    *,
+    preferred_fragments: tuple[str, ...],
+) -> tuple[str, str]:
+    env_vars = list(profile.credential_env_vars)
+    for fragment in preferred_fragments:
+        for env_var in env_vars:
+            if fragment in env_var.upper():
+                value = str(os.environ.get(env_var) or "")
+                if value:
+                    return env_var, value
+    for env_var in env_vars:
+        value = str(os.environ.get(env_var) or "")
+        if value:
+            return env_var, value
+    raise ValueError("qq_official_credential_env_missing")
+
+
+def _run_qq_official_live_ingress(
+    *,
+    db_path: str,
+    host: str,
+    port: int,
+    path: str,
+    duration: int,
+    max_events: int,
+    ready_file: str,
+    session_id: str | None,
+    config_path: str,
+    maf_provider_mode: str,
+    allow_model_call: bool,
+    memory_backend: str,
+    rational_backend: str,
+    require_real_tool_adapter: bool,
+) -> dict[str, Any]:
+    registry = social_adapter_registry(env=os.environ, config_path=config_path)
+    profile = registry.get_profile("qq_official")
+    if profile is None:
+        raise ValueError("qq_official_profile_missing")
+    if not profile.ready_for_live_io:
+        raise ValueError("qq_official_profile_not_ready")
+    _, app_secret = _pick_profile_env_value(
+        profile,
+        preferred_fragments=("APP_SECRET", "SECRET", "TOKEN"),
+    )
+    social_adapter = QQOfficialSocialAdapter()
+
+    def ingest_callback(envelope: SocialMessageEnvelope, event_type: str) -> dict[str, Any]:
+        event = _build_social_event_from_envelope(
+            envelope,
+            social_adapter=social_adapter,
+        )
+        event["payload"] = {
+            **cast(dict[str, Any], event.get("payload") or {}),
+            "qq_event_type": event_type,
+        }
+        return run_no_model_dry_run(
+            db_path,
+            events=[event],
+            session_id=session_id,
+            maf_provider_mode=maf_provider_mode,
+            allow_model_call=allow_model_call,
+            memory_backend=memory_backend,
+            rational_backend=rational_backend,
+            require_real_tool_adapter=require_real_tool_adapter,
+            event_source_label="qq_official_webhook",
+        )
+
+    return run_qq_official_webhook_server(
+        app_secret=app_secret,
+        ingest_callback=ingest_callback,
+        host=host,
+        port=port,
+        path=path,
+        duration=duration,
+        max_events=max_events,
+        ready_file=ready_file,
+    )
+
+
+def _run_qq_official_gateway_ingress(
+    *,
+    db_path: str,
+    duration: int,
+    max_events: int,
+    ready_file: str,
+    session_state_file: str,
+    max_resume_attempts: int,
+    reconnect_backoff_seconds: float,
+    session_id: str | None,
+    config_path: str,
+    gateway_url: str,
+    maf_provider_mode: str,
+    allow_model_call: bool,
+    memory_backend: str,
+    rational_backend: str,
+    require_real_tool_adapter: bool,
+) -> dict[str, Any]:
+    registry = social_adapter_registry(env=os.environ, config_path=config_path)
+    profile = registry.get_profile("qq_official")
+    if profile is None:
+        raise ValueError("qq_official_profile_missing")
+    if not profile.ready_for_live_io:
+        raise ValueError("qq_official_profile_not_ready")
+    _, app_id = _pick_profile_env_value(
+        profile,
+        preferred_fragments=("APP_ID",),
+    )
+    _, app_secret = _pick_profile_env_value(
+        profile,
+        preferred_fragments=("APP_SECRET", "SECRET", "TOKEN"),
+    )
+    social_adapter = QQOfficialSocialAdapter()
+
+    def ingest_callback(envelope: SocialMessageEnvelope, event_type: str) -> dict[str, Any]:
+        event = _build_social_event_from_envelope(
+            envelope,
+            social_adapter=social_adapter,
+        )
+        event["payload"] = {
+            **cast(dict[str, Any], event.get("payload") or {}),
+            "qq_event_type": event_type,
+        }
+        return run_no_model_dry_run(
+            db_path,
+            events=[event],
+            session_id=session_id,
+            maf_provider_mode=maf_provider_mode,
+            allow_model_call=allow_model_call,
+            memory_backend=memory_backend,
+            rational_backend=rational_backend,
+            require_real_tool_adapter=require_real_tool_adapter,
+            event_source_label="qq_official_gateway",
+        )
+
+    return run_qq_official_gateway_client(
+        app_id=app_id,
+        app_secret=app_secret,
+        ingest_callback=ingest_callback,
+        duration=duration,
+        max_events=max_events,
+        ready_file=ready_file,
+        gateway_url=gateway_url,
+        session_state_file=session_state_file,
+        max_resume_attempts=max_resume_attempts,
+        reconnect_backoff_seconds=reconnect_backoff_seconds,
+    )
+
+
+def build_social_adapter_smoke(*, config_path: str = "") -> dict[str, Any]:
     tempdir = tempfile.TemporaryDirectory()
     try:
         db_path = str(Path(tempdir.name) / "social-adapter-smoke.db")
+        smoke_config_path = str(Path(tempdir.name) / "social-adapter-smoke-config.json")
+        resolved_config_path = config_path or smoke_config_path
+        social_adapter_config_update(
+            adapter_name="qq_official",
+            config_path=resolved_config_path,
+            endpoint_url="https://api.sgroup.qq.com",
+            credential_env_vars=["QQ_BOT_TOKEN", "QQ_BOT_SECRET"],
+            enabled=True,
+        )
+        social_adapter_config_update(
+            adapter_name="onebot_qq",
+            config_path=resolved_config_path,
+            endpoint_url="ws://127.0.0.1:3001/onebot",
+            credential_env_vars=["ONEBOT_ACCESS_TOKEN"],
+            enabled=True,
+            compliance_acknowledged=True,
+        )
+        adapter_registry_payload = social_adapter_list(
+            env={
+                "QQ_BOT_TOKEN": "masked-token",
+                "QQ_BOT_SECRET": "masked-secret",
+                "ONEBOT_ACCESS_TOKEN": "masked-access-token",
+            },
+            config_path=resolved_config_path,
+        )
+        adapter_test_payload = social_adapter_test(
+            env={
+                "QQ_BOT_TOKEN": "masked-token",
+                "QQ_BOT_SECRET": "masked-secret",
+                "ONEBOT_ACCESS_TOKEN": "masked-access-token",
+            },
+            config_path=resolved_config_path,
+        )
         social_adapter = MockSocialAdapter()
         envelope = social_adapter.bind_principal(
             adapter_kind="mock_qq",
@@ -1708,6 +1932,15 @@ def build_social_adapter_smoke() -> dict[str, Any]:
             envelope,
             cast(dict[str, Any], payload.get("final_response") or {}),
         )
+        test_results = cast(list[dict[str, Any]], adapter_test_payload.get("results") or [])
+        qq_result = next(
+            (result for result in test_results if str(result.get("adapter") or "") == "qq_official"),
+            None,
+        ) or {}
+        onebot_result = next(
+            (result for result in test_results if str(result.get("adapter") or "") == "onebot_qq"),
+            None,
+        ) or {}
         closure_gates: dict[str, bool] = {
             "social_event_persisted": int(payload.get("events_persisted", 0)) == 1,
             "social_event_source_recorded": str(
@@ -1727,6 +1960,18 @@ def build_social_adapter_smoke() -> dict[str, Any]:
             == "affective",
             "affective_delivery_recorded": delivery.speaker == "affective"
             and delivery.delivery_status == "delivered",
+            "social_adapter_registry_gate": bool(adapter_registry_payload.get("ok")),
+            "qq_social_gate": str(qq_result.get("status") or "") == "ready"
+            and str(cast(dict[str, Any], qq_result.get("social_envelope") or {}).get("adapter_kind") or "")
+            == "qq_official",
+            "onebot_social_gate": str(onebot_result.get("status") or "") == "ready"
+            and str(cast(dict[str, Any], onebot_result.get("social_envelope") or {}).get("adapter_kind") or "")
+            == "onebot_qq",
+            "social_compliance_gate": bool(
+                cast(dict[str, Any], onebot_result.get("profile") or {}).get("compliance_ready")
+            ) and bool(
+                cast(dict[str, Any], qq_result.get("profile") or {}).get("compliance_ready")
+            ),
         }
         return {
             "schema_version": SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION,
@@ -1739,6 +1984,8 @@ def build_social_adapter_smoke() -> dict[str, Any]:
             "social_envelope": envelope.to_dict(),
             "delivery_record": delivery.to_dict(),
             "agent_payload": payload,
+            "social_adapter_registry": adapter_registry_payload,
+            "social_adapter_test": adapter_test_payload,
             "evidence_summary": {
                 "event_source": cast(
                     dict[str, Any], payload.get("agent_run_evidence") or {}
@@ -1747,6 +1994,10 @@ def build_social_adapter_smoke() -> dict[str, Any]:
                     "speaker"
                 ),
                 "principal_id": envelope.principal_id,
+                "ready_adapter_names": cast(list[str], adapter_registry_payload.get("ready_adapter_names") or []),
+                "tested_adapter_names": [
+                    str(result.get("adapter") or "") for result in test_results
+                ],
             },
             "ok": all(closure_gates.values()),
         }
@@ -2712,6 +2963,140 @@ def _build_release_210_smoke_closure_summary(
     }
 
 
+def build_qq_official_gateway_closure(
+    *,
+    gateway_run_payload: dict[str, Any],
+    require_resume_evidence: bool = False,
+) -> dict[str, Any]:
+    gateway_closure_gates = cast(
+        dict[str, Any], gateway_run_payload.get("closure_gates") or {}
+    )
+    reconnect_count = int(gateway_run_payload.get("reconnect_count") or 0)
+    resume_attempt_count = int(gateway_run_payload.get("resume_attempt_count") or 0)
+    resume_success_count = int(gateway_run_payload.get("resume_success_count") or 0)
+    resumed_event_count = int(gateway_run_payload.get("resumed_event_count") or 0)
+    closure_gates = {
+        "gateway_run_payload_supplied": bool(gateway_run_payload),
+        "gateway_run_command_recorded": str(gateway_run_payload.get("command") or "")
+        == "qq-official-gateway-client",
+        "gateway_run_contract_supported": str(
+            gateway_run_payload.get("schema_version") or ""
+        )
+        == "2.2.2-qq-official-gateway-client-v1",
+        "gateway_connected": bool(gateway_closure_gates.get("gateway_connected")),
+        "hello_recorded": bool(gateway_closure_gates.get("hello_recorded")),
+        "ready_recorded": bool(gateway_closure_gates.get("ready_recorded")),
+        "dispatch_processed": bool(gateway_closure_gates.get("dispatch_processed")),
+        "core_ingress_recorded": bool(
+            gateway_closure_gates.get("core_ingress_recorded")
+        ),
+        "bounded_runtime_recorded": bool(
+            gateway_closure_gates.get("bounded_runtime")
+        ),
+        "session_state_persisted": True
+        if not require_resume_evidence
+        else bool(gateway_run_payload.get("session_state_persisted")),
+        "resume_requirement_declared": True,
+        "resume_path_recorded": True
+        if not require_resume_evidence
+        else reconnect_count > 0 and resume_attempt_count > 0,
+        "resume_path_succeeded": True
+        if not require_resume_evidence
+        else resume_success_count > 0 and resumed_event_count > 0,
+    }
+    return {
+        "schema_version": QQ_OFFICIAL_GATEWAY_CLOSURE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "qq_official_gateway_closure_ready"
+        if all(closure_gates.values())
+        else "qq_official_gateway_closure_gap",
+        "command": "qq-official-gateway-closure",
+        "gateway_run": gateway_run_payload,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "gateway_url": str(
+                cast(dict[str, Any], gateway_run_payload.get("gateway") or {}).get(
+                    "url"
+                )
+                or ""
+            ),
+            "session_id": str(gateway_run_payload.get("session_id") or ""),
+            "bot_user_id": str(gateway_run_payload.get("bot_user_id") or ""),
+            "dispatch_event_count": int(
+                gateway_run_payload.get("dispatch_event_count") or 0
+            ),
+            "events_persisted": sum(
+                int(item.get("events_persisted") or 0)
+                for item in cast(
+                    list[dict[str, Any]], gateway_run_payload.get("core_results") or []
+                )
+            ),
+            "reconnect_count": reconnect_count,
+            "resume_attempt_count": resume_attempt_count,
+            "resume_success_count": resume_success_count,
+            "resumed_event_count": resumed_event_count,
+            "session_state_file": str(
+                gateway_run_payload.get("session_state_file") or ""
+            ),
+            "require_resume_evidence": require_resume_evidence,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def _build_qq_official_gateway_closure_summary(
+    qq_gateway_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if qq_gateway_payload is None:
+        gates = {
+            "qq_gateway_evidence_supplied": False,
+            "qq_gateway_contract_supported": False,
+            "gateway_run_payload_supplied": False,
+            "gateway_run_command_recorded": False,
+            "gateway_run_contract_supported": False,
+            "gateway_connected": False,
+            "hello_recorded": False,
+            "ready_recorded": False,
+            "dispatch_processed": False,
+            "core_ingress_recorded": False,
+            "bounded_runtime_recorded": False,
+            "session_state_persisted": False,
+            "resume_requirement_declared": False,
+            "resume_path_recorded": False,
+            "resume_path_succeeded": False,
+        }
+        return {
+            "supplied": False,
+            "schema_version": "",
+            "status": "not_supplied",
+            "reason": "qq_gateway_file_not_supplied",
+            "closure_gates": gates,
+            "evidence_summary": {},
+            "ok": False,
+        }
+
+    payload_gates = cast(dict[str, Any], qq_gateway_payload.get("closure_gates") or {})
+    gates = {
+        "qq_gateway_evidence_supplied": True,
+        "qq_gateway_contract_supported": str(
+            qq_gateway_payload.get("schema_version") or ""
+        )
+        == QQ_OFFICIAL_GATEWAY_CLOSURE_SCHEMA_VERSION,
+        **{key: bool(value) for key, value in payload_gates.items()},
+    }
+    return {
+        "supplied": True,
+        "schema_version": str(qq_gateway_payload.get("schema_version") or ""),
+        "status": str(qq_gateway_payload.get("status") or "unknown"),
+        "reason": str(qq_gateway_payload.get("reason") or ""),
+        "closure_gates": gates,
+        "evidence_summary": cast(
+            dict[str, Any], qq_gateway_payload.get("evidence_summary") or {}
+        ),
+        "ok": all(gates.values()),
+    }
+
+
 def _build_validation_gate_checklist(
     validation_gates: dict[str, bool],
 ) -> list[dict[str, Any]]:
@@ -2884,6 +3269,16 @@ def _build_validation_gate_checklist(
                 "Social adapter evidence records identity-bound ingress, persisted events, and affective-only egress."
                 if validation_gates.get("social_adapter_gate")
                 else "Social adapter evidence is missing identity-bound ingress, persisted events, or affective-only egress."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "qq_official_gateway_gate",
+            passed=bool(validation_gates.get("qq_official_gateway_gate")),
+            title="QQ Gateway Live Gate",
+            detail=(
+                "Bounded official QQ gateway evidence records connection, dispatch-to-Core, persisted session state, and resume continuity when required."
+                if validation_gates.get("qq_official_gateway_gate")
+                else "QQ official gateway live evidence is missing, incomplete, or does not satisfy the bounded reconnect/resume closure contract."
             ),
         ),
         _build_closure_checklist_entry(
@@ -3424,6 +3819,7 @@ def _build_session_closure_summary(
     vitality_smoke_payload: dict[str, Any] | None = None,
     persona_state_payload: dict[str, Any] | None = None,
     social_adapter_payload: dict[str, Any] | None = None,
+    qq_gateway_payload: dict[str, Any] | None = None,
     approval_social_payload: dict[str, Any] | None = None,
     self_improvement_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -3500,6 +3896,7 @@ def _build_session_closure_summary(
         expected_schema=SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION,
         not_supplied_reason="social_adapter_file_not_supplied",
     )
+    qq_gateway_summary = _build_qq_official_gateway_closure_summary(qq_gateway_payload)
     approval_social_summary = _build_release_210_smoke_closure_summary(
         approval_social_payload,
         expected_schema=APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION,
@@ -3674,6 +4071,7 @@ def _build_session_closure_summary(
         "vitality_governance_gate": bool(vitality_governance_summary.get("ok")),
         "persona_persistence_gate": bool(persona_persistence_summary.get("ok")),
         "social_adapter_gate": bool(social_adapter_summary.get("ok")),
+        "qq_official_gateway_gate": bool(qq_gateway_summary.get("ok")),
         "approval_over_social_gate": bool(approval_social_summary.get("ok")),
         "self_improvement_sandbox_gate": bool(self_improvement_summary.get("ok")),
         "multimodal_normalization_gate": bool(
@@ -3750,6 +4148,7 @@ def _build_session_closure_summary(
         "vitality_governance_summary": vitality_governance_summary,
         "persona_persistence_summary": persona_persistence_summary,
         "social_adapter_summary": social_adapter_summary,
+        "qq_official_gateway_summary": qq_gateway_summary,
         "approval_social_summary": approval_social_summary,
         "self_improvement_summary": self_improvement_summary,
         "aggregate_gates": aggregate_gates,
@@ -4601,6 +5000,176 @@ def build_parser() -> argparse.ArgumentParser:
 
     social_adapter_smoke = subparsers.add_parser("social-adapter-smoke")
     social_adapter_smoke.add_argument("--output", choices=("json",), default="json")
+    social_adapter_smoke.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+
+    social_adapter_list_parser = subparsers.add_parser("social-adapter-list")
+    social_adapter_list_parser.add_argument("--output", choices=("json",), default="json")
+    social_adapter_list_parser.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+
+    social_adapter_config = subparsers.add_parser("social-adapter-config")
+    social_adapter_config.add_argument("--output", choices=("json",), default="json")
+    social_adapter_config.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+    social_adapter_config.add_argument("--adapter", required=True, help="Social adapter profile name to update")
+    social_adapter_config.add_argument("--adapter-kind", default=None)
+    social_adapter_config.add_argument("--endpoint-url", default=None)
+    social_adapter_config.add_argument("--webhook-url", default=None)
+    social_adapter_config.add_argument("--credential-env-var", action="append", default=None)
+    social_adapter_config.add_argument("--supported-channel-kind", action="append", default=None)
+    social_adapter_config.add_argument("--default-channel-policy", default=None)
+    social_adapter_config.add_argument("--mention-policy", default=None)
+    social_adapter_config.add_argument("--transport-kind", default=None)
+    social_adapter_config.add_argument("--compliance-class", default=None)
+    social_adapter_config.add_argument(
+        "--compliance-acknowledged",
+        choices=("true", "false"),
+        default=None,
+    )
+    social_adapter_config.add_argument(
+        "--live-network-allowed",
+        choices=("true", "false"),
+        default=None,
+    )
+    social_adapter_config.add_argument(
+        "--share-session-in-group",
+        choices=("true", "false"),
+        default=None,
+    )
+    social_adapter_config.add_argument("--active", action="store_true")
+    social_enable_disable = social_adapter_config.add_mutually_exclusive_group()
+    social_enable_disable.add_argument("--enable", action="store_true")
+    social_enable_disable.add_argument("--disable", action="store_true")
+
+    social_adapter_test_parser = subparsers.add_parser("social-adapter-test")
+    social_adapter_test_parser.add_argument("--output", choices=("json",), default="json")
+    social_adapter_test_parser.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+    social_adapter_test_parser.add_argument("--adapter", default="", help="Optional social adapter profile name to test")
+    social_adapter_test_parser.add_argument(
+        "--sample-scenario",
+        choices=("group", "direct", "group_no_mention"),
+        default="group",
+        help="Deterministic social sample scenario used for adapter normalization tests",
+    )
+    social_adapter_test_parser.add_argument(
+        "--probe-transport",
+        action="store_true",
+        help="Opt in to a bounded transport reachability probe for the selected adapter profile",
+    )
+    social_adapter_test_parser.add_argument(
+        "--probe-timeout-seconds",
+        type=float,
+        default=1.5,
+        help="Timeout used by the opt-in transport reachability probe",
+    )
+
+    qq_official_webhook_server = subparsers.add_parser("qq-official-webhook-server")
+    qq_official_webhook_server.add_argument("--db", default=":memory:", help="SQLite database path")
+    qq_official_webhook_server.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+    qq_official_webhook_server.add_argument("--host", default="127.0.0.1", help="Listen host for the bounded QQ official webhook server")
+    qq_official_webhook_server.add_argument("--port", type=int, default=8091, help="Listen port for the bounded QQ official webhook server")
+    qq_official_webhook_server.add_argument("--path", default="/", help="HTTP path served by the bounded QQ official webhook server")
+    qq_official_webhook_server.add_argument("--duration", type=int, default=30, help="Maximum bounded runtime in seconds")
+    qq_official_webhook_server.add_argument("--max-events", type=int, default=1, help="Stop after this many QQ dispatch events if non-zero")
+    qq_official_webhook_server.add_argument("--ready-file", default="", help="Optional file path written once the webhook server is listening")
+    qq_official_webhook_server.add_argument("--output", choices=("json",), default="json")
+    qq_official_webhook_server.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    qq_official_webhook_server.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    qq_official_webhook_server.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    qq_official_webhook_server.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for QQ webhook ingress lookup and candidate commit behavior",
+    )
+    qq_official_webhook_server.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+    qq_official_webhook_server.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter during the webhook-driven Core run",
+    )
+
+    qq_official_gateway_client = subparsers.add_parser("qq-official-gateway-client")
+    qq_official_gateway_client.add_argument("--db", default=":memory:", help="SQLite database path")
+    qq_official_gateway_client.add_argument("--config-file", default="", help="Optional social adapter profile config JSON path")
+    qq_official_gateway_client.add_argument("--gateway-url", default="", help="Optional gateway WSS URL override for bounded QQ official gateway runs")
+    qq_official_gateway_client.add_argument("--duration", type=int, default=30, help="Maximum bounded runtime in seconds")
+    qq_official_gateway_client.add_argument("--max-events", type=int, default=1, help="Stop after this many QQ dispatch events if non-zero")
+    qq_official_gateway_client.add_argument("--ready-file", default="", help="Optional file path written once the gateway client is ready")
+    qq_official_gateway_client.add_argument("--session-state-file", default="", help="Optional JSON file used to persist QQ gateway session_id/sequence for bounded resume attempts")
+    qq_official_gateway_client.add_argument("--max-resume-attempts", type=int, default=2, help="Maximum bounded resume attempts after gateway disconnects")
+    qq_official_gateway_client.add_argument("--reconnect-backoff-seconds", type=float, default=1.0, help="Delay between bounded QQ gateway reconnect attempts")
+    qq_official_gateway_client.add_argument("--output", choices=("json",), default="json")
+    qq_official_gateway_client.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional session identifier to continue a prior local Core session",
+    )
+    qq_official_gateway_client.add_argument(
+        "--maf-provider-mode",
+        choices=(
+            MafProviderMode.DETERMINISTIC_FAKE.value,
+            MafProviderMode.PROVIDER_AVAILABLE_NO_CALL.value,
+            MafProviderMode.REAL_PROVIDER.value,
+        ),
+        default=MafProviderMode.DETERMINISTIC_FAKE.value,
+        help="Select deterministic fake, provider-availability-only, or guarded real-provider runtime behavior",
+    )
+    qq_official_gateway_client.add_argument(
+        "--allow-model-call",
+        action="store_true",
+        help="Required together with --maf-provider-mode real_provider to allow an actual MAF model call",
+    )
+    qq_official_gateway_client.add_argument(
+        "--memory-backend",
+        choices=("fake", "local", "mem0"),
+        default="fake",
+        help="Select the long-term memory backend for QQ gateway ingress lookup and candidate commit behavior",
+    )
+    qq_official_gateway_client.add_argument(
+        "--rational-backend",
+        choices=("auto", "deterministic", "provider", "copilot"),
+        default="auto",
+        help="Select the Rational planning backend; copilot requires --allow-model-call",
+    )
+    qq_official_gateway_client.add_argument(
+        "--require-real-tool-adapter",
+        action="store_true",
+        help="Require the Neuro CLI adapter during the gateway-driven Core run",
+    )
+
+    qq_official_gateway_closure = subparsers.add_parser("qq-official-gateway-closure")
+    qq_official_gateway_closure.add_argument(
+        "--gateway-run-file",
+        required=True,
+        help="JSON payload emitted by qq-official-gateway-client to validate as bounded QQ gateway live evidence.",
+    )
+    qq_official_gateway_closure.add_argument(
+        "--require-resume-evidence",
+        action="store_true",
+        help="Require reconnect and RESUME evidence in addition to bounded gateway dispatch-to-Core proof.",
+    )
+    qq_official_gateway_closure.add_argument("--output", choices=("json",), default="json")
 
     self_improvement_smoke = subparsers.add_parser("self-improvement-smoke")
     self_improvement_smoke.add_argument("--output", choices=("json",), default="json")
@@ -4709,6 +5278,7 @@ def build_parser() -> argparse.ArgumentParser:
     closure_summary.add_argument("--vitality-smoke-file", default="", help="Optional vitality-smoke JSON payload to include in the vitality governance gate")
     closure_summary.add_argument("--persona-state-file", default="", help="Optional persona-state-smoke JSON payload to include in the persona persistence gate")
     closure_summary.add_argument("--social-adapter-file", default="", help="Optional social-adapter-smoke JSON payload to include in the social adapter gate")
+    closure_summary.add_argument("--qq-gateway-file", default="", help="Optional qq-official-gateway-closure JSON payload to include in the bounded official QQ gateway live gate")
     closure_summary.add_argument("--approval-social-file", default="", help="Optional approval-social-smoke JSON payload to include in the approval-over-social gate")
     closure_summary.add_argument("--self-improvement-file", default="", help="Optional self-improvement-smoke JSON payload to include in the self-improvement sandbox gate")
     closure_summary.add_argument("--output", choices=("json",), default="json")
@@ -5849,7 +6419,147 @@ def main(argv: list[str] | None = None) -> int:
         print(str(cast(dict[str, Any], payload.get("final_response") or {}).get("text") or ""))
         return 0
     if args.command == "social-adapter-smoke":
-        payload = build_social_adapter_smoke()
+        payload = build_social_adapter_smoke(config_path=args.config_file)
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "social-adapter-list":
+        payload = social_adapter_list(config_path=args.config_file)
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "social-adapter-config":
+        payload = social_adapter_config_update(
+            adapter_name=args.adapter,
+            config_path=args.config_file,
+            adapter_kind=args.adapter_kind,
+            endpoint_url=args.endpoint_url,
+            webhook_url=args.webhook_url,
+            credential_env_vars=args.credential_env_var,
+            supported_channel_kinds=args.supported_channel_kind,
+            default_channel_policy=args.default_channel_policy,
+            mention_policy=args.mention_policy,
+            transport_kind=args.transport_kind,
+            share_session_in_group=(
+                True
+                if args.share_session_in_group == "true"
+                else False
+                if args.share_session_in_group == "false"
+                else None
+            ),
+            compliance_class=args.compliance_class,
+            compliance_acknowledged=(
+                True
+                if args.compliance_acknowledged == "true"
+                else False
+                if args.compliance_acknowledged == "false"
+                else None
+            ),
+            live_network_allowed=(
+                True
+                if args.live_network_allowed == "true"
+                else False
+                if args.live_network_allowed == "false"
+                else None
+            ),
+            enabled=True if args.enable else False if args.disable else None,
+            active=args.active,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "social-adapter-test":
+        try:
+            payload = social_adapter_test(
+                adapter_name=args.adapter,
+                config_path=args.config_file,
+                probe_transport=args.probe_transport,
+                sample_scenario=args.sample_scenario,
+                timeout_seconds=args.probe_timeout_seconds,
+            )
+        except ValueError as exc:
+            payload = {
+                "ok": False,
+                "status": "error",
+                "command": "social-adapter-test",
+                "failure_class": "social_adapter_request_invalid",
+                "failure_status": str(exc),
+                "executes_live_network": False,
+            }
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "qq-official-webhook-server":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            payload = _run_qq_official_live_ingress(
+                db_path=args.db,
+                host=args.host,
+                port=args.port,
+                path=args.path,
+                duration=args.duration,
+                max_events=args.max_events,
+                ready_file=args.ready_file,
+                session_id=args.session_id,
+                config_path=args.config_file,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
+            )
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "qq-official-gateway-client":
+        if args.db != ":memory:":
+            Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            payload = _run_qq_official_gateway_ingress(
+                db_path=args.db,
+                duration=args.duration,
+                max_events=args.max_events,
+                ready_file=args.ready_file,
+                session_state_file=args.session_state_file,
+                max_resume_attempts=args.max_resume_attempts,
+                reconnect_backoff_seconds=args.reconnect_backoff_seconds,
+                session_id=args.session_id,
+                config_path=args.config_file,
+                gateway_url=args.gateway_url,
+                maf_provider_mode=args.maf_provider_mode,
+                allow_model_call=args.allow_model_call,
+                memory_backend=args.memory_backend,
+                rational_backend=args.rational_backend,
+                require_real_tool_adapter=args.require_real_tool_adapter,
+            )
+        except (MafProviderNotReadyError, ValueError, TimeoutError) as exc:
+            print(json.dumps(provider_error_payload(args.command, exc), sort_keys=True))
+            return 2
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "qq-official-gateway-closure":
+        try:
+            gateway_run_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.gateway_run_file).read_text(encoding="utf-8")),
+            )
+            payload = build_qq_official_gateway_closure(
+                gateway_run_payload=gateway_run_payload,
+                require_resume_evidence=args.require_resume_evidence,
+            )
+        except (ValueError, OSError, json.JSONDecodeError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "error",
+                        "command": args.command,
+                        "failure_class": "qq_official_gateway_closure_invalid",
+                        "failure_status": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 2
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
     if args.command == "self-improvement-smoke":
@@ -6129,6 +6839,12 @@ def main(argv: list[str] | None = None) -> int:
                 dict[str, Any],
                 json.loads(Path(args.social_adapter_file).read_text(encoding="utf-8")),
             )
+        qq_gateway_payload = None
+        if args.qq_gateway_file:
+            qq_gateway_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.qq_gateway_file).read_text(encoding="utf-8")),
+            )
         approval_social_payload = None
         if args.approval_social_file:
             approval_social_payload = cast(
@@ -6166,6 +6882,7 @@ def main(argv: list[str] | None = None) -> int:
                 vitality_smoke_payload=vitality_smoke_payload,
                 persona_state_payload=persona_state_payload,
                 social_adapter_payload=social_adapter_payload,
+                qq_gateway_payload=qq_gateway_payload,
                 approval_social_payload=approval_social_payload,
                 self_improvement_payload=self_improvement_payload,
             )

@@ -581,7 +581,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(run_code, 0)
         self.assertEqual(summary_code, 0)
         payload = json.loads(summary_out.getvalue())
-        self.assertEqual(payload["schema_version"], "1.2.7-closure-summary-v14")
+        self.assertEqual(payload["schema_version"], "1.2.7-closure-summary-v15")
         self.assertEqual(payload["session_id"], "closure-summary-session-001")
         self.assertEqual(payload["execution_count"], 1)
         self.assertTrue(payload["ok"])
@@ -613,6 +613,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "vitality_governance_gate",
                 "persona_persistence_gate",
                 "social_adapter_gate",
+                "qq_official_gateway_gate",
                 "approval_over_social_gate",
                 "self_improvement_sandbox_gate",
                 "multimodal_normalization_gate",
@@ -656,6 +657,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "vitality_governance_gate",
                 "persona_persistence_gate",
                 "social_adapter_gate",
+                "qq_official_gateway_gate",
                 "approval_over_social_gate",
                 "self_improvement_sandbox_gate",
                 "multimodal_normalization_gate",
@@ -699,6 +701,131 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(execution_summary["rational_plan_evidence"]["status"], "tool_selected")
         self.assertFalse(execution_summary["federation_summary"]["ok"])
         self.assertFalse(execution_summary["relay_summary"]["ok"])
+
+    def test_cli_qq_official_gateway_closure_reports_resume_ready_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gateway_run_file = Path(tmpdir) / "qq-gateway-run.json"
+            gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.2-qq-official-gateway-client-v1",
+                        "command": "qq-official-gateway-client",
+                        "status": "ready",
+                        "reason": "qq_official_gateway_dispatch_processed",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "hello_recorded": True,
+                            "ready_recorded": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {"url": "wss://api.sgroup.qq.com/websocket"},
+                        "session_id": "qq-session-001",
+                        "bot_user_id": "bot-001",
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                        "reconnect_count": 1,
+                        "resume_attempt_count": 1,
+                        "resume_success_count": 1,
+                        "resumed_event_count": 1,
+                        "session_state_file": "/tmp/qq-gateway-session.json",
+                        "session_state_persisted": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "qq-official-gateway-closure",
+                        "--gateway-run-file",
+                        str(gateway_run_file),
+                        "--require-resume-evidence",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["schema_version"], "2.2.2-qq-official-gateway-closure-v1"
+        )
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["resume_path_recorded"])
+        self.assertTrue(payload["closure_gates"]["resume_path_succeeded"])
+        self.assertEqual(payload["evidence_summary"]["reconnect_count"], 1)
+
+    def test_cli_closure_summary_can_pass_qq_gateway_gate_with_gateway_closure_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "core.db")
+            gateway_run_file = Path(tmpdir) / "qq-gateway-run.json"
+            gateway_closure_file = Path(tmpdir) / "qq-gateway-closure.json"
+
+            run_no_model_dry_run(db_path, session_id="closure-summary-qq-gateway-001")
+            gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.2-qq-official-gateway-client-v1",
+                        "command": "qq-official-gateway-client",
+                        "status": "ready",
+                        "reason": "qq_official_gateway_dispatch_processed",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "hello_recorded": True,
+                            "ready_recorded": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {"url": "wss://api.sgroup.qq.com/websocket"},
+                        "session_id": "qq-session-001",
+                        "bot_user_id": "bot-001",
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                        "reconnect_count": 1,
+                        "resume_attempt_count": 1,
+                        "resume_success_count": 1,
+                        "resumed_event_count": 1,
+                        "session_state_file": "/tmp/qq-gateway-session.json",
+                        "session_state_persisted": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            gateway_out = io.StringIO()
+            with redirect_stdout(gateway_out):
+                gateway_code = core_cli_main(
+                    [
+                        "qq-official-gateway-closure",
+                        "--gateway-run-file",
+                        str(gateway_run_file),
+                        "--require-resume-evidence",
+                    ]
+                )
+            gateway_closure_file.write_text(gateway_out.getvalue(), encoding="utf-8")
+
+            summary_out = io.StringIO()
+            with redirect_stdout(summary_out):
+                summary_code = core_cli_main(
+                    [
+                        "closure-summary",
+                        "--db",
+                        db_path,
+                        "--session-id",
+                        "closure-summary-qq-gateway-001",
+                        "--qq-gateway-file",
+                        str(gateway_closure_file),
+                    ]
+                )
+
+        self.assertEqual(gateway_code, 0)
+        self.assertEqual(summary_code, 0)
+        payload = json.loads(summary_out.getvalue())
+        self.assertTrue(payload["validation_gates"]["qq_official_gateway_gate"])
+        self.assertTrue(payload["qq_official_gateway_summary"]["ok"])
 
     def test_cli_closure_summary_can_pass_federation_gate_when_route_evidence_is_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2156,6 +2283,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             vitality_file = Path(tmpdir) / "vitality-smoke.json"
             persona_file = Path(tmpdir) / "persona-state.json"
             social_adapter_file = Path(tmpdir) / "social-adapter.json"
+            qq_gateway_run_file = Path(tmpdir) / "qq-gateway-run.json"
+            qq_gateway_file = Path(tmpdir) / "qq-gateway-closure.json"
             approval_social_file = Path(tmpdir) / "approval-social.json"
             self_improvement_file = Path(tmpdir) / "self-improvement.json"
 
@@ -2378,6 +2507,47 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     "social-adapter-smoke",
                 ])
             social_adapter_file.write_text(social_adapter_out.getvalue(), encoding="utf-8")
+            qq_gateway_run_file.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2.2.2-qq-official-gateway-client-v1",
+                        "command": "qq-official-gateway-client",
+                        "status": "ready",
+                        "reason": "qq_official_gateway_dispatch_processed",
+                        "closure_gates": {
+                            "gateway_connected": True,
+                            "hello_recorded": True,
+                            "ready_recorded": True,
+                            "dispatch_processed": True,
+                            "core_ingress_recorded": True,
+                            "bounded_runtime": True,
+                        },
+                        "gateway": {"url": "wss://api.sgroup.qq.com/websocket"},
+                        "session_id": "qq-session-gates-001",
+                        "bot_user_id": "bot-001",
+                        "dispatch_event_count": 1,
+                        "core_results": [{"events_persisted": 1}],
+                        "reconnect_count": 1,
+                        "resume_attempt_count": 1,
+                        "resume_success_count": 1,
+                        "resumed_event_count": 1,
+                        "session_state_file": "/tmp/qq-gateway-session.json",
+                        "session_state_persisted": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            qq_gateway_out = io.StringIO()
+            with redirect_stdout(qq_gateway_out):
+                qq_gateway_code = core_cli_main(
+                    [
+                        "qq-official-gateway-closure",
+                        "--gateway-run-file",
+                        str(qq_gateway_run_file),
+                        "--require-resume-evidence",
+                    ]
+                )
+            qq_gateway_file.write_text(qq_gateway_out.getvalue(), encoding="utf-8")
             approval_social_out = io.StringIO()
             with redirect_stdout(approval_social_out):
                 approval_social_code = core_cli_main([
@@ -2532,6 +2702,8 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         str(persona_file),
                         "--social-adapter-file",
                         str(social_adapter_file),
+                        "--qq-gateway-file",
+                        str(qq_gateway_file),
                         "--approval-social-file",
                         str(approval_social_file),
                         "--self-improvement-file",
@@ -2553,6 +2725,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(vitality_code, 0)
         self.assertEqual(persona_code, 0)
         self.assertEqual(social_adapter_code, 0)
+        self.assertEqual(qq_gateway_code, 0)
         self.assertEqual(approval_social_code, 0)
         self.assertEqual(self_improvement_code, 0)
         self.assertEqual(summary_code, 0)
@@ -2560,7 +2733,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 26)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 27)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
         self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
@@ -2571,6 +2744,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["validation_gates"]["vitality_governance_gate"])
         self.assertTrue(payload["validation_gates"]["persona_persistence_gate"])
         self.assertTrue(payload["validation_gates"]["social_adapter_gate"])
+        self.assertTrue(payload["validation_gates"]["qq_official_gateway_gate"])
         self.assertTrue(payload["validation_gates"]["approval_over_social_gate"])
         self.assertTrue(payload["validation_gates"]["self_improvement_sandbox_gate"])
         self.assertTrue(payload["validation_gates"]["agent_excellence_gate"])
@@ -4318,6 +4492,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["closure_gates"]["social_event_persisted"])
         self.assertTrue(payload["closure_gates"]["affective_delivery_recorded"])
+        self.assertTrue(payload["closure_gates"]["social_adapter_registry_gate"])
+        self.assertTrue(payload["closure_gates"]["qq_social_gate"])
+        self.assertTrue(payload["closure_gates"]["onebot_social_gate"])
+        self.assertTrue(payload["closure_gates"]["social_compliance_gate"])
+        self.assertIn("qq_official", payload["evidence_summary"]["ready_adapter_names"])
+        self.assertIn("onebot_qq", payload["evidence_summary"]["ready_adapter_names"])
+        self.assertIn("qq_official", payload["evidence_summary"]["tested_adapter_names"])
+        self.assertIn("onebot_qq", payload["evidence_summary"]["tested_adapter_names"])
 
     def test_cli_self_improvement_smoke_reports_sandbox_only_governance(self) -> None:
         smoke_out = io.StringIO()

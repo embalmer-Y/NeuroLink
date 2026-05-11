@@ -1,3 +1,252 @@
+2026-05-11: Closed and promoted release-2.2.2 after the QQ/social adapter closure bundle, focused AI Core regressions, and release-target validation all converged. The archived bundle `smoke-evidence/release-2.2.2-closure-20260511T021545Z/` now reports a green `closure-summary-final.json` with `validation_gate_summary.ok=true`, `passed_count=27`, and `failed_gate_ids=[]`. The bundle carries forward unchanged 2.1.0 execution evidence for federation/relay route gates, adds fresh release-2.2.2 documentation/regression/social-adapter evidence, and archives the dedicated QQ gateway live closure artifact from the real bounded Tencent gateway run. After that green bundle, canonical identity moved to `2.2.2` in the Neuro CLI, workflow catalog, sample Unit app source identity, README, and AI Core English/Chinese runbooks. Focused AI Core validation passed with `23 passed` for `test_social_adapters.py`, `17 passed, 137 deselected` for the closure-summary and QQ gateway closure slice, `295 passed, 6 subtests passed` for the full `neurolink_core/tests` suite, `5 passed` for the focused Neuro CLI release-target checks, and direct capabilities output now reports `release_target=2.2.2`. - Copilot
+
+#### EXEC-372 Release 2.2.2 Closure And Promotion
+
+- Status: promoted and closure-green
+- Bundle: `smoke-evidence/release-2.2.2-closure-20260511T021545Z/`
+- Final closure:
+  - `closure-summary-final.json`
+  - `validation_gate_summary.ok=true`
+  - `passed_count=27`
+  - `failed_gate_ids=[]`
+- Promotion changes:
+  - promoted `neuro_cli/src/neuro_cli.py` and `neuro_cli/src/neuro_workflow_catalog.py` to `RELEASE_TARGET = "2.2.2"`
+  - promoted `subprojects/neuro_unit_app/src/main.c` to `app_version=2.2.2`, `build_id=neuro_unit_app-2.2.2-cbor-v2`, and manifest `2.2.2`
+  - aligned `README.md`, `docs/project/AI_CORE_RUNBOOK.md`, and `docs/project/AI_CORE_RUNBOOK_ZH.md` to the promoted 2.2.2 baseline
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py -q` -> `23 passed`
+  - `python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k "closure_summary or qq_official_gateway_closure"` -> `17 passed, 137 deselected`
+  - `python -m pytest neurolink_core/tests -q` -> `295 passed, 6 subtests passed`
+  - `python -m pytest neuro_cli/tests/test_neuro_cli.py -q -k 'capabilities or workflow_commands_do_not_embed_release_target_literals or sample_app_source_identity_matches_release_target'` -> `5 passed, 122 deselected`
+  - `python neuro_cli/src/neuro_cli.py --output json system capabilities` -> `ok=true`, `release_target=2.2.2`
+
+2026-05-11: Added a dedicated bounded QQ official gateway closure artifact and wired it into `closure-summary`. Operators can now convert raw `qq-official-gateway-client` output into `qq-official-gateway-closure` evidence and pass it into the release validation matrix through `--qq-gateway-file`. Focused closure regressions passed with `17 passed`. - Copilot
+
+#### EXEC-371 Release 2.2.2 QQ Gateway Closure Integration Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - `qq-official-gateway-closure` command to normalize raw gateway runs into a stable closure artifact
+  - `closure-summary --qq-gateway-file ...` integration plus a dedicated `qq_official_gateway_gate`
+  - focused regressions covering artifact generation and closure-summary gate wiring
+- Boundary confirmation:
+  - the gateway closure artifact remains bounded evidence; it is not a daemon supervisor or live reconnect controller
+  - reconnect/resume evidence can be required explicitly without changing the base bounded gateway runtime contract
+  - Core policy and Affective-only response boundaries remain unchanged while archiving gateway evidence
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_neurolink_core.py -q -k "closure_summary or qq_official_gateway_closure"`
+  - `17 passed`
+- Next:
+  - decide whether release-2.2.2 should also archive a canonical smoke-evidence layout for gateway raw runs plus gateway closure payloads
+  - decide whether multi-shard or invalid-session-specific closure artifacts belong in a later live-service slice
+
+2026-05-11: Extended the release-2.2.2 official QQ gateway slice with bounded resume/session continuity. `qq-official-gateway-client` can now persist `session_id` and gateway `sequence`, reconnect after disconnects, issue bounded `RESUME` attempts, and continue dispatch-to-Core without promoting the path into a long-running resident. Focused gateway regressions passed with `2 passed`. - Copilot
+
+#### EXEC-370 Release 2.2.2 Official QQ Gateway Resume Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - bounded gateway session-state persistence via `--session-state-file`
+  - bounded reconnect and `RESUME` handling after websocket disconnects
+  - focused local regression coverage for disconnect, resume, and dispatch-to-Core continuity
+- Boundary confirmation:
+  - the gateway path remains bounded by runtime, dispatch-event count, and explicit resume-attempt limits
+  - this is still not a long-running resident or full reconnect supervisor
+  - Core policy and Affective-only response boundaries remain unchanged during resumed gateway runs
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py -q -k "qq_official_gateway_client"`
+  - `2 passed`
+- Next:
+  - extend operator evidence so bounded reconnect/resume runs can feed a broader closure-summary style artifact
+  - decide whether invalid-session backoff policy or multi-shard session management belongs in release-2.2.2 or a later live-service slice
+
+2026-05-11: Added the first bounded official QQ websocket/gateway ingress path for release-2.2.2. The new `qq-official-gateway-client` command fetches an official access token from `AppID`/`AppSecret`, fetches a gateway WSS URL, completes `HELLO`/`IDENTIFY`, sends bounded heartbeats, accepts supported dispatch events, normalizes them through `qq_official`, and forwards them into the normal Core event path. Focused social regressions passed with `22 passed`. - Copilot
+
+#### EXEC-369 Release 2.2.2 Official QQ Gateway Ingress Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - bounded `qq-official-gateway-client` CLI command
+  - official token fetch plus gateway URL discovery for bounded QQ websocket ingress
+  - websocket `HELLO` / `IDENTIFY` / heartbeat / dispatch handling into the normal Core social ingress path
+  - focused local gateway regression coverage for identify plus dispatch-to-Core flow
+- Boundary confirmation:
+  - the new gateway path is bounded by runtime and dispatch-event count; it is not yet a long-running resident
+  - websocket resume/session continuity is not yet persisted across process restarts
+  - Core policy and Affective-only response boundaries remain unchanged during gateway-driven runs
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py -q`
+  - `22 passed`
+- Next:
+  - decide whether websocket resume/session continuity belongs in release-2.2.2 or a later QQ live-service slice
+  - extend operator evidence so bounded gateway runs can feed a broader closure-summary style artifact
+
+2026-05-11: Extended the release-2.2.2 operator runbooks with a concrete official QQ webhook callback drill. The runbooks now describe the preflight checklist, bounded listener startup, ready-file inspection, public HTTPS forwarding expectation, QQ platform callback configuration steps, and the minimum evidence that distinguishes validation-only success from a full dispatch-to-Core proof. - Copilot
+
+2026-05-11: Added the first bounded official QQ live ingress path for release-2.2.2. The new `qq-official-webhook-server` command runs a local bounded HTTP callback server, handles official QQ callback verification (`op=13`), accepts supported official dispatch events, normalizes them through `qq_official`, and forwards them into the normal Core event path. Focused social regressions passed with `173 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-368 Release 2.2.2 Official QQ Webhook Ingress Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - bounded `qq-official-webhook-server` CLI command
+  - official QQ callback verification response generation using Ed25519 signing
+  - official QQ dispatch-event normalization into the normal Core social ingress path
+  - focused local webhook regression coverage for validation plus dispatch-to-Core flow
+- Boundary confirmation:
+  - the new ingress path is bounded by runtime and event count; it is not yet a long-running production daemon
+  - live ingress currently targets the official QQ webhook callback path, not a full websocket resident
+  - Core policy and Affective-only response boundaries remain unchanged during callback-driven runs
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `173 passed, 3 subtests passed`
+- Next:
+  - extend release evidence so callback ingress can feed a broader closure-summary style artifact
+  - decide whether websocket resume/session handling belongs in release-2.2.2 or a later QQ live-service slice
+
+2026-05-11: Confirmed the first official QQ real-scene fallback path under an operator-provided direct target. The operator reported that the current official QQ bot capability does not support joining the intended group path, so release-2.2.2 real-scene execution is temporarily constrained to a direct-only live target while group and non-mention coverage remain deterministic contract checks. A direct `social-chat` Core path using `qq_official` and the operator-provided target bound cleanly through the normal Affective/Core read-only flow. - Copilot
+
+#### EXEC-367 Release 2.2.2 Direct-Only QQ Real-Scene Fallback Slice
+
+- Status: external platform constraint recorded and bounded fallback confirmed
+- Added:
+  - runbook guidance for official QQ group-attachment limitations
+  - explicit direct-only real-scene fallback posture for `qq_official`
+  - operator-provided direct target bound through the deterministic Core social path
+- Boundary confirmation:
+  - no claim is made that live QQ inbound/outbound delivery is implemented yet
+  - group limitations are recorded as platform scope pressure, not a Core normalization failure
+  - release-2.2.2 remains within profile/config/test/probe and bounded Core social validation scope
+- Validation:
+  - bounded `social-chat` direct-path verification executed with an operator-provided direct target
+  - a direct-path social event identifier was recorded in Core execution evidence
+- Next:
+  - keep official QQ direct target as the first real-scene anchor
+  - defer live group validation until platform capability or bot type permits group attachment
+
+2026-05-11: Fixed the release-2.2.2 real-scene decision path on the official QQ adapter. The operator runbooks now treat `qq_official` as the default real-scene validation route, require all three bounded scenarios (`group`, `direct`, `group_no_mention`), and document how to explicitly enable `live_network_allowed` only for a bounded transport probe on the same profile. - Copilot
+
+#### EXEC-366 Release 2.2.2 Official QQ Real-Scene Runbook Slice
+
+- Status: execution guidance aligned with the release boundary
+- Added:
+  - English and Chinese runbook guidance for `qq_official` as the default real-scene QQ path
+  - explicit operator input checklist for QQ endpoint, credential env vars, and required test scenes
+  - a bounded validation sequence covering `group`, `direct`, `group_no_mention`, and optional transport probing
+- Boundary confirmation:
+  - real-scene validation still begins with deterministic scenario checks before any live probe
+  - `live_network_allowed` is documented as an explicit probe gate, not a standing live-service switch
+  - `onebot_qq` remains a secondary compatibility path rather than the default QQ recommendation
+- Next:
+  - once the operator provides the official QQ endpoint and credential env-var names, execute the bounded real-scene checklist
+
+2026-05-11: Extended the release-2.2.2 social adapter validation slice with direct-message and mention-edge deterministic scenarios. `social-adapter-test` now accepts explicit sample scenarios for `group`, `direct`, and `group_no_mention`, and reports layered evidence that separates deterministic normalization coverage from transport reachability probe results. Focused social regressions passed with `171 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-365 Release 2.2.2 Scenario-Aware Social Evidence Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - deterministic QQ official and OneBot direct-message fixture coverage
+  - deterministic QQ official and OneBot group-without-mention fixture coverage
+  - `social-adapter-test --sample-scenario {group,direct,group_no_mention}`
+  - layered evidence summaries separating deterministic normalization from transport reachability
+- Boundary confirmation:
+  - release-2.2.2 still validates bounded sample contracts rather than launching live social receive loops
+  - group-without-mention scenarios remain fail-closed to per-user session scope unless explicit sharing policy applies
+  - direct-message scenarios remain inside the same Affective-only response contract
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `171 passed, 3 subtests passed`
+- Next:
+  - extend layered evidence into closure-summary style release artifacts
+  - prepare a minimal real-scene checklist for operator-provided QQ / OneBot endpoint checks when needed
+
+2026-05-11: Advanced the release-2.2.2 social adapter slice with explicit opt-in transport probes while preserving the deterministic-by-default boundary. `social-adapter-test` now supports a bounded transport reachability probe that only executes when the operator explicitly requests it and the profile already allows live network access and satisfies compliance gates. Focused social regressions passed with `166 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-364 Release 2.2.2 Opt-In Transport Probe Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - `social-adapter-test --probe-transport --probe-timeout-seconds ...`
+  - bounded transport reachability probes for configured HTTPS / WebSocket-style endpoints
+  - policy-gated probe evidence that respects `live_network_allowed`, endpoint presence, and compliance readiness
+  - focused CLI and registry tests for allowed and blocked probe paths
+- Boundary confirmation:
+  - release-2.2.2 still does not start long-running social daemons by default
+  - release-2.2.2 still does not default to live inbound/outbound social network execution
+  - the new probe path is an explicit operator check, not a message loop or delivery pipeline
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `166 passed, 3 subtests passed`
+- Next:
+  - add direct-message and mention-edge payload fixtures
+  - consider closure-summary integration for social adapter evidence
+
+2026-05-11: Extended the release-2.2.2 social adapter slice with fixture-backed protocol samples and richer policy metadata inspired by the local QwenPaw reference. Added explicit QQ official and OneBot sample payloads, transport metadata, mention-policy metadata, and shared-group session metadata so deterministic tests and smoke evidence can model reverse-WebSocket OneBot deployments and group-session routing without enabling live network execution. Focused social regressions passed with `163 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-363 Release 2.2.2 Fixture-Backed Policy Metadata Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - fixture-backed sample payloads for `qq_official` and `onebot_qq`
+  - transport-kind metadata for official HTTPS-style QQ and OneBot reverse WebSocket deployments
+  - mention-policy metadata and mention extraction for deterministic social normalization
+  - shared-group session metadata for OneBot-compatible group routing
+  - expanded focused tests and release-2.2.2 plan documentation
+- Safety and evidence behavior:
+  - QwenPaw-inspired channel concepts are translated into NeuroLink-owned metadata rather than copied runtime behavior
+  - deterministic tests and smoke evidence remain live-network free
+  - session-sharing metadata remains a policy hint and does not bypass Core policy or Affective-only response rules
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `163 passed, 3 subtests passed`
+- Next:
+  - consider opt-in transport probes and richer deployment payload fixtures for direct-message and mention-edge cases
+
+2026-05-11: Extended the release-2.2.2 social adapter slice with formal smoke evidence and documentation. `social-adapter-smoke` now aggregates existing Core social ingress/affective-egress proof with social adapter registry readiness, deterministic `qq_official` normalization, deterministic `onebot_qq` normalization, and social compliance gates. Added `docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` and indexed it from the README. Focused social regressions passed with `162 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-362 Release 2.2.2 Social Smoke And Docs Slice
+
+- Status: implementation advanced and focused-regression green
+- Added:
+  - extended `social-adapter-smoke` evidence for registry readiness, QQ official normalization, OneBot normalization, and compliance reporting
+  - `--config-file` support for `social-adapter-smoke`
+  - `docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md`
+  - README documentation map and release-note index updates for the 2.2.2 social adapter plan
+- Safety and evidence behavior:
+  - smoke evidence still includes the existing Core social ingress and Affective-only egress proof
+  - social adapter deterministic tests do not execute live network calls
+  - compliance metadata is now surfaced explicitly for `qq_official` and `onebot_qq`
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `162 passed, 3 subtests passed`
+- Next:
+  - add richer deployment payload fixtures and, if needed, opt-in live probes behind explicit credential and compliance gates
+
+2026-05-11: Started release-2.2.2 social adapter implementation with the deterministic registry/config/readiness slice. Added a `neurolink_core.social_adapters` package with social adapter profiles, JSON-backed config, masked credential evidence, `qq_official` payload normalization, `onebot_qq`/OneBot v11 payload normalization, and CLI commands `social-adapter-list`, `social-adapter-config`, and `social-adapter-test`. Existing `social-chat` remains additive and can route deterministic QQ official adapter-kind ingress through the Core/Affective path without live network execution. Focused social regressions passed with `161 passed, 3 subtests passed`. - Copilot
+
+#### EXEC-361 Release 2.2.2 Social Adapter Registry And QQ/OneBot Deterministic Slice
+
+- Status: implementation started and focused-regression green
+- Added:
+  - `neurolink_core.social_adapters` package
+  - `SocialAdapterProfile` and `SocialAdapterRegistry`
+  - JSON-backed social adapter config store under the NeuroLink config root
+  - deterministic `qq_official` inbound normalization and Affective egress planning
+  - deterministic `onebot_qq` / OneBot v11 inbound normalization and Affective egress planning
+  - CLI commands `social-adapter-list`, `social-adapter-config`, and `social-adapter-test`
+  - focused tests in `neurolink_core/tests/test_social_adapters.py`
+- Safety and evidence behavior:
+  - credentials remain env-var references and are masked in evidence
+  - `onebot_qq` is marked as a lab bridge and requires compliance acknowledgement for live readiness
+  - deterministic tests and CLI surfaces do not execute live network calls
+  - social ingress still routes through Core events and user-visible output remains Affective-only
+- Validation:
+  - `python -m pytest neurolink_core/tests/test_social_adapters.py neurolink_core/tests/test_neurolink_core.py -q`
+  - `161 passed, 3 subtests passed`
+- Next:
+  - extend release-2.2.2 smoke/closure evidence and optionally add explicit sample payload fixtures for QQ official and OneBot deployments
+
 2026-05-11: Completed the last missing release-2.2.1 user-facing provider/model runtime surface by adding `provider-test`. The new command reuses the config-backed runtime path, accepts an operator `--config-file`, reports structured readiness or explicit model-call evidence, and keeps credentials environment-backed only. Focused provider regressions passed with `190 passed, 3 subtests passed`. - Copilot
 
 #### EXEC-360 Release 2.2.1 Provider Test Surface

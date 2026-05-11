@@ -1,0 +1,18 @@
+{
+  "active_adapter": "qq_official",
+  "profiles": [
+    {
+      "credential_env_vars": [
+        "QQ_BOT_APP_ID",
+        "QQ_BOT_APP_SECRET"
+      ],
+      "enabled": true,
+      "endpoint_url": "https://api.sgroup.qq.com",
+      "live_network_allowed": true,
+      "mention_policy": "mention_or_direct",
+      "name": "qq_official",
+      "transport_kind": "https"
+    }
+  ],
+  "schema_version": "2.2.2-social-adapter-config-v1"
+}

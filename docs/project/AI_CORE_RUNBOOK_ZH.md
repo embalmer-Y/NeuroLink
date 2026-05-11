@@ -1,6 +1,6 @@
 # NeuroLink AI Core 中文运行手册
 
-本文档说明如何在已提升的 release-2.1.0 autonomous/social baseline 之上启动、验证和收尾 `neurolink_core`。这个基线是在已闭环的 release-2.0.0 stabilized baseline 之上继续加入 autonomous daemon cycle、Vitality、Persona persistence、social adapter ingress/egress、approval-aware social control 与 self-improvement sandbox evidence 后形成的。它也继续覆盖已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线、已闭环的 release-1.2.7 HLD completion bundle，以及仍作为 release evidence 继承的 release-1.2.4 到 release-1.2.5 runtime/governance surface。canonical release identity 现已提升到 `2.1.0`，release-2.1.0 promotion bundle 与 real-provider integration evidence 已通过。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core release evidence 的开发者和操作者。面向日常启动和使用的任务式入口请先阅读 `docs/project/AI_CORE_USER_GUIDE.md`；当前实现计划与 promotion 记录见 `docs/project/RELEASE_2.1.0_AUTONOMOUS_SOCIAL_AGENT_PLAN.md` 与 `docs/project/RELEASE_2.1.0_PROMOTION_CHECKLIST.md`。
+本文档说明如何在已提升的 release-2.2.2 QQ/social-adapter baseline 之上启动、验证和收尾 `neurolink_core`。这个基线是在已闭环的 release-2.1.0 autonomous/social baseline 之上继续加入可配置 social adapter registry/config surface、official QQ 与 OneBot normalization、受限 official QQ webhook/gateway ingress，以及归档化的 QQ gateway closure evidence 后形成的。它也继续覆盖已闭环的 release-1.2.6 federation、relay 与 Agent platform 基线、已闭环的 release-1.2.7 HLD completion bundle，以及仍作为 release evidence 继承的 release-1.2.4 到 release-2.1.0 runtime/governance surface。canonical release identity 现已提升到 `2.2.2`，release-2.2.2 closure bundle 已通过并新增了专门的 QQ gateway gate。读者是需要在本机运行 `neurolink_core`、检查模型/记忆配置、执行 Core-owned build/deploy gate，或完成 bounded live service 与 AI Core release evidence 的开发者和操作者。面向日常启动和使用的任务式入口请先阅读 `docs/project/AI_CORE_USER_GUIDE.md`；当前实现计划与关版记录见 `docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` 与 `PROJECT_PROGRESS.md`。
 
 ## 1. Core 运行形态
 
@@ -248,6 +248,247 @@ source /home/emb/.bashrc
 7. `memory_runtime.fallback_active=false`。
 8. `real_tool_adapter_present=true`。
 9. `real_tool_execution_succeeded=true`。
+
+### 4.7 QQ Social Adapter 真实场景预检
+
+对于 release-2.2.2 的真实场景验证，优先先走 `qq_official` 路径。它是当前
+更符合官方推荐和生产导向的 QQ 接入方式。`onebot_qq` 保留为兼容桥接路径，
+应在官方路径已经跑通并理解其边界后再做补充验证。
+
+release-2.2.2 当前阶段的真实场景目标，不是上线一个长驻 live social daemon，
+而是验证官方 adapter profile、三类场景归一化，以及可选的 bounded transport
+probe，同时保持 Core policy 与 Affective-only response 的边界不被破坏。
+
+在开始真实场景运行前，操作者需要提供或确认：
+
+1. 官方 QQ endpoint URL；
+2. 存放 QQ 凭据的环境变量名；
+3. 一个可用于 direct-message 的测试目标；
+4. 一个可以安全 @ 机器人的群；
+5. 一个可以安全观察“未 @ 机器人消息”的群场景；
+6. 是否允许在该 profile 上执行 bounded transport probe。
+
+如果平台能力或当前机器人类型本身不允许官方 QQ 机器人加入目标群，不要把这
+件事误判成 Core 实现失败。这种情况下应显式记录平台限制，并先切换到
+direct-only 的真实场景 fallback。对于 release-2.2.2，这种 fallback 仍然可以
+闭合以下预检内容：
+
+1. 官方 profile readiness；
+2. bounded endpoint reachability；
+3. direct-message target binding；
+4. 群聊与未 @ 场景的确定性 contract evidence。
+
+先显式配置官方 profile：
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-config \
+  --adapter qq_official \
+  --enable \
+  --active \
+  --endpoint-url <qq-official-endpoint> \
+  --credential-env-var <qq-token-env-var> \
+  --credential-env-var <qq-secret-env-var> \
+  --mention-policy mention_or_direct \
+  --transport-kind https \
+  --live-network-allowed true
+```
+
+然后确认 profile 形态和 readiness 摘要：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-list
+```
+
+在任何 transport probe 之前，先跑完全部必测确定性场景：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario group
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario direct
+
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario group_no_mention
+```
+
+重点检查这些 JSON 字段：
+
+1. `sample_scenario`
+2. `results[0].social_envelope.channel_kind`
+3. `results[0].social_envelope.metadata.session_scope`
+4. `results[0].social_envelope.metadata.mentioned_user_ids`
+5. `evidence_summary.deterministic_normalization.ready_count`
+
+如果群聊接入在平台侧受阻，则把 `group` 与 `group_no_mention` 保留为确定性
+contract 检查，并把操作者提供的 direct target 作为这一次真实场景验证中唯一
+的 live-scene target。
+
+如果已经明确批准 bounded live-network probe，再对同一个 profile 执行受限
+transport reachability probe：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli social-adapter-test \
+  --adapter qq_official \
+  --sample-scenario group \
+  --probe-transport \
+  --probe-timeout-seconds 1.5
+```
+
+重点检查这些 probe 字段：
+
+1. `probe_requested=true`
+2. `results[0].transport_probe.status`
+3. `results[0].transport_probe.reason`
+4. `results[0].closure_gates.network_execution_policy_respected`
+5. `evidence_summary.transport_reachability.status_counts`
+
+这个 transport probe 只证明 endpoint 在受限条件下是否可达，不证明真实回调已
+成功送达，也不证明 outbound send 已完成，更不能绕过现有 Core governance。
+所有 live social 检查都必须保持显式、受限、且经操作者批准。
+
+如果你已经准备好在本机验证官方 QQ callback ingress，先启动 bounded webhook
+server，而不是直接假设已经具备长驻 daemon：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli qq-official-webhook-server \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --host 127.0.0.1 \
+  --port 8091 \
+  --path /qq/callback \
+  --duration 30 \
+  --max-events 1 \
+  --ready-file /tmp/qq-official-webhook-ready.json
+```
+
+bounded 运行结束后重点检查：
+
+1. `listen_address.host`、`listen_address.port`、`listen_address.path`
+2. `validation_request_count`
+3. `dispatch_event_count`
+4. `events[0].event_type`
+5. `core_results[0].events_persisted`
+
+这个命令的定位只是受限 callback 验证和本地 ingress 验证。它是 release-2.2.2
+的第一步 live ingress 能力，不代表最终 production serving topology 已完成。
+
+如果在确认请求路径、`AppID` 和官方请求签名都正确之后，QQ 平台仍持续拒绝
+callback 校验，就不要把所有 live ingress 工作都卡死在 callback 页面上，而是
+切换到 bounded 官方 gateway 路径：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli qq-official-gateway-client \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --duration 30 \
+  --max-events 1 \
+  --ready-file /tmp/qq-official-gateway-ready.json \
+  --session-state-file /tmp/qq-official-gateway-session.json \
+  --max-resume-attempts 2
+```
+
+bounded 运行结束后重点检查：
+
+1. `gateway.url`
+2. `hello_count`
+3. `ready_event_count`
+4. `dispatch_event_count`
+5. `core_results[0].events_persisted`
+6. `resume_attempt_count`
+7. `resume_success_count`
+8. `reconnect_count`
+
+如果当前运行环境允许保存一个本地状态文件，bounded gateway 演练时应优先加上
+`--session-state-file`。这样 client 会把 `session_id` 和最新 gateway sequence
+落盘，并在断线后执行有限次 `RESUME`，但不会把这条命令提升成一个长驻 daemon。
+
+这条路径的定位是受限官方 websocket/gateway ingress 验证，不代表 Neurolink 已
+经具备长驻 QQ resident 服务。
+
+如果要把这次 bounded gateway 运行结果接入 release closure，应先归档 raw run
+JSON，再把它转换成稳定的 closure payload，然后再进入最终的
+`closure-summary`：
+
+```bash
+/home/emb/project/zephyrproject/.venv/bin/python -m neurolink_core.cli qq-official-gateway-closure \
+  --gateway-run-file /tmp/qq-official-gateway-run.json \
+  --require-resume-evidence > /tmp/qq-official-gateway-closure.json
+```
+
+随后在最终 `closure-summary` 命令里增加
+`--qq-gateway-file /tmp/qq-official-gateway-closure.json`，并确认
+`validation_gates.qq_official_gateway_gate=true`。
+
+### 4.7.1 QQ 官方 Webhook Callback 联调清单
+
+当你准备把 QQ 官方开发者平台真正接到这条 bounded 本地 ingress 路径上时，按
+这份清单执行。目标不是直接上线常驻服务，而是先证明真实 callback 能到达
+Core。
+
+在打开 QQ 开发者平台之前，先确认本地前置条件：
+
+1. 当前 shell 中已经有 `QQ_BOT_APP_ID` 和 `QQ_BOT_APP_SECRET`；
+2. `social-adapter-list` 显示 `qq_official` 已 active 且 ready；
+3. 确定性 `group`、`direct`、`group_no_mention` 检查已经通过；
+4. 操作者已经准备好一个可转发到 `127.0.0.1:<local-port>` 的临时公网 HTTPS 入口。
+
+先启动 bounded listener，并在配置官方 callback 时保持这个终端不退出：
+
+```bash
+cd /home/emb/project/zephyrproject/applocation/NeuroLink
+source /home/emb/project/zephyrproject/.venv/bin/activate
+python -m neurolink_core.cli qq-official-webhook-server \
+  --config-file /home/emb/project/zephyrproject/applocation/NeuroLink/config/social_adapter_profiles.json \
+  --host 127.0.0.1 \
+  --port 8091 \
+  --path /qq/callback \
+  --duration 120 \
+  --max-events 1 \
+  --ready-file /tmp/qq-official-webhook-ready.json
+```
+
+在第二个终端读取 ready-file，确认本地实际监听地址后再做公网暴露：
+
+```bash
+cat /tmp/qq-official-webhook-ready.json
+```
+
+预期 ready-file 结构：
+
+```json
+{
+  "host": "127.0.0.1",
+  "path": "/qq/callback",
+  "port": 8091
+}
+```
+
+然后在 QQ 官方平台侧配置 callback，并通过操作者自管的公网 HTTPS 转发接入：
+
+1. 创建或复用一个临时公网 HTTPS URL，并把它转发到 `http://127.0.0.1:8091/qq/callback`；
+2. 在 QQ 开发者平台的 callback URL 中填写 `<public-https-base>/qq/callback`；
+3. 平台使用的 `AppID`、`AppSecret` 必须与当前 active 的 `qq_official` profile 一致；
+4. 保存平台 callback 配置时，确保本地 bounded listener 仍然在运行。
+
+bounded 运行结果分两步解读：
+
+1. `validation_request_count=1` 说明 QQ 官方已经打到 callback，且本地签名逻辑完成了验证响应；
+2. `dispatch_event_count=1` 且 `core_results[0].events_persisted=1` 说明至少有一个受支持的 live event 已经跨过 webhook 边界并进入 Core。
+
+如果 callback 验证成功，但在超时前没有 dispatch 事件到达，应把这次运行视为
+transport-only proof。它可以证明 ingress 可达，但还不能证明真实消息事件链路。
+这时应在同一个 bounded 窗口内，主动给 bot 发一条 direct message，或者触发
+一次受支持的 mention 事件，然后重试。
+
+如果 QQ 平台在保存 callback 时立刻报错，先检查这几项：
+
+1. 公网 URL 是否为 HTTPS，且转发到了 ready-file 中同一个 `path`；
+2. 当前运行 shell 中的 `AppSecret` 是否与 active profile 绑定一致；
+3. bounded listener 是否已经因为 `duration` 或 `max-events` 提前退出；
+4. 转发层是否完整保留了 POST body 和 content type。
 
 ## 5. Release-1.2.4 编排与实时服务命令
 
