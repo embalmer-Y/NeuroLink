@@ -10,7 +10,10 @@ baseline, the closed release-1.2.7 HLD-completion bundle, and the inherited
 release-1.2.4 through release-2.2.4 runtime/governance surfaces that remain
 part of release evidence. Release identity is now promoted to `2.2.5` after
 the bounded release-2.2.5 persona-governance closure slice landed with focused
-persona and closure regressions green.
+persona and closure regressions green. The next bounded development line,
+release-2.2.6, is now archived as development-complete without changing the
+canonical release identity; its additive closure plan and finalization
+checklist document the pre-promotion state.
 This runbook is written for operators and developers who need to run Core
 locally, check provider and memory readiness, execute the Core-owned
 build/deploy gates, or close bounded live service and AI Core release evidence.
@@ -19,7 +22,9 @@ For a task-oriented startup and daily-use guide, start with
 `docs/project/AI_CORE_USER_GUIDE.md`. For the implementation roadmap and
 promotion record that define the current baseline, use
 `docs/project/RELEASE_2.2.0_QWENPAW_REFERENCE_FOUNDATION_PLAN.md`,
-`docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md`, and `PROJECT_PROGRESS.md`.
+`docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md`,
+`docs/project/RELEASE_2.2.6_PLAN.md`,
+`docs/project/RELEASE_2.2.6_PROMOTION_CHECKLIST.md`, and `PROJECT_PROGRESS.md`.
 
 ## 1. Runtime Shape
 

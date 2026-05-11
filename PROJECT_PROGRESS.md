@@ -1,3 +1,129 @@
+2026-05-11: Finalized the bounded release-2.2.6 development line after full regressions passed. Repaired one stale `closure-summary` test expectation so the full AI Core suite matched the additive 2.2.6 bundle rules, archived a machine-readable finalization bundle under `smoke-evidence/release-2.2.6-finalization-20260511T123307Z`, and added a human-readable `RELEASE_2.2.6_PROMOTION_CHECKLIST.md` that records development completion without changing canonical release identity. Full validation closed at `364 passed, 6 subtests passed` for `neurolink_core` and `138 passed` for `neuro_cli`. - Copilot
+
+#### EXEC-393 Release 2.2.6 Finalization
+
+- Status: development-complete and archived, not promoted
+- Added:
+  - `docs/project/RELEASE_2.2.6_PROMOTION_CHECKLIST.md`
+  - finalization evidence bundle at `smoke-evidence/release-2.2.6-finalization-20260511T123307Z/`
+  - README and runbook references for the active 2.2.6 closure line
+- Fixed:
+  - stale `test_cli_closure_summary_reads_session_evidence` expectation so full-suite bundle-checklist assertions match the actual contract that only includes 2.2.6 bundle items when 2.2.6 evidence files are supplied
+- Validation:
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neurolink_core/tests -q`
+  - `/home/emb/project/zephyrproject/.venv/bin/python -m pytest neuro_cli/tests/test_neuro_cli.py neuro_cli/tests/test_invoke_neuro_cli.py -q`
+  - `364 passed, 6 subtests passed`
+  - `138 passed`
+
+2026-05-11: Continued release-2.2.6 by adding a bounded promotion-facing review surface on top of the now-complete rerun archive set. Added `release-2.2.6-promotion-checklist` so operators can review closure-smoke state, promotion-blocking rerun rows, conditional rerun rows, and preserved approval boundaries from one machine-readable payload without escalating into live capture. Focused validation passed with `4 passed, 190 deselected`. - Copilot
+
+#### EXEC-392 Release 2.2.6 Promotion Checklist
+
+- Status: implemented as the next bounded planning surface after archive completion
+- Added:
+  - `release-2.2.6-promotion-checklist` command in `neurolink_core/cli.py`
+  - ready-state review for required rows `R226-HW-01`, `R226-HW-02`, `R226-SOC-01`
+  - conditional-row review for `R226-SOC-02`, `R226-SOC-03`, `R226-SOC-04`
+  - optional export bundle with `release-2.2.6-promotion-checklist.json`, `release-2.2.6-closure-smoke.json`, and `release-2.2.6-live-rerun-template.json`
+- Boundary confirmation:
+  - this slice remains archive-first and operator-bounded
+  - it does not promote release identity and does not claim fresh live rerun execution
+- Validation:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m pytest neurolink_core/tests/test_neurolink_core.py -k 'release_226_promotion_checklist or release_226_closure_smoke_reports_additive_gates or release_226_closure_smoke_can_export_evidence_bundle'`
+  - `4 passed, 190 deselected`
+
+2026-05-11: Continued release-2.2.6 by converting `R226-SOC-04` from the last remaining conditional template row into a concrete bounded archive command. Added `release-2.2.6-openclaw-gateway-rerun-archive`, wired it into `release-2.2.6-live-rerun-template` and `release-2.2.6-closure-smoke`, and kept the slice archive-first so the release bundle gains full conditional gateway coverage without claiming unbounded live credential execution. Focused validation passed with `5 passed, 187 deselected`. - Copilot
+
+#### EXEC-391 Release 2.2.6 OpenClaw Archive
+
+- Status: implemented and folded into the additive 2.2.6 closure bundle
+- Added:
+  - `release-2.2.6-openclaw-gateway-rerun-archive` for `R226-SOC-04`
+  - `implementation_command` and `openclaw-gateway-run.json` artifact hint on the corresponding live rerun template row
+  - automatic export of `release-2.2.6-openclaw-gateway-rerun-archive.json` from `release-2.2.6-closure-smoke`
+- Boundary confirmation:
+  - the OpenClaw path remains credential-aware and archive-first; this slice does not claim current-host account-session or plugin-host live execution
+  - the release bundle now covers all planned 2.2.6 rerun rows as concrete archive contracts except any future operator-run fresh captures beyond the bounded deterministic evidence layer
+- Validation:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m pytest neurolink_core/tests/test_neurolink_core.py -k 'release_226_live_rerun_template_emits_hardware_and_social_rows or release_226_openclaw_gateway_rerun_archive or release_226_closure_smoke_reports_additive_gates or release_226_closure_smoke_can_export_evidence_bundle'`
+  - `5 passed, 187 deselected`
+- Next:
+  - if the next step must stay bounded, consolidate these archive contracts into a promotion-facing checklist or bundle review surface
+  - if the next step can widen under operator control, choose one archive path and replace the deterministic packaged payload with a fresh live capture session
+
+2026-05-11: Continued release-2.2.6 by converting `R226-SOC-01` and `R226-SOC-03` from template rows into concrete rerun archive commands. Added `release-2.2.6-real-unit-rerun-archive` for bounded real Unit continuity evidence, added `release-2.2.6-wecom-gateway-rerun-archive` for the next conditional gateway archive, and bundled both payloads into `release-2.2.6-closure-smoke` export output so the release bundle now carries concrete archive coverage for `R226-SOC-01`, `R226-SOC-02`, `R226-SOC-03`, `R226-HW-01`, and `R226-HW-02`. Focused validation passed with `11 passed, 179 deselected`. - Copilot
+
+#### EXEC-390 Release 2.2.6 Real Unit And WeCom Archives
+
+- Status: implemented and folded into the additive 2.2.6 closure bundle
+- Added:
+  - `release-2.2.6-real-unit-rerun-archive` for `R226-SOC-01`
+  - `release-2.2.6-wecom-gateway-rerun-archive` for `R226-SOC-03`
+  - `implementation_command` hints on the corresponding 2.2.6 live rerun template rows
+  - `coding-agent-route.json` as an explicit required artifact for `R226-SOC-01`
+  - `wecom-gateway-run.json` as an explicit required artifact for `R226-SOC-03`
+  - automatic export of `release-2.2.6-real-unit-rerun-archive.json` and `release-2.2.6-wecom-gateway-rerun-archive.json` from `release-2.2.6-closure-smoke`
+- Boundary confirmation:
+  - `R226-SOC-01` remains bounded and archive-first; this slice packages continuity evidence through `live-event-smoke` and `real-scene-e2e-smoke` contracts without claiming a new unbounded host live run
+  - `R226-SOC-03` remains credential-aware and conditional; the new archive packages the WeCom run payload and closure payload without claiming current-host credential availability
+  - remaining pending social rerun rows are now `R226-SOC-04` only for conditional gateway coverage, plus any later promotion-time true live reruns
+- Validation:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m pytest neurolink_core/tests/test_neurolink_core.py -k 'release_226_live_rerun_template_emits_hardware_and_social_rows or release_226_real_unit_rerun_archive or release_226_wecom_gateway_rerun_archive or release_226_qq_gateway_rerun_archive or release_226_hardware_rerun_archive or release_226_closure_smoke_reports_additive_gates or release_226_closure_smoke_can_export_evidence_bundle'`
+  - `11 passed, 179 deselected`
+- Next:
+  - decide whether `R226-SOC-04` OpenClaw should become the final conditional gateway archive in this line
+  - if promotion evidence is desired next, upgrade the bounded `R226-SOC-01` archive from deterministic archive packaging to a fresh operator-run live capture session
+
+2026-05-11: Continued release-2.2.6 by converting the first two live rerun template paths into concrete archive commands instead of leaving them as backlog-only placeholders. Added `release-2.2.6-qq-gateway-rerun-archive` for `R226-SOC-02`, added `release-2.2.6-hardware-rerun-archive` for `R226-HW-01/R226-HW-02`, and bundled both archive payloads into `release-2.2.6-closure-smoke` evidence exports so the 2.2.6 closure bundle now carries template, implemented gateway rerun evidence, and implemented hardware rerun evidence together. Focused validation passed with `7 passed, 179 deselected`. - Copilot
+
+#### EXEC-389 Release 2.2.6 Rerun Archive Commands
+
+- Status: implemented and folded into the additive 2.2.6 closure bundle
+- Added:
+  - `release-2.2.6-qq-gateway-rerun-archive` for `R226-SOC-02`
+  - `release-2.2.6-hardware-rerun-archive` for `R226-HW-01` and `R226-HW-02`
+  - `implementation_command` hints on the corresponding 2.2.6 live rerun template rows
+  - `qq-official-gateway-run.json` as an explicit required artifact for the QQ rerun row
+  - automatic export of `release-2.2.6-qq-gateway-rerun-archive.json` and `release-2.2.6-hardware-rerun-archive.json` from `release-2.2.6-closure-smoke`
+- Boundary confirmation:
+  - gateway rerun remains bounded and archive-first; this slice does not claim live credentialed execution on the current host
+  - hardware rerun remains operator-bounded; the new archive packages capability, budget, signing, observability, and guarded rollback evidence without widening Unit runtime scope
+  - remaining live rerun rows (`R226-SOC-01`, `R226-SOC-03`, `R226-SOC-04`) are still pending follow-up implementation
+- Validation:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m pytest neurolink_core/tests/test_neurolink_core.py -k 'release_226_closure_smoke_reports_additive_gates or release_226_closure_smoke_can_export_evidence_bundle or release_226_live_rerun_template_emits_hardware_and_social_rows or release_226_qq_gateway_rerun_archive or release_226_hardware_rerun_archive'`
+  - `7 passed, 179 deselected`
+- Next:
+  - convert `R226-SOC-01` real Unit continuity from template/backlog into a concrete archived rerun path
+  - decide whether WeCom or OpenClaw should be the next conditional gateway rerun archive after QQ
+
+2026-05-11: Continued release-2.2.6 by starting the live hardware/social rerun line as machine-archivable template evidence instead of jumping directly into uncontrolled live execution. Added `release-2.2.6-live-rerun-template` and wired it into `release-2.2.6-closure-smoke` export bundles so each 2.2.6 evidence archive now carries a concrete rerun backlog for fresh hardware compatibility, guarded rollback, real live-event continuity, and conditional QQ/WeCom/OpenClaw gateway refreshes. Focused validation passed with `3 passed, 179 deselected` for the new template plus the touched 2.2.6 closure-smoke tests. - Copilot
+
+#### EXEC-388 Release 2.2.6 Live Rerun Template Start
+
+- Status: additive live rerun planning hooks implemented on top of the generic closure-summary integration slice
+- Added:
+  - `docs/project/RELEASE_2.2.6_PLAN.md`
+  - `task-tracking-smoke`, `memory-maintenance-smoke`, `self-optimization-smoke`, `world-model-context-smoke`, and `release-2.2.6-closure-smoke` CLI evidence surfaces
+  - additive `closure-summary` support for `--task-tracking-file`, `--memory-maintenance-file`, `--self-optimization-file`, and `--world-model-context-file`
+  - new generic closure gates: `autonomy_heartbeat_gate`, `task_tracking_replay_gate`, `memory_maintenance_gate`, `self_optimization_gate`, and `world_model_context_gate`
+  - matching 2.2.6 `bundle_checklist` items in standard release closure output
+  - `release-2.2.6-live-rerun-template` with explicit hardware and social rerun rows
+  - automatic `release-2.2.6-live-rerun-template.json` export from `release-2.2.6-closure-smoke`
+- Boundary confirmation:
+  - release identity remains at the promoted `2.2.5` baseline until a future 2.2.6 promotion bundle is green
+  - release-2.2.6 work starts with deterministic evidence hooks; staged soak and live hardware/social replay are not claimed by this slice
+  - Unit recovery, gateway route/relay runtime, and state registry runtime gaps remain tracked as follow-up hardening unless promoted into this release by owner decision
+- Validation:
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m pytest -q neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or release_224_closure_smoke_reports_full_green_summary or release_226_closure_smoke_reports_additive_gates or release_226_closure_smoke_can_export_evidence_bundle or task_tracking_smoke_reports_replay_and_cleanup_evidence or memory_maintenance_smoke_reports_prompt_safe_consolidation or self_optimization_smoke_reports_no_direct_apply_boundary or world_model_context_smoke_reports_prompt_safe_context'`
+  - `8 passed, 173 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m pytest -q neurolink_core/tests/test_neurolink_core.py -k 'closure_summary_exposes_release_validation_gate_matrix_when_evidence_is_supplied or release_224_closure_smoke_reports_full_green_summary'`
+  - `2 passed, 179 deselected`
+  - `cd /home/emb/project/zephyrproject/applocation/NeuroLink && python3 -m pytest -q neurolink_core/tests/test_neurolink_core.py -k 'release_226_closure_smoke_reports_additive_gates or release_226_closure_smoke_can_export_evidence_bundle or release_226_live_rerun_template_emits_hardware_and_social_rows'`
+  - `3 passed, 179 deselected`
+- Next:
+  - start filling the rerun template rows with bounded operator evidence as hardware and social credentials become available
+  - decide whether to convert one gateway rerun row from template-only into a concrete archived rerun in the next slice
+
 2026-05-11: Marked release-2.2.5 complete and promoted the repository identity
 to `2.2.5` after the bounded persona-governance scope closed green. The
 promotion updates the canonical Neuro CLI `RELEASE_TARGET`, workflow catalog,

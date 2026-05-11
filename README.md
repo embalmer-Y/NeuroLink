@@ -340,6 +340,11 @@ Capability map:
 - `docs/project/RELEASE_2.2.5_PROMOTION_CHECKLIST.md` - final bounded
 	release-2.2.5 completion decision, promoted identity surfaces, and focused
 	persona-governance validation evidence.
+- `docs/project/RELEASE_2.2.6_PLAN.md` - active release-2.2.6 autonomy,
+	rerun-archive, and bounded promotion-review implementation plan.
+- `docs/project/RELEASE_2.2.6_PROMOTION_CHECKLIST.md` - bounded release-2.2.6
+	development-complete checklist, archived finalization bundle, and residual
+	promotion constraints.
 - `docs/project/RELEASE_2.2.2_SOCIAL_ADAPTER_PLAN.md` - release-2.2.2
 	QQ official / OneBot social adapter registry, config, compliance, and smoke
 	implementation plan.

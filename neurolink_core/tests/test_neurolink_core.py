@@ -2767,6 +2767,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             live_event_file = Path(tmpdir) / "live-event-smoke.json"
             real_scene_file = Path(tmpdir) / "real-scene-e2e.json"
             autonomy_file = Path(tmpdir) / "autonomy-daemon.json"
+            task_tracking_file = Path(tmpdir) / "task-tracking.json"
+            memory_maintenance_file = Path(tmpdir) / "memory-maintenance.json"
+            self_optimization_file = Path(tmpdir) / "self-optimization.json"
+            world_model_context_file = Path(tmpdir) / "world-model-context.json"
             vitality_file = Path(tmpdir) / "vitality-smoke.json"
             persona_file = Path(tmpdir) / "persona-state.json"
             social_adapter_file = Path(tmpdir) / "social-adapter.json"
@@ -2981,6 +2985,38 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                     "autonomy-daemon-smoke",
                 ])
             autonomy_file.write_text(autonomy_out.getvalue(), encoding="utf-8")
+            task_tracking_out = io.StringIO()
+            with redirect_stdout(task_tracking_out):
+                task_tracking_code = core_cli_main([
+                    "task-tracking-smoke",
+                ])
+            task_tracking_file.write_text(
+                task_tracking_out.getvalue(), encoding="utf-8"
+            )
+            memory_maintenance_out = io.StringIO()
+            with redirect_stdout(memory_maintenance_out):
+                memory_maintenance_code = core_cli_main([
+                    "memory-maintenance-smoke",
+                ])
+            memory_maintenance_file.write_text(
+                memory_maintenance_out.getvalue(), encoding="utf-8"
+            )
+            self_optimization_out = io.StringIO()
+            with redirect_stdout(self_optimization_out):
+                self_optimization_code = core_cli_main([
+                    "self-optimization-smoke",
+                ])
+            self_optimization_file.write_text(
+                self_optimization_out.getvalue(), encoding="utf-8"
+            )
+            world_model_context_out = io.StringIO()
+            with redirect_stdout(world_model_context_out):
+                world_model_context_code = core_cli_main([
+                    "world-model-context-smoke",
+                ])
+            world_model_context_file.write_text(
+                world_model_context_out.getvalue(), encoding="utf-8"
+            )
             vitality_out = io.StringIO()
             with redirect_stdout(vitality_out):
                 vitality_code = core_cli_main([
@@ -3294,6 +3330,14 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                         str(real_scene_file),
                         "--autonomy-daemon-file",
                         str(autonomy_file),
+                        "--task-tracking-file",
+                        str(task_tracking_file),
+                        "--memory-maintenance-file",
+                        str(memory_maintenance_file),
+                        "--self-optimization-file",
+                        str(self_optimization_file),
+                        "--world-model-context-file",
+                        str(world_model_context_file),
                         "--vitality-smoke-file",
                         str(vitality_file),
                         "--persona-state-file",
@@ -3326,6 +3370,10 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertEqual(live_event_code, 0)
         self.assertEqual(real_scene_code, 0)
         self.assertEqual(autonomy_code, 0)
+        self.assertEqual(task_tracking_code, 0)
+        self.assertEqual(memory_maintenance_code, 0)
+        self.assertEqual(self_optimization_code, 0)
+        self.assertEqual(world_model_context_code, 0)
         self.assertEqual(vitality_code, 0)
         self.assertEqual(persona_code, 0)
         self.assertEqual(social_adapter_code, 0)
@@ -3340,7 +3388,7 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         payload = json.loads(summary_out.getvalue())
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["validation_gate_summary"]["ok"])
-        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 33)
+        self.assertEqual(payload["validation_gate_summary"]["passed_count"], 38)
         self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
         self.assertTrue(all(payload["validation_gates"].values()))
         self.assertTrue(payload["validation_gates"]["closure_summary_gate"])
@@ -3348,6 +3396,11 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["validation_gates"]["restricted_unit_compatibility_gate"])
         self.assertTrue(payload["validation_gates"]["resource_budget_governance_gate"])
         self.assertTrue(payload["validation_gates"]["autonomous_daemon_gate"])
+        self.assertTrue(payload["validation_gates"]["autonomy_heartbeat_gate"])
+        self.assertTrue(payload["validation_gates"]["task_tracking_replay_gate"])
+        self.assertTrue(payload["validation_gates"]["memory_maintenance_gate"])
+        self.assertTrue(payload["validation_gates"]["self_optimization_gate"])
+        self.assertTrue(payload["validation_gates"]["world_model_context_gate"])
         self.assertTrue(payload["validation_gates"]["vitality_governance_gate"])
         self.assertTrue(payload["validation_gates"]["persona_persistence_gate"])
         self.assertTrue(payload["validation_gates"]["persona_seed_gate"])
@@ -5543,6 +5596,65 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
         self.assertTrue(payload["closure_gates"]["sandbox_mode_isolated"])
         self.assertTrue(payload["closure_gates"]["vitality_replenishment_after_verified_success"])
 
+    def test_cli_task_tracking_smoke_reports_replay_and_cleanup_evidence(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["task-tracking-smoke"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.6-task-tracking-smoke-v1")
+        self.assertEqual(payload["command"], "task-tracking-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["active_hours_config_recorded"])
+        self.assertTrue(payload["closure_gates"]["heartbeat_linked"])
+        self.assertTrue(payload["closure_gates"]["interrupted_task_resumable"])
+        self.assertTrue(payload["closure_gates"]["rerun_ready"])
+
+    def test_cli_memory_maintenance_smoke_reports_prompt_safe_consolidation(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["memory-maintenance-smoke"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.6-memory-maintenance-smoke-v1")
+        self.assertEqual(payload["command"], "memory-maintenance-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["prompt_safe_summary_recorded"])
+        self.assertTrue(payload["closure_gates"]["raw_private_payloads_not_exported"])
+        self.assertTrue(payload["closure_gates"]["audit_record_bound"])
+
+    def test_cli_self_optimization_smoke_reports_no_direct_apply_boundary(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["self-optimization-smoke"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.6-self-optimization-smoke-v1")
+        self.assertEqual(payload["command"], "self-optimization-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["low_risk_classified"])
+        self.assertTrue(payload["closure_gates"]["operator_approval_recorded"])
+        self.assertTrue(payload["closure_gates"]["apply_changes_still_forbidden"])
+        self.assertFalse(payload["evidence_summary"]["can_apply_changes"])
+
+    def test_cli_world_model_context_smoke_reports_prompt_safe_context(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["world-model-context-smoke"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.6-world-model-context-smoke-v1")
+        self.assertEqual(payload["command"], "world-model-context-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["closure_gates"]["temporal_incidents_recorded"])
+        self.assertTrue(payload["closure_gates"]["unit_capability_context_recorded"])
+        self.assertTrue(payload["closure_gates"]["relationship_context_prompt_safe"])
+        self.assertTrue(payload["closure_gates"]["relay_context_preserved"])
+
     def test_cli_coding_agent_descriptor_reports_governed_runner_contract(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
@@ -5666,6 +5778,428 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
             self.assertIn("closure_summary", payload["evidence_manifest"])
             self.assertIn("coding_agent_route", payload["evidence_manifest"])
 
+    def test_cli_release_226_closure_smoke_reports_additive_gates(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-closure-smoke"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.6-release-closure-smoke-v1")
+        self.assertEqual(payload["command"], "release-2.2.6-closure-smoke")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gate_summary"]["ok"])
+        self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
+        self.assertTrue(payload["validation_gates"]["inherited_release_224_gate"])
+        self.assertTrue(payload["validation_gates"]["autonomy_heartbeat_gate"])
+        self.assertTrue(payload["validation_gates"]["task_tracking_replay_gate"])
+        self.assertTrue(payload["validation_gates"]["memory_maintenance_gate"])
+        self.assertTrue(payload["validation_gates"]["self_optimization_gate"])
+        self.assertTrue(payload["validation_gates"]["world_model_context_gate"])
+        self.assertEqual(
+            payload["live_rerun_template"]["schema_version"],
+            "2.2.6-live-rerun-template-v1",
+        )
+        self.assertEqual(
+            payload["qq_gateway_rerun_archive"]["schema_version"],
+            "2.2.6-qq-gateway-rerun-archive-v1",
+        )
+        self.assertEqual(
+            payload["real_unit_rerun_archive"]["schema_version"],
+            "2.2.6-real-unit-rerun-archive-v1",
+        )
+        self.assertEqual(
+            payload["wecom_gateway_rerun_archive"]["schema_version"],
+            "2.2.6-wecom-gateway-rerun-archive-v1",
+        )
+        self.assertEqual(
+            payload["openclaw_gateway_rerun_archive"]["schema_version"],
+            "2.2.6-openclaw-gateway-rerun-archive-v1",
+        )
+        self.assertEqual(
+            payload["hardware_rerun_archive"]["schema_version"],
+            "2.2.6-hardware-rerun-archive-v1",
+        )
+        self.assertEqual(payload["evidence_summary"]["implemented_rerun_archive_count"], 5)
+        self.assertEqual(payload["evidence_summary"]["live_rerun_row_count"], 6)
+
+    def test_cli_release_226_closure_smoke_can_export_evidence_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-226-evidence"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main([
+                    "release-2.2.6-closure-smoke",
+                    "--evidence-dir",
+                    str(evidence_dir),
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue(evidence_dir.is_dir())
+            self.assertTrue((evidence_dir / "task-tracking-smoke.json").is_file())
+            self.assertTrue((evidence_dir / "memory-maintenance-smoke.json").is_file())
+            self.assertTrue((evidence_dir / "self-optimization-smoke.json").is_file())
+            self.assertTrue((evidence_dir / "world-model-context-smoke.json").is_file())
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-live-rerun-template.json").is_file()
+            )
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-real-unit-rerun-archive.json").is_file()
+            )
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-qq-gateway-rerun-archive.json").is_file()
+            )
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-wecom-gateway-rerun-archive.json").is_file()
+            )
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-openclaw-gateway-rerun-archive.json").is_file()
+            )
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-hardware-rerun-archive.json").is_file()
+            )
+            self.assertIn("task_tracking", payload["evidence_manifest"])
+            self.assertIn("world_model_context", payload["evidence_manifest"])
+            self.assertIn("live_rerun_template", payload["evidence_manifest"])
+            self.assertIn("real_unit_rerun_archive", payload["evidence_manifest"])
+            self.assertIn("qq_gateway_rerun_archive", payload["evidence_manifest"])
+            self.assertIn("wecom_gateway_rerun_archive", payload["evidence_manifest"])
+            self.assertIn("openclaw_gateway_rerun_archive", payload["evidence_manifest"])
+            self.assertIn("hardware_rerun_archive", payload["evidence_manifest"])
+
+    def test_cli_release_226_promotion_checklist_reports_ready_summary(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-promotion-checklist"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.6-promotion-checklist-v1")
+        self.assertEqual(payload["command"], "release-2.2.6-promotion-checklist")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gate_summary"]["ok"])
+        self.assertEqual(payload["validation_gate_summary"]["failed_gate_ids"], [])
+        self.assertEqual(payload["evidence_summary"]["required_row_count"], 3)
+        self.assertEqual(payload["evidence_summary"]["conditional_row_count"], 3)
+        self.assertEqual(payload["evidence_summary"]["ready_required_row_count"], 3)
+        self.assertEqual(payload["evidence_summary"]["ready_conditional_row_count"], 3)
+        self.assertEqual(
+            [row["rerun_id"] for row in payload["required_row_reviews"]],
+            ["R226-HW-01", "R226-HW-02", "R226-SOC-01"],
+        )
+        self.assertEqual(
+            [row["rerun_id"] for row in payload["conditional_row_reviews"]],
+            ["R226-SOC-02", "R226-SOC-03", "R226-SOC-04"],
+        )
+        self.assertTrue(payload["validation_gates"]["required_archives_ready"])
+        self.assertTrue(payload["validation_gates"]["operator_boundary_preserved"])
+
+    def test_cli_release_226_promotion_checklist_can_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-226-promotion-checklist"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "release-2.2.6-promotion-checklist",
+                        "--evidence-dir",
+                        str(evidence_dir),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-promotion-checklist.json").is_file()
+            )
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-closure-smoke.json").is_file()
+            )
+            self.assertTrue(
+                (evidence_dir / "release-2.2.6-live-rerun-template.json").is_file()
+            )
+            self.assertIn("promotion_checklist", payload["evidence_manifest"])
+            self.assertIn("closure_smoke", payload["evidence_manifest"])
+            self.assertIn("live_rerun_template", payload["evidence_manifest"])
+            self.assertEqual(payload["evidence_summary"]["exported_file_count"], 3)
+
+    def test_cli_release_226_live_rerun_template_emits_hardware_and_social_rows(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-live-rerun-template"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["schema_version"], "2.2.6-live-rerun-template-v1")
+        self.assertEqual(payload["command"], "release-2.2.6-live-rerun-template")
+        self.assertEqual(payload["summary"]["total_rows"], 6)
+        self.assertEqual(payload["summary"]["hardware_rows"], 2)
+        self.assertEqual(payload["summary"]["social_rows"], 4)
+        self.assertEqual(payload["summary"]["required_for_promotion_rows"], 3)
+        self.assertEqual(
+            [row["rerun_id"] for row in payload["rerun_rows"]],
+            [
+                "R226-HW-01",
+                "R226-HW-02",
+                "R226-SOC-01",
+                "R226-SOC-02",
+                "R226-SOC-03",
+                "R226-SOC-04",
+            ],
+        )
+        row_by_id = {row["rerun_id"]: row for row in payload["rerun_rows"]}
+        self.assertEqual(
+            row_by_id["R226-HW-01"]["implementation_command"],
+            "release-2.2.6-hardware-rerun-archive",
+        )
+        self.assertEqual(
+            row_by_id["R226-HW-02"]["implementation_command"],
+            "release-2.2.6-hardware-rerun-archive",
+        )
+        self.assertEqual(
+            row_by_id["R226-SOC-02"]["implementation_command"],
+            "release-2.2.6-qq-gateway-rerun-archive",
+        )
+        self.assertEqual(
+            row_by_id["R226-SOC-01"]["implementation_command"],
+            "release-2.2.6-real-unit-rerun-archive",
+        )
+        self.assertEqual(
+            row_by_id["R226-SOC-03"]["implementation_command"],
+            "release-2.2.6-wecom-gateway-rerun-archive",
+        )
+        self.assertEqual(
+            row_by_id["R226-SOC-04"]["implementation_command"],
+            "release-2.2.6-openclaw-gateway-rerun-archive",
+        )
+        self.assertIn(
+            "coding-agent-route.json",
+            row_by_id["R226-SOC-01"]["required_evidence_artifacts"],
+        )
+        self.assertIn(
+            "qq-official-gateway-run.json",
+            row_by_id["R226-SOC-02"]["required_evidence_artifacts"],
+        )
+        self.assertIn(
+            "wecom-gateway-run.json",
+            row_by_id["R226-SOC-03"]["required_evidence_artifacts"],
+        )
+        self.assertIn(
+            "openclaw-gateway-run.json",
+            row_by_id["R226-SOC-04"]["required_evidence_artifacts"],
+        )
+
+    def test_cli_release_226_real_unit_rerun_archive_emits_ready_archive(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-real-unit-rerun-archive"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["schema_version"],
+            "2.2.6-real-unit-rerun-archive-v1",
+        )
+        self.assertEqual(payload["command"], "release-2.2.6-real-unit-rerun-archive")
+        self.assertEqual(payload["covered_rerun_id"], "R226-SOC-01")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gates"]["coding_agent_route_ready"])
+        self.assertTrue(payload["validation_gates"]["live_event_smoke_ready"])
+        self.assertTrue(payload["validation_gates"]["real_scene_e2e_ready"])
+
+    def test_cli_release_226_real_unit_rerun_archive_can_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-226-real-unit-rerun"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "release-2.2.6-real-unit-rerun-archive",
+                        "--evidence-dir",
+                        str(evidence_dir),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue((evidence_dir / "live-event-smoke.json").is_file())
+            self.assertTrue((evidence_dir / "coding-agent-route.json").is_file())
+            self.assertTrue((evidence_dir / "real-scene-e2e.json").is_file())
+            self.assertIn("real_scene_e2e", payload["evidence_manifest"])
+            self.assertEqual(payload["evidence_summary"]["exported_file_count"], 3)
+
+    def test_cli_release_226_qq_gateway_rerun_archive_emits_ready_archive(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-qq-gateway-rerun-archive"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["schema_version"],
+            "2.2.6-qq-gateway-rerun-archive-v1",
+        )
+        self.assertEqual(payload["command"], "release-2.2.6-qq-gateway-rerun-archive")
+        self.assertEqual(payload["covered_rerun_id"], "R226-SOC-02")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gates"]["social_adapter_ready"])
+        self.assertTrue(payload["validation_gates"]["qq_gateway_closure_ready"])
+        self.assertTrue(payload["validation_gates"]["resume_evidence_recorded"])
+        self.assertEqual(payload["template_row"]["rerun_id"], "R226-SOC-02")
+
+    def test_cli_release_226_qq_gateway_rerun_archive_can_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-226-qq-rerun"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "release-2.2.6-qq-gateway-rerun-archive",
+                        "--evidence-dir",
+                        str(evidence_dir),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue((evidence_dir / "social-adapter-smoke.json").is_file())
+            self.assertTrue((evidence_dir / "qq-official-gateway-run.json").is_file())
+            self.assertTrue(
+                (evidence_dir / "qq-official-gateway-closure.json").is_file()
+            )
+            self.assertIn("qq_gateway_run", payload["evidence_manifest"])
+            self.assertEqual(payload["evidence_summary"]["exported_file_count"], 3)
+
+    def test_cli_release_226_wecom_gateway_rerun_archive_emits_ready_archive(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-wecom-gateway-rerun-archive"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["schema_version"],
+            "2.2.6-wecom-gateway-rerun-archive-v1",
+        )
+        self.assertEqual(payload["command"], "release-2.2.6-wecom-gateway-rerun-archive")
+        self.assertEqual(payload["covered_rerun_id"], "R226-SOC-03")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gates"]["social_adapter_ready"])
+        self.assertTrue(payload["validation_gates"]["wecom_gateway_closure_ready"])
+        self.assertTrue(payload["validation_gates"]["dispatch_evidence_recorded"])
+
+    def test_cli_release_226_wecom_gateway_rerun_archive_can_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-226-wecom-rerun"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "release-2.2.6-wecom-gateway-rerun-archive",
+                        "--evidence-dir",
+                        str(evidence_dir),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue((evidence_dir / "social-adapter-smoke.json").is_file())
+            self.assertTrue((evidence_dir / "wecom-gateway-run.json").is_file())
+            self.assertTrue((evidence_dir / "wecom-gateway-closure.json").is_file())
+            self.assertIn("wecom_gateway_run", payload["evidence_manifest"])
+            self.assertEqual(payload["evidence_summary"]["exported_file_count"], 3)
+
+    def test_cli_release_226_openclaw_gateway_rerun_archive_emits_ready_archive(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-openclaw-gateway-rerun-archive"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["schema_version"],
+            "2.2.6-openclaw-gateway-rerun-archive-v1",
+        )
+        self.assertEqual(
+            payload["command"], "release-2.2.6-openclaw-gateway-rerun-archive"
+        )
+        self.assertEqual(payload["covered_rerun_id"], "R226-SOC-04")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gates"]["social_adapter_ready"])
+        self.assertTrue(payload["validation_gates"]["openclaw_gateway_closure_ready"])
+        self.assertTrue(payload["validation_gates"]["plugin_ready_recorded"])
+
+    def test_cli_release_226_openclaw_gateway_rerun_archive_can_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-226-openclaw-rerun"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "release-2.2.6-openclaw-gateway-rerun-archive",
+                        "--evidence-dir",
+                        str(evidence_dir),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue((evidence_dir / "social-adapter-smoke.json").is_file())
+            self.assertTrue((evidence_dir / "openclaw-gateway-run.json").is_file())
+            self.assertTrue((evidence_dir / "openclaw-gateway-closure.json").is_file())
+            self.assertIn("openclaw_gateway_run", payload["evidence_manifest"])
+            self.assertEqual(payload["evidence_summary"]["exported_file_count"], 3)
+
+    def test_cli_release_226_hardware_rerun_archive_emits_ready_archive(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = core_cli_main(["release-2.2.6-hardware-rerun-archive"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["schema_version"],
+            "2.2.6-hardware-rerun-archive-v1",
+        )
+        self.assertEqual(payload["command"], "release-2.2.6-hardware-rerun-archive")
+        self.assertEqual(payload["covered_rerun_ids"], ["R226-HW-01", "R226-HW-02"])
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["validation_gates"]["hardware_budget_rerun_ready"])
+        self.assertTrue(payload["validation_gates"]["rollback_operator_rerun_ready"])
+        self.assertTrue(payload["operator_handoff"]["operator_approval_required"])
+
+    def test_cli_release_226_hardware_rerun_archive_can_export_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_dir = Path(tmpdir) / "release-226-hardware-rerun"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = core_cli_main(
+                    [
+                        "release-2.2.6-hardware-rerun-archive",
+                        "--evidence-dir",
+                        str(evidence_dir),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertTrue(payload["ok"])
+            self.assertTrue((evidence_dir / "hardware-compatibility.json").is_file())
+            self.assertTrue((evidence_dir / "hardware-acceptance-matrix.json").is_file())
+            self.assertTrue((evidence_dir / "resource-budget-governance.json").is_file())
+            self.assertTrue((evidence_dir / "signing-provenance.json").is_file())
+            self.assertTrue((evidence_dir / "observability-diagnosis.json").is_file())
+            self.assertTrue(
+                (evidence_dir / "release-rollback-hardening.json").is_file()
+            )
+            self.assertEqual(payload["evidence_summary"]["exported_file_count"], 6)
+
     def test_cli_tool_threat_descriptor_reports_high_risk_argument_mix(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
@@ -5673,7 +6207,6 @@ class TestNoModelCoreWorkflow(unittest.TestCase):
                 "tool-threat-descriptor",
                 "--tool",
                 "system_restart_app",
-                "--arg=--lease-id=lease-001",
                 "--arg=--gateway-url=ws://127.0.0.1:8811/openclaw",
                 "--arg=--access-token-env-var=WECOM_BOT_TOKEN",
                 "--arg=--note=status && echo risky",

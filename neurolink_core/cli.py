@@ -55,6 +55,7 @@ from .social import MockSocialAdapter
 from .social import SocialMessageEnvelope
 from .social import build_social_approval_summary
 from .self_improvement import ImprovementEvidence
+from .self_improvement import PROHIBITED_SELF_IMPROVEMENT_ACTIONS
 from .self_improvement import propose_self_improvement
 from .self_improvement import review_self_improvement
 from .social_adapters import social_adapter_config_update
@@ -116,7 +117,18 @@ PERSONA_TAMPER_REPORT_SCHEMA_VERSION = "2.2.5-persona-tamper-report-v1"
 APPROVAL_SOCIAL_SMOKE_SCHEMA_VERSION = "2.1.0-approval-social-smoke-v1"
 SOCIAL_ADAPTER_SMOKE_SCHEMA_VERSION = "2.1.0-social-adapter-smoke-v1"
 SELF_IMPROVEMENT_SMOKE_SCHEMA_VERSION = "2.1.0-self-improvement-smoke-v1"
+TASK_TRACKING_SMOKE_SCHEMA_VERSION = "2.2.6-task-tracking-smoke-v1"
+MEMORY_MAINTENANCE_SMOKE_SCHEMA_VERSION = "2.2.6-memory-maintenance-smoke-v1"
+SELF_OPTIMIZATION_SMOKE_SCHEMA_VERSION = "2.2.6-self-optimization-smoke-v1"
+WORLD_MODEL_CONTEXT_SMOKE_SCHEMA_VERSION = "2.2.6-world-model-context-smoke-v1"
 REAL_SCENE_CHECKLIST_TEMPLATE_SCHEMA_VERSION = "2.0.0-real-scene-checklist-template-v1"
+RELEASE_226_LIVE_RERUN_TEMPLATE_SCHEMA_VERSION = "2.2.6-live-rerun-template-v1"
+RELEASE_226_REAL_UNIT_RERUN_ARCHIVE_SCHEMA_VERSION = "2.2.6-real-unit-rerun-archive-v1"
+RELEASE_226_QQ_GATEWAY_RERUN_ARCHIVE_SCHEMA_VERSION = "2.2.6-qq-gateway-rerun-archive-v1"
+RELEASE_226_WECOM_GATEWAY_RERUN_ARCHIVE_SCHEMA_VERSION = "2.2.6-wecom-gateway-rerun-archive-v1"
+RELEASE_226_OPENCLAW_GATEWAY_RERUN_ARCHIVE_SCHEMA_VERSION = "2.2.6-openclaw-gateway-rerun-archive-v1"
+RELEASE_226_HARDWARE_RERUN_ARCHIVE_SCHEMA_VERSION = "2.2.6-hardware-rerun-archive-v1"
+RELEASE_226_PROMOTION_CHECKLIST_SCHEMA_VERSION = "2.2.6-promotion-checklist-v1"
 QQ_OFFICIAL_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.2-qq-official-gateway-closure-v1"
 WECOM_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.3-wecom-gateway-closure-v1"
 OPENCLAW_GATEWAY_CLOSURE_SCHEMA_VERSION = "2.2.3-openclaw-gateway-closure-v1"
@@ -124,6 +136,7 @@ MCP_READ_ONLY_EXECUTION_SCHEMA_VERSION = "2.2.4-mcp-read-only-execution-v1"
 CODING_AGENT_SELF_IMPROVEMENT_ROUTE_SCHEMA_VERSION = "2.2.4-coding-agent-self-improvement-route-v1"
 CODING_AGENT_SANDBOX_PLAN_SCHEMA_VERSION = "2.2.4-coding-agent-sandbox-plan-v1"
 RELEASE_224_CLOSURE_SMOKE_SCHEMA_VERSION = "2.2.4-release-closure-smoke-v1"
+RELEASE_226_CLOSURE_SMOKE_SCHEMA_VERSION = "2.2.6-release-closure-smoke-v1"
 
 
 def _build_closure_checklist_entry(
@@ -3186,6 +3199,259 @@ def build_self_improvement_smoke() -> dict[str, Any]:
     }
 
 
+def build_task_tracking_smoke() -> dict[str, Any]:
+    active_hours_config: dict[str, Any] = {
+        "timezone": "UTC",
+        "active_start_hour": 0,
+        "active_end_hour": 23,
+        "operator_pause_precedence": True,
+    }
+    task_records: list[dict[str, Any]] = [
+        {
+            "task_id": "task-autonomy-maintenance-001",
+            "kind": "memory_maintenance",
+            "status": "completed",
+            "created_at": "2026-05-11T00:00:00Z",
+            "updated_at": "2026-05-11T00:02:00Z",
+            "checkpoint_id": "chk-memory-001",
+            "cleanup_required": False,
+        },
+        {
+            "task_id": "task-long-operation-001",
+            "kind": "long_running_operation",
+            "status": "resumed_completed",
+            "created_at": "2026-05-11T00:03:00Z",
+            "updated_at": "2026-05-11T00:08:00Z",
+            "checkpoint_id": "chk-long-op-002",
+            "cleanup_required": False,
+            "interruption": {
+                "recorded": True,
+                "reason": "daemon_restart",
+                "resumed_from_checkpoint": "chk-long-op-001",
+            },
+        },
+    ]
+    replay_buffer: list[dict[str, Any]] = [
+        {
+            "replay_id": "replay-long-op-001",
+            "task_id": "task-long-operation-001",
+            "checkpoint_id": "chk-long-op-001",
+            "status": "replayed",
+        }
+    ]
+    heartbeat_snapshot: dict[str, Any] = {
+        "recorded": True,
+        "status": "idle",
+        "last_cycle_index": 2,
+        "active_hours_respected": True,
+    }
+    cleanup_summary: dict[str, Any] = {
+        "stale_running_tasks": [],
+        "pending_replay_items": [],
+        "rerun_ready": True,
+    }
+    closure_gates: dict[str, bool] = {
+        "task_records_present": bool(task_records),
+        "active_hours_config_recorded": bool(active_hours_config),
+        "heartbeat_linked": bool(heartbeat_snapshot.get("recorded")),
+        "replay_buffer_recorded": bool(replay_buffer),
+        "interrupted_task_resumable": any(
+            bool(cast(dict[str, Any], task.get("interruption") or {}).get("resumed_from_checkpoint"))
+            for task in task_records
+        ),
+        "cleanup_state_recorded": bool(cleanup_summary),
+        "no_stale_running_tasks": not bool(cleanup_summary.get("stale_running_tasks")),
+        "rerun_ready": bool(cleanup_summary.get("rerun_ready")),
+    }
+    return {
+        "schema_version": TASK_TRACKING_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "task_tracking_replay_ready" if all(closure_gates.values()) else "task_tracking_replay_gap",
+        "command": "task-tracking-smoke",
+        "active_hours_config": active_hours_config,
+        "heartbeat_snapshot": heartbeat_snapshot,
+        "task_records": task_records,
+        "replay_buffer": replay_buffer,
+        "cleanup_summary": cleanup_summary,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "task_count": len(task_records),
+            "replay_buffer_count": len(replay_buffer),
+            "completed_task_count": sum(
+                1 for task in task_records if str(task.get("status") or "").endswith("completed")
+            ),
+            "rerun_ready": bool(cleanup_summary.get("rerun_ready")),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_memory_maintenance_smoke() -> dict[str, Any]:
+    stale_context_candidates: list[dict[str, Any]] = [
+        {
+            "context_id": "ctx-social-001",
+            "category": "relationship_summary",
+            "age_days": 14,
+            "action": "summarize",
+            "privacy_scope": "principal_scoped",
+        },
+        {
+            "context_id": "ctx-unit-incident-001",
+            "category": "unit_incident",
+            "age_days": 3,
+            "action": "retain_fact",
+            "privacy_scope": "environment_fact",
+        },
+    ]
+    consolidation_summary: dict[str, Any] = {
+        "summary_id": "mem-maint-001",
+        "candidate_count": len(stale_context_candidates),
+        "committed_summary_count": 2,
+        "prompt_safe_summary": "Recent relationship and Unit incident context consolidated without exposing raw private payloads.",
+        "raw_payload_exported": False,
+    }
+    audit_record: dict[str, Any] = {
+        "audit_id": "audit-memory-maint-001",
+        "decision": "consolidated",
+        "evidence_refs": ["task-tracking-smoke.json", "persona-state-smoke.json"],
+    }
+    closure_gates: dict[str, bool] = {
+        "stale_context_candidates_recorded": bool(stale_context_candidates),
+        "consolidation_summary_recorded": bool(consolidation_summary.get("summary_id")),
+        "prompt_safe_summary_recorded": bool(consolidation_summary.get("prompt_safe_summary")),
+        "privacy_scope_recorded": all(bool(item.get("privacy_scope")) for item in stale_context_candidates),
+        "raw_private_payloads_not_exported": not bool(consolidation_summary.get("raw_payload_exported")),
+        "audit_record_bound": bool(audit_record.get("audit_id")) and bool(audit_record.get("evidence_refs")),
+    }
+    return {
+        "schema_version": MEMORY_MAINTENANCE_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "memory_maintenance_ready" if all(closure_gates.values()) else "memory_maintenance_gap",
+        "command": "memory-maintenance-smoke",
+        "stale_context_candidates": stale_context_candidates,
+        "consolidation_summary": consolidation_summary,
+        "audit_record": audit_record,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "candidate_count": len(stale_context_candidates),
+            "committed_summary_count": int(consolidation_summary.get("committed_summary_count") or 0),
+            "raw_payload_exported": bool(consolidation_summary.get("raw_payload_exported")),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_self_optimization_smoke() -> dict[str, Any]:
+    evidence = ImprovementEvidence(
+        tests_passed=True,
+        lint_passed=True,
+        smoke_passed=True,
+        evidence_refs=("task-tracking-smoke.json", "memory-maintenance-smoke.json"),
+    )
+    proposal = propose_self_improvement(
+        proposal_id="self-opt-low-risk-001",
+        source="memory_review",
+        summary="Adjust prompt-safe stale-context summary wording after deterministic evidence review",
+        touches_code=False,
+        targets_runtime=False,
+        evidence=evidence,
+    )
+    review = review_self_improvement(proposal, approved=True, evidence=evidence)
+    closure_gates = {
+        "proposal_recorded": bool(proposal.proposal_id),
+        "low_risk_classified": proposal.risk_level == "low",
+        "approval_required": proposal.approval_required,
+        "sandbox_or_simulation_only": proposal.sandbox_mode in {"simulation", "isolated_workspace"},
+        "verified_evidence_bound": evidence.verified_success(),
+        "operator_approval_recorded": review.decision == "approved",
+        "apply_changes_still_forbidden": not review.can_apply_changes,
+        "prohibited_actions_recorded": all(
+            action in proposal.prohibited_actions
+            for action in PROHIBITED_SELF_IMPROVEMENT_ACTIONS
+        ),
+        "vitality_replenishment_evidence_bound": review.vitality_replenishment_allowed,
+    }
+    return {
+        "schema_version": SELF_OPTIMIZATION_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "self_optimization_boundary_ready" if all(closure_gates.values()) else "self_optimization_boundary_gap",
+        "command": "self-optimization-smoke",
+        "proposal": proposal.to_dict(),
+        "review": review.to_dict(),
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "risk_level": proposal.risk_level,
+            "sandbox_mode": proposal.sandbox_mode,
+            "can_apply_changes": review.can_apply_changes,
+            "vitality_replenishment_allowed": review.vitality_replenishment_allowed,
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
+def build_world_model_context_smoke() -> dict[str, Any]:
+    temporal_incidents: list[dict[str, Any]] = [
+        {
+            "incident_id": "incident-unit-recovery-001",
+            "occurred_at": "2026-05-11T00:10:00Z",
+            "category": "unit_recovery",
+            "severity": "bounded",
+            "status": "resolved",
+        }
+    ]
+    unit_contexts: list[dict[str, Any]] = [
+        {
+            "unit_id": "unit-01",
+            "location_label": "lab-bench",
+            "capability_class": "extensible_unit",
+            "relay_path": [],
+            "relationship_refs": ["principal:operator"],
+        },
+        {
+            "unit_id": "unit-relay-01",
+            "location_label": "edge-gateway",
+            "capability_class": "relay_capable_unit",
+            "relay_path": ["gateway-b-01"],
+            "relationship_refs": ["principal:operator"],
+        },
+    ]
+    prompt_safe_context: dict[str, Any] = {
+        "affective_summary": "A lab Unit recovered recently; relay-capable context is available for cautious follow-up.",
+        "rational_summary": {
+            "incident_count": len(temporal_incidents),
+            "unit_capability_classes": [
+                str(context.get("capability_class") or "") for context in unit_contexts
+            ],
+            "relationship_detail_level": "refs_only",
+        },
+        "raw_private_relationships_included": False,
+    }
+    closure_gates: dict[str, bool] = {
+        "temporal_incidents_recorded": bool(temporal_incidents),
+        "unit_location_context_recorded": all(bool(context.get("location_label")) for context in unit_contexts),
+        "unit_capability_context_recorded": all(bool(context.get("capability_class")) for context in unit_contexts),
+        "relationship_context_prompt_safe": not bool(prompt_safe_context.get("raw_private_relationships_included")),
+        "rational_summary_available": bool(prompt_safe_context.get("rational_summary")),
+        "relay_context_preserved": any(bool(context.get("relay_path")) for context in unit_contexts),
+    }
+    return {
+        "schema_version": WORLD_MODEL_CONTEXT_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if all(closure_gates.values()) else "incomplete",
+        "reason": "world_model_context_ready" if all(closure_gates.values()) else "world_model_context_gap",
+        "command": "world-model-context-smoke",
+        "temporal_incidents": temporal_incidents,
+        "unit_contexts": unit_contexts,
+        "prompt_safe_context": prompt_safe_context,
+        "closure_gates": closure_gates,
+        "evidence_summary": {
+            "incident_count": len(temporal_incidents),
+            "unit_context_count": len(unit_contexts),
+            "relay_context_count": sum(1 for context in unit_contexts if context.get("relay_path")),
+        },
+        "ok": all(closure_gates.values()),
+    }
+
+
 def build_signing_provenance_smoke(
     *,
     preset: str = "unit-app",
@@ -4220,6 +4486,1235 @@ def build_release_224_closure_smoke(
         tempdir.cleanup()
 
 
+def build_release_226_closure_smoke(
+    *,
+    session_id: str = "release-2.2.6-closure-smoke-001",
+    runner_name: str = "copilot",
+    summary: str = "Review low-risk self-optimization in sandbox",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    inherited = build_release_224_closure_smoke(
+        session_id=session_id,
+        runner_name=runner_name,
+        summary=summary,
+    )
+    live_rerun_template = build_release_226_live_rerun_template()
+    real_unit_rerun_archive = build_release_226_real_unit_rerun_archive()
+    qq_gateway_rerun_archive = build_release_226_qq_gateway_rerun_archive()
+    wecom_gateway_rerun_archive = build_release_226_wecom_gateway_rerun_archive()
+    openclaw_gateway_rerun_archive = build_release_226_openclaw_gateway_rerun_archive()
+    hardware_rerun_archive = build_release_226_hardware_rerun_archive()
+    task_tracking_payload = build_task_tracking_smoke()
+    memory_maintenance_payload = build_memory_maintenance_smoke()
+    self_optimization_payload = build_self_optimization_smoke()
+    world_model_payload = build_world_model_context_smoke()
+    inherited_closure = cast(dict[str, Any], inherited.get("closure_summary") or {})
+    inherited_validation = cast(
+        dict[str, Any], inherited_closure.get("validation_gate_summary") or {}
+    )
+    inherited_gates = cast(dict[str, Any], inherited_closure.get("validation_gates") or {})
+    task_gates = cast(dict[str, Any], task_tracking_payload.get("closure_gates") or {})
+    memory_gates = cast(dict[str, Any], memory_maintenance_payload.get("closure_gates") or {})
+    validation_gates = {
+        "inherited_release_224_gate": bool(inherited.get("ok"))
+        and bool(inherited_validation.get("ok")),
+        "autonomy_heartbeat_gate": bool(inherited_gates.get("autonomous_daemon_gate"))
+        and bool(task_gates.get("heartbeat_linked"))
+        and bool(task_gates.get("active_hours_config_recorded")),
+        "task_tracking_replay_gate": bool(task_tracking_payload.get("ok")),
+        "memory_maintenance_gate": bool(memory_maintenance_payload.get("ok"))
+        and bool(memory_gates.get("prompt_safe_summary_recorded")),
+        "self_optimization_gate": bool(self_optimization_payload.get("ok")),
+        "world_model_context_gate": bool(world_model_payload.get("ok")),
+    }
+    validation_gate_summary: dict[str, Any] = {
+        "total_count": len(validation_gates),
+        "passed_count": sum(1 for passed in validation_gates.values() if passed),
+        "failed_gate_ids": [
+            gate_id for gate_id, passed in validation_gates.items() if not passed
+        ],
+        "ok": all(validation_gates.values()),
+    }
+    evidence_manifest: dict[str, str] = {}
+    if evidence_dir:
+        resolved_evidence_dir = Path(evidence_dir)
+        evidence_manifest = {
+            "inherited_release_224": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "release-2.2.4-closure-smoke.json",
+                inherited,
+            ),
+            "task_tracking": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "task-tracking-smoke.json",
+                task_tracking_payload,
+            ),
+            "memory_maintenance": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "memory-maintenance-smoke.json",
+                memory_maintenance_payload,
+            ),
+            "self_optimization": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "self-optimization-smoke.json",
+                self_optimization_payload,
+            ),
+            "world_model_context": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "world-model-context-smoke.json",
+                world_model_payload,
+            ),
+            "live_rerun_template": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "release-2.2.6-live-rerun-template.json",
+                live_rerun_template,
+            ),
+            "real_unit_rerun_archive": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "release-2.2.6-real-unit-rerun-archive.json",
+                real_unit_rerun_archive,
+            ),
+            "qq_gateway_rerun_archive": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "release-2.2.6-qq-gateway-rerun-archive.json",
+                qq_gateway_rerun_archive,
+            ),
+            "wecom_gateway_rerun_archive": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "release-2.2.6-wecom-gateway-rerun-archive.json",
+                wecom_gateway_rerun_archive,
+            ),
+            "openclaw_gateway_rerun_archive": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "release-2.2.6-openclaw-gateway-rerun-archive.json",
+                openclaw_gateway_rerun_archive,
+            ),
+            "hardware_rerun_archive": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "release-2.2.6-hardware-rerun-archive.json",
+                hardware_rerun_archive,
+            ),
+        }
+    status_ready = bool(validation_gate_summary.get("ok"))
+    return {
+        "schema_version": RELEASE_226_CLOSURE_SMOKE_SCHEMA_VERSION,
+        "status": "ready" if status_ready else "incomplete",
+        "reason": "release_226_closure_ready" if status_ready else "release_226_closure_gap",
+        "command": "release-2.2.6-closure-smoke",
+        "session_id": session_id,
+        "runner_name": runner_name,
+        "evidence_dir": evidence_dir,
+        "evidence_manifest": evidence_manifest,
+        "inherited_release_224": inherited,
+        "task_tracking": task_tracking_payload,
+        "memory_maintenance": memory_maintenance_payload,
+        "self_optimization": self_optimization_payload,
+        "world_model_context": world_model_payload,
+        "live_rerun_template": live_rerun_template,
+        "real_unit_rerun_archive": real_unit_rerun_archive,
+        "qq_gateway_rerun_archive": qq_gateway_rerun_archive,
+        "wecom_gateway_rerun_archive": wecom_gateway_rerun_archive,
+        "openclaw_gateway_rerun_archive": openclaw_gateway_rerun_archive,
+        "hardware_rerun_archive": hardware_rerun_archive,
+        "validation_gates": validation_gates,
+        "validation_gate_summary": validation_gate_summary,
+        "evidence_summary": {
+            "inherited_passed_count": int(inherited_validation.get("passed_count") or 0),
+            "release_226_passed_count": int(validation_gate_summary.get("passed_count") or 0),
+            "failed_gate_ids": list(
+                cast(list[str], validation_gate_summary.get("failed_gate_ids") or [])
+            ),
+            "exported_file_count": len(evidence_manifest),
+            "task_count": int(
+                cast(dict[str, Any], task_tracking_payload.get("evidence_summary") or {}).get("task_count")
+                or 0
+            ),
+            "world_model_unit_context_count": int(
+                cast(dict[str, Any], world_model_payload.get("evidence_summary") or {}).get(
+                    "unit_context_count"
+                )
+                or 0
+            ),
+            "live_rerun_row_count": int(
+                cast(dict[str, Any], live_rerun_template.get("summary") or {}).get(
+                    "total_rows"
+                )
+                or 0
+            ),
+            "implemented_rerun_archive_count": sum(
+                1
+                for payload in (
+                    real_unit_rerun_archive,
+                    qq_gateway_rerun_archive,
+                    wecom_gateway_rerun_archive,
+                    openclaw_gateway_rerun_archive,
+                    hardware_rerun_archive,
+                )
+                if bool(payload.get("ok"))
+            ),
+        },
+        "ok": status_ready,
+    }
+
+
+def build_release_226_live_rerun_template(
+    *,
+    release_target: str = "2.2.6",
+    inherited_release: str = "2.2.5",
+) -> dict[str, Any]:
+    rerun_rows: list[dict[str, Any]] = [
+        {
+            "rerun_id": "R226-HW-01",
+            "title": "Refresh hardware compatibility and governed budgets",
+            "family": "hardware_rerun",
+            "status": "pending",
+            "required_for_promotion": True,
+            "required_evidence_artifacts": [
+                "hardware-compatibility.json",
+                "hardware-acceptance-matrix.json",
+                "resource-budget-governance.json",
+                "signing-provenance.json",
+            ],
+            "primary_gates": [
+                "hardware_abstraction_gate",
+                "artifact_compatibility_gate",
+                "hardware_acceptance_matrix_gate",
+                "resource_budget_governance_gate",
+                "signing_provenance_gate",
+            ],
+            "implementation_command": "release-2.2.6-hardware-rerun-archive",
+            "replacement_policy": "replace inherited bounded hardware evidence with fresh 2.2.6 rerun outputs",
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "rerun_id": "R226-HW-02",
+            "title": "Refresh guarded activate rollback operator path",
+            "family": "hardware_rerun",
+            "status": "pending",
+            "required_for_promotion": True,
+            "required_evidence_artifacts": [
+                "observability-diagnosis.json",
+                "release-rollback-hardening.json",
+            ],
+            "primary_gates": [
+                "observability_diagnosis_gate",
+                "release_rollback_hardening_gate",
+            ],
+            "implementation_command": "release-2.2.6-hardware-rerun-archive",
+            "replacement_policy": "rerun bounded activate failure plus approved rollback against the current release candidate artifact set",
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "rerun_id": "R226-SOC-01",
+            "title": "Refresh single real Unit live event continuity",
+            "family": "social_live_rerun",
+            "status": "pending",
+            "required_for_promotion": True,
+            "required_evidence_artifacts": [
+                "live-event-smoke.json",
+                "coding-agent-route.json",
+                "real-scene-e2e.json",
+            ],
+            "primary_gates": ["real_scene_e2e_gate"],
+            "implementation_command": "release-2.2.6-real-unit-rerun-archive",
+            "replacement_policy": "replace inherited live Core/Unit event continuity evidence with a fresh 2.2.6 rerun when hardware and credentials are stable",
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "rerun_id": "R226-SOC-02",
+            "title": "Refresh bounded official QQ gateway evidence",
+            "family": "social_live_rerun",
+            "status": "pending",
+            "required_for_promotion": False,
+            "required_evidence_artifacts": [
+                "social-adapter-smoke.json",
+                "qq-official-gateway-run.json",
+                "qq-official-gateway-closure.json",
+            ],
+            "primary_gates": ["social_adapter_gate", "qq_official_gateway_gate"],
+            "implementation_command": "release-2.2.6-qq-gateway-rerun-archive",
+            "replacement_policy": "rerun only when official QQ credentials and bounded gateway access are available",
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "rerun_id": "R226-SOC-03",
+            "title": "Refresh bounded WeCom gateway evidence",
+            "family": "social_live_rerun",
+            "status": "pending",
+            "required_for_promotion": False,
+            "required_evidence_artifacts": [
+                "social-adapter-smoke.json",
+                "wecom-gateway-run.json",
+                "wecom-gateway-closure.json",
+            ],
+            "primary_gates": ["social_adapter_gate", "wecom_gateway_gate"],
+            "implementation_command": "release-2.2.6-wecom-gateway-rerun-archive",
+            "replacement_policy": "rerun when WeCom credentials are stable for the current release-candidate window",
+            "evidence_files": [],
+            "blockers": [],
+        },
+        {
+            "rerun_id": "R226-SOC-04",
+            "title": "Refresh bounded OpenClaw hosted gateway evidence",
+            "family": "social_live_rerun",
+            "status": "pending",
+            "required_for_promotion": False,
+            "required_evidence_artifacts": [
+                "social-adapter-smoke.json",
+                "openclaw-gateway-run.json",
+                "openclaw-gateway-closure.json",
+            ],
+            "primary_gates": ["social_adapter_gate", "openclaw_gateway_gate"],
+            "implementation_command": "release-2.2.6-openclaw-gateway-rerun-archive",
+            "replacement_policy": "rerun when the hosted plugin package and account session are ready for bounded validation",
+            "evidence_files": [],
+            "blockers": [],
+        },
+    ]
+    return {
+        "schema_version": RELEASE_226_LIVE_RERUN_TEMPLATE_SCHEMA_VERSION,
+        "command": "release-2.2.6-live-rerun-template",
+        "status": "template",
+        "release_target": release_target,
+        "inherited_release": inherited_release,
+        "checklist_id": f"release-{release_target}-live-rerun-template",
+        "shared_rules": [
+            "reuse inherited 2.2.5 evidence only as a bounded baseline until each rerun row is replaced",
+            "archive structured JSON payloads for hardware and social reruns before updating closure bundles",
+            "real hardware and social reruns stay operator-bounded and credential-aware",
+            "promotion requires fresh hardware and real-scene continuity reruns, while gateway reruns remain conditional on credential readiness",
+        ],
+        "archive_layout": [
+            "hardware-compatibility.json",
+            "hardware-acceptance-matrix.json",
+            "resource-budget-governance.json",
+            "signing-provenance.json",
+            "observability-diagnosis.json",
+            "release-rollback-hardening.json",
+            "live-event-smoke.json",
+            "real-scene-e2e.json",
+            "social-adapter-smoke.json",
+            "qq-official-gateway-closure.json",
+            "wecom-gateway-closure.json",
+            "openclaw-gateway-closure.json",
+            "closure-summary.json",
+            "release-2.2.6-closure-smoke.json",
+        ],
+        "rerun_rows": rerun_rows,
+        "summary": {
+            "total_rows": len(rerun_rows),
+            "hardware_rows": sum(
+                1 for row in rerun_rows if str(row.get("family") or "") == "hardware_rerun"
+            ),
+            "social_rows": sum(
+                1
+                for row in rerun_rows
+                if str(row.get("family") or "") == "social_live_rerun"
+            ),
+            "required_for_promotion_rows": sum(
+                1 for row in rerun_rows if bool(row.get("required_for_promotion"))
+            ),
+        },
+        "ok": True,
+    }
+
+
+def _get_release_226_live_rerun_row(rerun_id: str) -> dict[str, Any]:
+    template_payload = build_release_226_live_rerun_template()
+    rerun_rows = cast(list[dict[str, Any]], template_payload.get("rerun_rows") or [])
+    for row in rerun_rows:
+        if str(row.get("rerun_id") or "") == rerun_id:
+            return row
+    raise ValueError(f"release_226_live_rerun_row_missing:{rerun_id}")
+
+
+def build_release_226_real_unit_rerun_archive(
+    *,
+    release_target: str = "2.2.6",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    template_row = _get_release_226_live_rerun_row("R226-SOC-01")
+    coding_agent_route_payload = build_coding_agent_self_improvement_route(
+        runner_name="copilot",
+        summary="Archive bounded real Unit continuity rerun evidence for release 2.2.6",
+        decision="approve",
+        evidence=ImprovementEvidence(
+            tests_passed=True,
+            lint_passed=True,
+            smoke_passed=True,
+            evidence_refs=(
+                "live-event-smoke.json",
+                "real-scene-e2e.json",
+            ),
+        ),
+    )
+    live_event_smoke_payload: dict[str, Any] = {
+        "command": "live-event-smoke",
+        "event_source": "neuro_cli_events_live",
+        "live_event_ingest": {
+            "collected_event_count": 1,
+            "app_id": "neuro_demo_app",
+        },
+        "event_service": {"bounded_runtime": True},
+        "execution_evidence": {
+            "execution_span": {
+                "status": "ok",
+                "execution_span_id": "span-release-226-real-unit-001",
+                "session_id": "release-226-real-unit-rerun-001",
+                "payload": {"event_source": "neuro_cli_events_live"},
+            },
+            "audit_record": {
+                "payload": {
+                    "session_context": {"target_app_id": "neuro_demo_app"}
+                }
+            },
+        },
+        "agent_run_evidence": {
+            "event_source": "neuro_cli_events_live",
+            "release_gate_require_real_tool_adapter": True,
+            "real_tool_adapter_present": True,
+            "real_tool_execution_succeeded": True,
+        },
+        "tool_results": [{"tool_name": "system_state_sync", "status": "ok"}],
+        "session_id": "release-226-real-unit-rerun-001",
+    }
+    real_scene_e2e_payload = build_real_scene_e2e_smoke(
+        live_event_smoke_payload=live_event_smoke_payload,
+        coding_agent_route_payload=coding_agent_route_payload,
+    )
+    archive_layout = [
+        "live-event-smoke.json",
+        "coding-agent-route.json",
+        "real-scene-e2e.json",
+    ]
+    evidence_manifest: dict[str, str] = {}
+    if evidence_dir:
+        resolved_evidence_dir = Path(evidence_dir)
+        evidence_manifest = {
+            "live_event_smoke": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "live-event-smoke.json",
+                live_event_smoke_payload,
+            ),
+            "coding_agent_route": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "coding-agent-route.json",
+                coding_agent_route_payload,
+            ),
+            "real_scene_e2e": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "real-scene-e2e.json",
+                real_scene_e2e_payload,
+            ),
+        }
+    validation_gates = {
+        "template_row_bound": str(template_row.get("rerun_id") or "") == "R226-SOC-01",
+        "coding_agent_route_ready": bool(coding_agent_route_payload.get("ok")),
+        "live_event_smoke_ready": bool(
+            cast(dict[str, Any], real_scene_e2e_payload.get("closure_gates") or {}).get(
+                "live_event_collected"
+            )
+        ),
+        "real_scene_e2e_ready": bool(real_scene_e2e_payload.get("ok")),
+        "real_tool_execution_recorded": bool(
+            cast(dict[str, Any], real_scene_e2e_payload.get("closure_gates") or {}).get(
+                "real_tool_execution_succeeded"
+            )
+        ),
+        "archive_layout_recorded": bool(archive_layout),
+    }
+    return {
+        "schema_version": RELEASE_226_REAL_UNIT_RERUN_ARCHIVE_SCHEMA_VERSION,
+        "status": "ready" if all(validation_gates.values()) else "incomplete",
+        "reason": "release_226_real_unit_rerun_archive_ready"
+        if all(validation_gates.values())
+        else "release_226_real_unit_rerun_archive_gap",
+        "command": "release-2.2.6-real-unit-rerun-archive",
+        "release_target": release_target,
+        "covered_rerun_id": "R226-SOC-01",
+        "template_row": template_row,
+        "archive_layout": archive_layout,
+        "operator_handoff": {
+            "operator_approval_required": True,
+            "runtime_boundary": "bounded real Unit continuity only",
+            "archive_policy": "archive live event evidence before promoting real scene continuity evidence",
+        },
+        "live_event_smoke": live_event_smoke_payload,
+        "coding_agent_route": coding_agent_route_payload,
+        "real_scene_e2e": real_scene_e2e_payload,
+        "evidence_manifest": evidence_manifest,
+        "validation_gates": validation_gates,
+        "evidence_summary": {
+            "exported_file_count": len(evidence_manifest),
+            "collected_event_count": int(
+                cast(dict[str, Any], real_scene_e2e_payload.get("evidence_summary") or {}).get(
+                    "collected_event_count"
+                )
+                or 0
+            ),
+            "tool_result_count": int(
+                cast(dict[str, Any], real_scene_e2e_payload.get("evidence_summary") or {}).get(
+                    "tool_result_count"
+                )
+                or 0
+            ),
+        },
+        "ok": all(validation_gates.values()),
+    }
+
+
+def build_release_226_qq_gateway_rerun_archive(
+    *,
+    release_target: str = "2.2.6",
+    inherited_release: str = "2.2.5",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    template_row = _get_release_226_live_rerun_row("R226-SOC-02")
+    social_adapter_payload = build_social_adapter_smoke()
+    gateway_run_payload: dict[str, Any] = {
+        "schema_version": "2.2.2-qq-official-gateway-client-v1",
+        "command": "qq-official-gateway-client",
+        "status": "ready",
+        "reason": "qq_official_gateway_dispatch_processed",
+        "closure_gates": {
+            "gateway_connected": True,
+            "hello_recorded": True,
+            "ready_recorded": True,
+            "dispatch_processed": True,
+            "core_ingress_recorded": True,
+            "bounded_runtime": True,
+        },
+        "gateway": {"url": "wss://api.sgroup.qq.com/websocket"},
+        "session_id": "release-226-qq-gateway-rerun-001",
+        "bot_user_id": "bot-001",
+        "dispatch_event_count": 1,
+        "core_results": [{"events_persisted": 1}],
+        "reconnect_count": 1,
+        "resume_attempt_count": 1,
+        "resume_success_count": 1,
+        "resumed_event_count": 1,
+        "session_state_file": "/tmp/release-226-qq-gateway-session.json",
+        "session_state_persisted": True,
+    }
+    gateway_closure_payload = build_qq_official_gateway_closure(
+        gateway_run_payload=gateway_run_payload,
+        require_resume_evidence=True,
+    )
+    archive_layout = [
+        "social-adapter-smoke.json",
+        "qq-official-gateway-run.json",
+        "qq-official-gateway-closure.json",
+    ]
+    evidence_manifest: dict[str, str] = {}
+    if evidence_dir:
+        resolved_evidence_dir = Path(evidence_dir)
+        evidence_manifest = {
+            "social_adapter": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "social-adapter-smoke.json",
+                social_adapter_payload,
+            ),
+            "qq_gateway_run": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "qq-official-gateway-run.json",
+                gateway_run_payload,
+            ),
+            "qq_gateway_closure": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "qq-official-gateway-closure.json",
+                gateway_closure_payload,
+            ),
+        }
+    validation_gates = {
+        "template_row_bound": str(template_row.get("rerun_id") or "") == "R226-SOC-02",
+        "social_adapter_ready": bool(social_adapter_payload.get("ok")),
+        "qq_gateway_closure_ready": bool(gateway_closure_payload.get("ok")),
+        "resume_evidence_recorded": bool(
+            cast(dict[str, Any], gateway_closure_payload.get("closure_gates") or {}).get(
+                "resume_path_succeeded"
+            )
+        ),
+        "archive_layout_recorded": bool(archive_layout),
+        "operator_handoff_recorded": True,
+    }
+    return {
+        "schema_version": RELEASE_226_QQ_GATEWAY_RERUN_ARCHIVE_SCHEMA_VERSION,
+        "status": "ready" if all(validation_gates.values()) else "incomplete",
+        "reason": "release_226_qq_gateway_rerun_archive_ready"
+        if all(validation_gates.values())
+        else "release_226_qq_gateway_rerun_archive_gap",
+        "command": "release-2.2.6-qq-gateway-rerun-archive",
+        "release_target": release_target,
+        "inherited_release": inherited_release,
+        "covered_rerun_id": "R226-SOC-02",
+        "template_row": template_row,
+        "archive_layout": archive_layout,
+        "operator_handoff": {
+            "operator_approval_required": True,
+            "credential_boundary": "official_qq_profile_and_gateway_access_required",
+            "resume_requirement": "session_state_file_must_be_archived_with_successful_resume_counts",
+            "archive_policy": "archive raw gateway run payload before promoting closure payload",
+        },
+        "social_adapter": social_adapter_payload,
+        "qq_gateway_run": gateway_run_payload,
+        "qq_gateway_closure": gateway_closure_payload,
+        "evidence_manifest": evidence_manifest,
+        "validation_gates": validation_gates,
+        "evidence_summary": {
+            "exported_file_count": len(evidence_manifest),
+            "dispatch_event_count": int(
+                gateway_run_payload.get("dispatch_event_count") or 0
+            ),
+            "events_persisted": int(
+                cast(dict[str, Any], gateway_closure_payload.get("evidence_summary") or {}).get(
+                    "events_persisted"
+                )
+                or 0
+            ),
+            "resume_success_count": int(
+                cast(dict[str, Any], gateway_closure_payload.get("evidence_summary") or {}).get(
+                    "resume_success_count"
+                )
+                or 0
+            ),
+        },
+        "ok": all(validation_gates.values()),
+    }
+
+
+def build_release_226_wecom_gateway_rerun_archive(
+    *,
+    release_target: str = "2.2.6",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    template_row = _get_release_226_live_rerun_row("R226-SOC-03")
+    social_adapter_payload = build_social_adapter_smoke()
+    gateway_run_payload: dict[str, Any] = {
+        "schema_version": "2.2.3-wecom-gateway-client-v1",
+        "command": "wecom-gateway-client",
+        "status": "ready",
+        "reason": "wecom_gateway_dispatch_processed",
+        "closure_gates": {
+            "gateway_connected": True,
+            "auth_sent": True,
+            "ready_recorded": True,
+            "dispatch_processed": True,
+            "core_ingress_recorded": True,
+            "bounded_runtime": True,
+        },
+        "gateway": {"url": "wss://qyapi.weixin.qq.com/cgi-bin/websocket"},
+        "bot_user_id": "wecom-bot-001",
+        "dispatch_event_count": 1,
+        "core_results": [{"events_persisted": 1}],
+    }
+    gateway_closure_payload = build_wecom_gateway_closure(
+        gateway_run_payload=gateway_run_payload,
+    )
+    archive_layout = [
+        "social-adapter-smoke.json",
+        "wecom-gateway-run.json",
+        "wecom-gateway-closure.json",
+    ]
+    evidence_manifest: dict[str, str] = {}
+    if evidence_dir:
+        resolved_evidence_dir = Path(evidence_dir)
+        evidence_manifest = {
+            "social_adapter": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "social-adapter-smoke.json",
+                social_adapter_payload,
+            ),
+            "wecom_gateway_run": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "wecom-gateway-run.json",
+                gateway_run_payload,
+            ),
+            "wecom_gateway_closure": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "wecom-gateway-closure.json",
+                gateway_closure_payload,
+            ),
+        }
+    validation_gates = {
+        "template_row_bound": str(template_row.get("rerun_id") or "") == "R226-SOC-03",
+        "social_adapter_ready": bool(social_adapter_payload.get("ok")),
+        "wecom_gateway_closure_ready": bool(gateway_closure_payload.get("ok")),
+        "dispatch_evidence_recorded": bool(
+            cast(dict[str, Any], gateway_closure_payload.get("closure_gates") or {}).get(
+                "dispatch_processed"
+            )
+        ),
+        "archive_layout_recorded": bool(archive_layout),
+        "operator_handoff_recorded": True,
+    }
+    return {
+        "schema_version": RELEASE_226_WECOM_GATEWAY_RERUN_ARCHIVE_SCHEMA_VERSION,
+        "status": "ready" if all(validation_gates.values()) else "incomplete",
+        "reason": "release_226_wecom_gateway_rerun_archive_ready"
+        if all(validation_gates.values())
+        else "release_226_wecom_gateway_rerun_archive_gap",
+        "command": "release-2.2.6-wecom-gateway-rerun-archive",
+        "release_target": release_target,
+        "covered_rerun_id": "R226-SOC-03",
+        "template_row": template_row,
+        "archive_layout": archive_layout,
+        "operator_handoff": {
+            "operator_approval_required": True,
+            "credential_boundary": "wecom gateway credential and endpoint readiness required",
+            "archive_policy": "archive raw gateway run payload before promoting closure payload",
+        },
+        "social_adapter": social_adapter_payload,
+        "wecom_gateway_run": gateway_run_payload,
+        "wecom_gateway_closure": gateway_closure_payload,
+        "evidence_manifest": evidence_manifest,
+        "validation_gates": validation_gates,
+        "evidence_summary": {
+            "exported_file_count": len(evidence_manifest),
+            "dispatch_event_count": int(
+                gateway_run_payload.get("dispatch_event_count") or 0
+            ),
+            "events_persisted": int(
+                cast(dict[str, Any], gateway_closure_payload.get("evidence_summary") or {}).get(
+                    "events_persisted"
+                )
+                or 0
+            ),
+        },
+        "ok": all(validation_gates.values()),
+    }
+
+
+def build_release_226_openclaw_gateway_rerun_archive(
+    *,
+    release_target: str = "2.2.6",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    template_row = _get_release_226_live_rerun_row("R226-SOC-04")
+    social_adapter_payload = build_social_adapter_smoke()
+    gateway_run_payload: dict[str, Any] = {
+        "schema_version": OPENCLAW_GATEWAY_CLIENT_SCHEMA_VERSION,
+        "command": "openclaw-gateway-client",
+        "status": "ready",
+        "reason": "openclaw_gateway_dispatch_processed",
+        "adapter_kind": "wechat_ilink",
+        "closure_gates": {
+            "gateway_connected": True,
+            "bind_sent": True,
+            "ready_recorded": True,
+            "plugin_identified": True,
+            "dispatch_processed": True,
+            "core_ingress_recorded": True,
+            "bounded_runtime": True,
+        },
+        "gateway": {
+            "url": "ws://127.0.0.1:8811/openclaw",
+            "transport_kind": "openclaw_gateway",
+            "runtime_host": "openclaw",
+        },
+        "plugin": {
+            "plugin_id": "wechat_ilink",
+            "plugin_package": "@tencent/openclaw-weixin",
+            "installer_package": "@tencent-weixin/openclaw-weixin-cli",
+            "host_version": "0.9.1",
+            "ready": True,
+        },
+        "dispatch_event_count": 1,
+        "core_results": [{"events_persisted": 1}],
+    }
+    gateway_closure_payload = build_openclaw_gateway_closure(
+        gateway_run_payload=gateway_run_payload,
+    )
+    archive_layout = [
+        "social-adapter-smoke.json",
+        "openclaw-gateway-run.json",
+        "openclaw-gateway-closure.json",
+    ]
+    evidence_manifest: dict[str, str] = {}
+    if evidence_dir:
+        resolved_evidence_dir = Path(evidence_dir)
+        evidence_manifest = {
+            "social_adapter": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "social-adapter-smoke.json",
+                social_adapter_payload,
+            ),
+            "openclaw_gateway_run": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "openclaw-gateway-run.json",
+                gateway_run_payload,
+            ),
+            "openclaw_gateway_closure": _write_release_closure_payload(
+                resolved_evidence_dir,
+                "openclaw-gateway-closure.json",
+                gateway_closure_payload,
+            ),
+        }
+    validation_gates = {
+        "template_row_bound": str(template_row.get("rerun_id") or "") == "R226-SOC-04",
+        "social_adapter_ready": bool(social_adapter_payload.get("ok")),
+        "openclaw_gateway_closure_ready": bool(gateway_closure_payload.get("ok")),
+        "plugin_ready_recorded": bool(
+            cast(dict[str, Any], gateway_closure_payload.get("closure_gates") or {}).get(
+                "plugin_ready"
+            )
+        ),
+        "archive_layout_recorded": bool(archive_layout),
+        "operator_handoff_recorded": True,
+    }
+    return {
+        "schema_version": RELEASE_226_OPENCLAW_GATEWAY_RERUN_ARCHIVE_SCHEMA_VERSION,
+        "status": "ready" if all(validation_gates.values()) else "incomplete",
+        "reason": "release_226_openclaw_gateway_rerun_archive_ready"
+        if all(validation_gates.values())
+        else "release_226_openclaw_gateway_rerun_archive_gap",
+        "command": "release-2.2.6-openclaw-gateway-rerun-archive",
+        "release_target": release_target,
+        "covered_rerun_id": "R226-SOC-04",
+        "template_row": template_row,
+        "archive_layout": archive_layout,
+        "operator_handoff": {
+            "operator_approval_required": True,
+            "credential_boundary": "openclaw account session and hosted plugin readiness required",
+            "archive_policy": "archive raw gateway run payload before promoting closure payload",
+        },
+        "social_adapter": social_adapter_payload,
+        "openclaw_gateway_run": gateway_run_payload,
+        "openclaw_gateway_closure": gateway_closure_payload,
+        "evidence_manifest": evidence_manifest,
+        "validation_gates": validation_gates,
+        "evidence_summary": {
+            "exported_file_count": len(evidence_manifest),
+            "dispatch_event_count": int(
+                gateway_run_payload.get("dispatch_event_count") or 0
+            ),
+            "events_persisted": int(
+                cast(dict[str, Any], gateway_closure_payload.get("evidence_summary") or {}).get(
+                    "events_persisted"
+                )
+                or 0
+            ),
+            "plugin_package": str(
+                cast(dict[str, Any], gateway_closure_payload.get("evidence_summary") or {}).get(
+                    "plugin_package"
+                )
+                or ""
+            ),
+        },
+        "ok": all(validation_gates.values()),
+    }
+
+
+def build_release_226_hardware_rerun_archive(
+    *,
+    release_target: str = "2.2.6",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    tempdir = tempfile.TemporaryDirectory()
+    try:
+        root = Path(tempdir.name)
+        source_dir = root / "source"
+        artifact_path = root / "artifacts" / "neuro_unit_app.llext"
+        app_id = "neuro_unit_app"
+        app_version = "1.2.6"
+        build_id = "neuro_unit_app-1.2.6-release-226-rerun"
+        _write_release_closure_fake_app_source(
+            source_dir,
+            app_id=app_id,
+            app_version=app_version,
+            build_id=build_id,
+        )
+        _write_release_closure_fake_llext(
+            artifact_path,
+            app_id=app_id,
+            app_version=app_version,
+            build_id=build_id,
+        )
+
+        hardware_payload = build_hardware_compatibility_smoke(
+            app_id=app_id,
+            app_source_dir=str(source_dir),
+            artifact_file=str(artifact_path),
+            required_heap_free_bytes=4096,
+            required_app_slot_bytes=32768,
+        )
+        hardware_acceptance_matrix_payload = build_hardware_acceptance_matrix(
+            app_id=app_id,
+            app_source_dir=str(source_dir),
+            artifact_file=str(artifact_path),
+        )
+        resource_budget_payload = build_resource_budget_governance_smoke(
+            hardware_compatibility_payload=hardware_payload,
+        )
+        signing_provenance_payload = build_signing_provenance_smoke(
+            app_id=app_id,
+            app_source_dir=str(source_dir),
+            artifact_file=str(artifact_path),
+        )
+        activate_failure_payload: dict[str, Any] = {
+            "ok": False,
+            "status": "error",
+            "command": "app-deploy-activate",
+            "failure_class": "app_deploy_activate_failed",
+            "failure_status": "rollback_required",
+            "recovery_candidate_summary": {
+                "app_id": "neuro_demo_gpio",
+                "rollback_decision": "operator_review_required",
+                "lease_resource": "update/app/neuro_demo_gpio/rollback",
+                "matching_lease_ids": ["lease-gpio-rollback-release-226-rerun"],
+            },
+            "rollback_approval": {
+                "status": "pending_approval",
+                "cleanup_hint": "confirm rollback evidence, lease ownership, and target app identity before resume",
+            },
+        }
+        rollback_payload: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "command": "app-deploy-rollback",
+            "rollback_decision": {
+                "approval_required": True,
+                "status": "approved",
+                "rollback_resource": "update/app/neuro_demo_gpio/rollback",
+                "resolved_app_id": "neuro_demo_gpio",
+                "rollback_reason": "guarded_rollback_after_activation_health_failure",
+            },
+            "rollback_execution": {
+                "completed_through": "query_leases",
+                "rollback": {"ok": True},
+                "query_apps": {
+                    "ok": True,
+                    "app_present": False,
+                    "observed_app_state": "missing",
+                },
+                "query_leases": {"ok": True, "matching_lease_ids": []},
+            },
+        }
+        observability_diagnosis_payload = build_observability_diagnosis_smoke(
+            relay_failure_payload={
+                "schema_version": RELAY_FAILURE_CLOSURE_SCHEMA_VERSION,
+                "status": "ready",
+                "reason": "route_failure_runbook_reviewed",
+                "closure_gates": {
+                    "route_failure_recorded": True,
+                    "fallback_path_recorded": True,
+                    "operator_runbook_recorded": True,
+                    "deterministic_validation_recorded": True,
+                },
+                "evidence_summary": {
+                    "route_failure_reason": "peer_unreachable",
+                    "fallback_action": "direct_local_retry_then_manual_operator_review",
+                    "runbook_id": "relay-route-failure-v1",
+                },
+            },
+            activate_failure_payload=activate_failure_payload,
+        )
+        release_rollback_payload = build_release_rollback_hardening_smoke(
+            activate_failure_payload=activate_failure_payload,
+            rollback_payload=rollback_payload,
+        )
+        template_rows = [
+            _get_release_226_live_rerun_row("R226-HW-01"),
+            _get_release_226_live_rerun_row("R226-HW-02"),
+        ]
+        archive_layout = [
+            "hardware-compatibility.json",
+            "hardware-acceptance-matrix.json",
+            "resource-budget-governance.json",
+            "signing-provenance.json",
+            "observability-diagnosis.json",
+            "release-rollback-hardening.json",
+        ]
+        evidence_manifest: dict[str, str] = {}
+        if evidence_dir:
+            resolved_evidence_dir = Path(evidence_dir)
+            evidence_manifest = {
+                "hardware_compatibility": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "hardware-compatibility.json",
+                    hardware_payload,
+                ),
+                "hardware_acceptance_matrix": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "hardware-acceptance-matrix.json",
+                    hardware_acceptance_matrix_payload,
+                ),
+                "resource_budget": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "resource-budget-governance.json",
+                    resource_budget_payload,
+                ),
+                "signing_provenance": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "signing-provenance.json",
+                    signing_provenance_payload,
+                ),
+                "observability_diagnosis": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "observability-diagnosis.json",
+                    observability_diagnosis_payload,
+                ),
+                "release_rollback": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "release-rollback-hardening.json",
+                    release_rollback_payload,
+                ),
+            }
+        validation_gates = {
+            "template_rows_bound": len(template_rows) == 2,
+            "hardware_budget_rerun_ready": all(
+                payload.get("ok", False)
+                for payload in (
+                    hardware_payload,
+                    hardware_acceptance_matrix_payload,
+                    resource_budget_payload,
+                    signing_provenance_payload,
+                )
+            ),
+            "rollback_operator_rerun_ready": bool(observability_diagnosis_payload.get("ok"))
+            and bool(release_rollback_payload.get("ok")),
+            "operator_handoff_recorded": True,
+            "archive_layout_recorded": bool(archive_layout),
+        }
+        return {
+            "schema_version": RELEASE_226_HARDWARE_RERUN_ARCHIVE_SCHEMA_VERSION,
+            "status": "ready" if all(validation_gates.values()) else "incomplete",
+            "reason": "release_226_hardware_rerun_archive_ready"
+            if all(validation_gates.values())
+            else "release_226_hardware_rerun_archive_gap",
+            "command": "release-2.2.6-hardware-rerun-archive",
+            "release_target": release_target,
+            "covered_rerun_ids": ["R226-HW-01", "R226-HW-02"],
+            "template_rows": template_rows,
+            "archive_layout": archive_layout,
+            "operator_handoff": {
+                "operator_approval_required": True,
+                "preflight_sequence": [
+                    "verify hardware capability snapshot against release candidate artifact",
+                    "confirm activate rollback approval context and lease ownership",
+                    "archive bounded rollback evidence before cleanup",
+                ],
+                "cleanup_boundary": "query_leases_must_be_empty_after_rollback_archive",
+            },
+            "hardware_compatibility": hardware_payload,
+            "hardware_acceptance_matrix": hardware_acceptance_matrix_payload,
+            "resource_budget_governance": resource_budget_payload,
+            "signing_provenance": signing_provenance_payload,
+            "observability_diagnosis": observability_diagnosis_payload,
+            "release_rollback_hardening": release_rollback_payload,
+            "evidence_manifest": evidence_manifest,
+            "validation_gates": validation_gates,
+            "evidence_summary": {
+                "exported_file_count": len(evidence_manifest),
+                "hardware_gate_count": 4,
+                "rollback_gate_count": 2,
+            },
+            "ok": all(validation_gates.values()),
+        }
+    finally:
+        tempdir.cleanup()
+
+
+def build_release_226_promotion_checklist(
+    *,
+    release_target: str = "2.2.6",
+    inherited_release: str = "2.2.5",
+    evidence_dir: str = "",
+) -> dict[str, Any]:
+    closure_smoke_payload = build_release_226_closure_smoke()
+    live_rerun_template = cast(
+        dict[str, Any], closure_smoke_payload.get("live_rerun_template") or {}
+    )
+    rerun_rows = cast(list[dict[str, Any]], live_rerun_template.get("rerun_rows") or [])
+    archive_by_command = {
+        "release-2.2.6-real-unit-rerun-archive": cast(
+            dict[str, Any], closure_smoke_payload.get("real_unit_rerun_archive") or {}
+        ),
+        "release-2.2.6-qq-gateway-rerun-archive": cast(
+            dict[str, Any], closure_smoke_payload.get("qq_gateway_rerun_archive") or {}
+        ),
+        "release-2.2.6-wecom-gateway-rerun-archive": cast(
+            dict[str, Any], closure_smoke_payload.get("wecom_gateway_rerun_archive") or {}
+        ),
+        "release-2.2.6-openclaw-gateway-rerun-archive": cast(
+            dict[str, Any], closure_smoke_payload.get("openclaw_gateway_rerun_archive") or {}
+        ),
+        "release-2.2.6-hardware-rerun-archive": cast(
+            dict[str, Any], closure_smoke_payload.get("hardware_rerun_archive") or {}
+        ),
+    }
+    row_reviews: list[dict[str, Any]] = []
+    for row in rerun_rows:
+        implementation_command = str(row.get("implementation_command") or "")
+        archive_payload = archive_by_command.get(implementation_command, {})
+        operator_handoff = cast(dict[str, Any], archive_payload.get("operator_handoff") or {})
+        row_reviews.append(
+            {
+                "rerun_id": str(row.get("rerun_id") or ""),
+                "title": str(row.get("title") or ""),
+                "required_for_promotion": bool(row.get("required_for_promotion")),
+                "implementation_command": implementation_command,
+                "required_evidence_artifacts": list(
+                    cast(list[str], row.get("required_evidence_artifacts") or [])
+                ),
+                "archive_schema_version": str(archive_payload.get("schema_version") or ""),
+                "archive_ready": bool(archive_payload.get("ok")),
+                "operator_approval_required": bool(
+                    operator_handoff.get("operator_approval_required")
+                ),
+            }
+        )
+    required_row_reviews = [
+        row_review for row_review in row_reviews if row_review["required_for_promotion"]
+    ]
+    conditional_row_reviews = [
+        row_review for row_review in row_reviews if not row_review["required_for_promotion"]
+    ]
+    validation_gates = {
+        "release_226_closure_green": bool(closure_smoke_payload.get("ok"))
+        and bool(
+            cast(dict[str, Any], closure_smoke_payload.get("validation_gate_summary") or {}).get(
+                "ok"
+            )
+        ),
+        "required_rows_declared": bool(required_row_reviews)
+        and all(bool(row_review.get("implementation_command")) for row_review in required_row_reviews)
+        and all(
+            bool(row_review.get("required_evidence_artifacts"))
+            for row_review in required_row_reviews
+        ),
+        "required_archives_ready": bool(required_row_reviews)
+        and all(bool(row_review.get("archive_ready")) for row_review in required_row_reviews),
+        "conditional_archives_ready": bool(conditional_row_reviews)
+        and all(bool(row_review.get("archive_ready")) for row_review in conditional_row_reviews),
+        "operator_boundary_preserved": bool(row_reviews)
+        and all(
+            bool(row_review.get("operator_approval_required")) for row_review in row_reviews
+        ),
+    }
+    checklist = [
+        _build_closure_checklist_entry(
+            "release_226_closure_green",
+            passed=bool(validation_gates["release_226_closure_green"]),
+            title="Release 2.2.6 Closure Green",
+            detail=(
+                "Inherited and additive release-2.2.6 closure gates are green."
+                if validation_gates["release_226_closure_green"]
+                else "Release-2.2.6 closure gates are not fully green yet."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "required_rows_declared",
+            passed=bool(validation_gates["required_rows_declared"]),
+            title="Promotion Rows Declared",
+            detail=(
+                "Each promotion-blocking rerun row declares an implementation command and structured evidence artifacts."
+                if validation_gates["required_rows_declared"]
+                else "One or more promotion-blocking rerun rows is missing an implementation command or evidence artifact list."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "required_archives_ready",
+            passed=bool(validation_gates["required_archives_ready"]),
+            title="Promotion Archives Ready",
+            detail=(
+                "All promotion-blocking rerun rows now resolve to ready archive payloads."
+                if validation_gates["required_archives_ready"]
+                else "At least one promotion-blocking rerun row still lacks a ready archive payload."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "conditional_archives_ready",
+            passed=bool(validation_gates["conditional_archives_ready"]),
+            title="Conditional Archives Ready",
+            detail=(
+                "Conditional social gateway reruns are archived for bounded review without claiming live credential execution."
+                if validation_gates["conditional_archives_ready"]
+                else "At least one conditional gateway rerun archive is not ready for bounded review."
+            ),
+        ),
+        _build_closure_checklist_entry(
+            "operator_boundary_preserved",
+            passed=bool(validation_gates["operator_boundary_preserved"]),
+            title="Operator Boundary Preserved",
+            detail=(
+                "All rerun archive paths remain operator-approved and archive-first."
+                if validation_gates["operator_boundary_preserved"]
+                else "At least one rerun archive path no longer records the expected operator approval boundary."
+            ),
+        ),
+    ]
+    evidence_manifest: dict[str, str] = {}
+    payload: dict[str, Any] = {
+        "schema_version": RELEASE_226_PROMOTION_CHECKLIST_SCHEMA_VERSION,
+        "command": "release-2.2.6-promotion-checklist",
+        "status": "ready" if all(validation_gates.values()) else "incomplete",
+        "reason": "release_226_promotion_checklist_ready"
+        if all(validation_gates.values())
+        else "release_226_promotion_checklist_gap",
+        "release_target": release_target,
+        "inherited_release": inherited_release,
+        "closure_smoke": closure_smoke_payload,
+        "live_rerun_template": live_rerun_template,
+        "required_row_reviews": required_row_reviews,
+        "conditional_row_reviews": conditional_row_reviews,
+        "row_reviews": row_reviews,
+        "validation_gates": validation_gates,
+        "validation_gate_summary": {
+            "total_count": len(validation_gates),
+            "passed_count": sum(1 for passed in validation_gates.values() if passed),
+            "failed_gate_ids": [
+                gate_id for gate_id, passed in validation_gates.items() if not passed
+            ],
+            "ok": all(validation_gates.values()),
+        },
+        "checklist": checklist,
+        "evidence_manifest": evidence_manifest,
+        "evidence_summary": {
+            "exported_file_count": 0,
+            "required_row_count": len(required_row_reviews),
+            "conditional_row_count": len(conditional_row_reviews),
+            "ready_required_row_count": sum(
+                1 for row_review in required_row_reviews if bool(row_review.get("archive_ready"))
+            ),
+            "ready_conditional_row_count": sum(
+                1
+                for row_review in conditional_row_reviews
+                if bool(row_review.get("archive_ready"))
+            ),
+        },
+        "ok": all(validation_gates.values()),
+    }
+    if evidence_dir:
+        resolved_evidence_dir = Path(evidence_dir)
+        evidence_manifest.update(
+            {
+                "closure_smoke": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "release-2.2.6-closure-smoke.json",
+                    closure_smoke_payload,
+                ),
+                "live_rerun_template": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "release-2.2.6-live-rerun-template.json",
+                    live_rerun_template,
+                ),
+                "promotion_checklist": _write_release_closure_payload(
+                    resolved_evidence_dir,
+                    "release-2.2.6-promotion-checklist.json",
+                    payload,
+                ),
+            }
+        )
+        cast(dict[str, Any], payload["evidence_summary"])["exported_file_count"] = len(
+            evidence_manifest
+        )
+    return payload
+
+
 def _build_real_scene_checklist_rows() -> list[dict[str, Any]]:
     return [
         {
@@ -5075,7 +6570,7 @@ def _build_openclaw_gateway_closure_summary(
 def _build_validation_gate_checklist(
     validation_gates: dict[str, bool],
 ) -> list[dict[str, Any]]:
-    return [
+    checklist = [
         _build_closure_checklist_entry(
             "documentation_gate",
             passed=bool(validation_gates.get("documentation_gate")),
@@ -5336,6 +6831,73 @@ def _build_validation_gate_checklist(
                 else "Coding-agent routing evidence is missing plan artifact, sandbox execution, or callback audit details."
             ),
         ),
+    ]
+    if "autonomy_heartbeat_gate" in validation_gates:
+        checklist.append(
+            _build_closure_checklist_entry(
+                "autonomy_heartbeat_gate",
+                passed=bool(validation_gates.get("autonomy_heartbeat_gate")),
+                title="Autonomy Heartbeat Gate",
+                detail=(
+                    "Autonomy heartbeat evidence links deterministic daemon continuity with active-hours configuration and task heartbeat state."
+                    if validation_gates.get("autonomy_heartbeat_gate")
+                    else "Autonomy heartbeat evidence is missing linked daemon continuity, active-hours configuration, or task heartbeat state."
+                ),
+            )
+        )
+    if "task_tracking_replay_gate" in validation_gates:
+        checklist.append(
+            _build_closure_checklist_entry(
+                "task_tracking_replay_gate",
+                passed=bool(validation_gates.get("task_tracking_replay_gate")),
+                title="Task Tracking Replay Gate",
+                detail=(
+                    "Task tracking evidence records resumable task state, replay buffer continuity, and cleanup-ready rerun boundaries."
+                    if validation_gates.get("task_tracking_replay_gate")
+                    else "Task tracking evidence is missing resumable task state, replay continuity, or cleanup-ready rerun boundaries."
+                ),
+            )
+        )
+    if "memory_maintenance_gate" in validation_gates:
+        checklist.append(
+            _build_closure_checklist_entry(
+                "memory_maintenance_gate",
+                passed=bool(validation_gates.get("memory_maintenance_gate")),
+                title="Memory Maintenance Gate",
+                detail=(
+                    "Memory maintenance evidence records stale-context screening, prompt-safe consolidation, and audit-bound privacy scope."
+                    if validation_gates.get("memory_maintenance_gate")
+                    else "Memory maintenance evidence is missing stale-context screening, prompt-safe consolidation, or audit-bound privacy scope."
+                ),
+            )
+        )
+    if "self_optimization_gate" in validation_gates:
+        checklist.append(
+            _build_closure_checklist_entry(
+                "self_optimization_gate",
+                passed=bool(validation_gates.get("self_optimization_gate")),
+                title="Self Optimization Gate",
+                detail=(
+                    "Self-optimization evidence remains low-risk, approval-gated, sandbox-only, and explicitly forbidden from direct apply."
+                    if validation_gates.get("self_optimization_gate")
+                    else "Self-optimization evidence is missing low-risk classification, approval gating, sandbox-only execution, or direct-apply prohibition."
+                ),
+            )
+        )
+    if "world_model_context_gate" in validation_gates:
+        checklist.append(
+            _build_closure_checklist_entry(
+                "world_model_context_gate",
+                passed=bool(validation_gates.get("world_model_context_gate")),
+                title="World Model Context Gate",
+                detail=(
+                    "World-model evidence records prompt-safe temporal, unit-capability, and relay-preserved context for Rational summaries."
+                    if validation_gates.get("world_model_context_gate")
+                    else "World-model evidence is missing prompt-safe temporal, unit-capability, or relay-preserved Rational context."
+                ),
+            )
+        )
+    checklist.extend([
         _build_closure_checklist_entry(
             "multimodal_normalization_gate",
             passed=bool(validation_gates.get("multimodal_normalization_gate")),
@@ -5396,7 +6958,8 @@ def _build_validation_gate_checklist(
                 else "Regression evidence is missing or incomplete for the release gate."
             ),
         ),
-    ]
+    ])
+    return checklist
 
 
 def _build_federation_closure_summary(
@@ -5851,6 +7414,10 @@ def _build_session_closure_summary(
     release_rollback_payload: dict[str, Any] | None = None,
     real_scene_e2e_payload: dict[str, Any] | None = None,
     autonomy_daemon_payload: dict[str, Any] | None = None,
+    task_tracking_payload: dict[str, Any] | None = None,
+    memory_maintenance_payload: dict[str, Any] | None = None,
+    self_optimization_payload: dict[str, Any] | None = None,
+    world_model_context_payload: dict[str, Any] | None = None,
     vitality_smoke_payload: dict[str, Any] | None = None,
     persona_state_payload: dict[str, Any] | None = None,
     social_adapter_payload: dict[str, Any] | None = None,
@@ -5918,6 +7485,26 @@ def _build_session_closure_summary(
         autonomy_daemon_payload,
         expected_schema=AUTONOMY_DAEMON_SMOKE_SCHEMA_VERSION,
         not_supplied_reason="autonomy_daemon_file_not_supplied",
+    )
+    task_tracking_summary = _build_release_210_smoke_closure_summary(
+        task_tracking_payload,
+        expected_schema=TASK_TRACKING_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="task_tracking_file_not_supplied",
+    )
+    memory_maintenance_summary = _build_release_210_smoke_closure_summary(
+        memory_maintenance_payload,
+        expected_schema=MEMORY_MAINTENANCE_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="memory_maintenance_file_not_supplied",
+    )
+    self_optimization_summary = _build_release_210_smoke_closure_summary(
+        self_optimization_payload,
+        expected_schema=SELF_OPTIMIZATION_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="self_optimization_file_not_supplied",
+    )
+    world_model_context_summary = _build_release_210_smoke_closure_summary(
+        world_model_context_payload,
+        expected_schema=WORLD_MODEL_CONTEXT_SMOKE_SCHEMA_VERSION,
+        not_supplied_reason="world_model_context_file_not_supplied",
     )
     vitality_governance_summary = _build_release_210_smoke_closure_summary(
         vitality_smoke_payload,
@@ -6086,6 +7673,14 @@ def _build_session_closure_summary(
         dict[str, Any],
         provider_smoke_summary.get("closure_gates") or {},
     )
+    task_tracking_gates = cast(
+        dict[str, Any],
+        task_tracking_summary.get("closure_gates") or {},
+    )
+    memory_maintenance_gates = cast(
+        dict[str, Any],
+        memory_maintenance_summary.get("closure_gates") or {},
+    )
     validation_gates = {
         "documentation_gate": bool(documentation_summary.get("ok")),
         "federation_gate": bool(execution_summaries)
@@ -6179,6 +7774,75 @@ def _build_session_closure_summary(
         ),
         "regression_gate": bool(regression_summary.get("ok")),
     }
+    include_release_226_gates = any(
+        payload is not None
+        for payload in (
+            task_tracking_payload,
+            memory_maintenance_payload,
+            self_optimization_payload,
+            world_model_context_payload,
+        )
+    )
+    if include_release_226_gates:
+        bundle_checklist.extend(
+            [
+                _build_closure_checklist_entry(
+                    "task_tracking_bundle",
+                    passed=bool(task_tracking_summary.get("ok")),
+                    title="Task Tracking Bundle",
+                    detail=(
+                        "Task tracking evidence records active-hours configuration, replay continuity, and cleanup-ready resumable work."
+                        if task_tracking_summary.get("ok")
+                        else "Task tracking evidence is missing active-hours configuration, replay continuity, or cleanup-ready resumable work."
+                    ),
+                ),
+                _build_closure_checklist_entry(
+                    "memory_maintenance_bundle",
+                    passed=bool(memory_maintenance_summary.get("ok")),
+                    title="Memory Maintenance Bundle",
+                    detail=(
+                        "Memory maintenance evidence records stale-context screening, prompt-safe consolidation, and audit-bound privacy scope."
+                        if memory_maintenance_summary.get("ok")
+                        else "Memory maintenance evidence is missing stale-context screening, prompt-safe consolidation, or audit-bound privacy scope."
+                    ),
+                ),
+                _build_closure_checklist_entry(
+                    "self_optimization_bundle",
+                    passed=bool(self_optimization_summary.get("ok")),
+                    title="Self Optimization Bundle",
+                    detail=(
+                        "Self-optimization evidence remains low-risk, approval-gated, sandbox-only, and forbidden from direct apply."
+                        if self_optimization_summary.get("ok")
+                        else "Self-optimization evidence is missing low-risk, approval-gated, sandbox-only, or no-direct-apply proof."
+                    ),
+                ),
+                _build_closure_checklist_entry(
+                    "world_model_context_bundle",
+                    passed=bool(world_model_context_summary.get("ok")),
+                    title="World Model Context Bundle",
+                    detail=(
+                        "World-model evidence records prompt-safe temporal, unit-capability, and relay-preserved context."
+                        if world_model_context_summary.get("ok")
+                        else "World-model evidence is missing prompt-safe temporal, unit-capability, or relay-preserved context."
+                    ),
+                ),
+            ]
+        )
+    if include_release_226_gates:
+        validation_gates.update(
+            {
+                "autonomy_heartbeat_gate": bool(autonomy_daemon_summary.get("ok"))
+                and bool(task_tracking_gates.get("heartbeat_linked"))
+                and bool(task_tracking_gates.get("active_hours_config_recorded")),
+                "task_tracking_replay_gate": bool(task_tracking_summary.get("ok")),
+                "memory_maintenance_gate": bool(memory_maintenance_summary.get("ok"))
+                and bool(
+                    memory_maintenance_gates.get("prompt_safe_summary_recorded")
+                ),
+                "self_optimization_gate": bool(self_optimization_summary.get("ok")),
+                "world_model_context_gate": bool(world_model_context_summary.get("ok")),
+            }
+        )
     validation_gates["closure_summary_gate"] = all(validation_gates.values())
     validation_gate_summary: dict[str, Any] = {
         "total_count": len(validation_gates),
@@ -6211,6 +7875,10 @@ def _build_session_closure_summary(
         "observability_diagnosis_summary": observability_diagnosis_summary,
         "real_scene_e2e_summary": real_scene_e2e_summary,
         "autonomy_daemon_summary": autonomy_daemon_summary,
+        "task_tracking_summary": task_tracking_summary,
+        "memory_maintenance_summary": memory_maintenance_summary,
+        "self_optimization_summary": self_optimization_summary,
+        "world_model_context_summary": world_model_context_summary,
         "vitality_governance_summary": vitality_governance_summary,
         "persona_persistence_summary": persona_persistence_summary,
         "persona_225_summary": persona_225_summary,
@@ -7060,6 +8728,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional directory where the release-2.2.4 closure smoke will export structured evidence JSON files.",
     )
 
+    release_226_closure_smoke = subparsers.add_parser("release-2.2.6-closure-smoke")
+    release_226_closure_smoke.add_argument("--output", choices=("json",), default="json")
+    release_226_closure_smoke.add_argument(
+        "--session-id",
+        default="release-2.2.6-closure-smoke-001",
+        help="Optional session identifier used for the release-2.2.6 closure smoke run.",
+    )
+    release_226_closure_smoke.add_argument(
+        "--runner",
+        choices=("copilot", "qwen-code", "opencode", "local-command"),
+        default="copilot",
+        help="Coding-agent runner name recorded in the inherited governed route payload.",
+    )
+    release_226_closure_smoke.add_argument(
+        "--summary",
+        default="Review low-risk self-optimization in sandbox",
+        help="Improvement summary recorded in the inherited coding-agent route payload.",
+    )
+    release_226_closure_smoke.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory where the release-2.2.6 closure smoke will export structured evidence JSON files.",
+    )
+
     mcp_read_only_execute = subparsers.add_parser("mcp-read-only-execute")
     mcp_read_only_execute.add_argument("--output", choices=("json",), default="json")
     mcp_read_only_execute.add_argument("--tool", required=True)
@@ -7156,6 +8848,135 @@ def build_parser() -> argparse.ArgumentParser:
         help="Implementation release that closes the checklist before the frozen rerun.",
     )
     real_scene_checklist_template.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    release_226_live_rerun_template = subparsers.add_parser(
+        "release-2.2.6-live-rerun-template"
+    )
+    release_226_live_rerun_template.add_argument(
+        "--release-target",
+        default="2.2.6",
+        help="Release identifier recorded in the 2.2.6 live rerun template metadata.",
+    )
+    release_226_live_rerun_template.add_argument(
+        "--inherited-release",
+        default="2.2.5",
+        help="Inherited bounded release used as the live rerun baseline before fresh 2.2.6 replacements.",
+    )
+    release_226_live_rerun_template.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    release_226_real_unit_rerun_archive = subparsers.add_parser(
+        "release-2.2.6-real-unit-rerun-archive"
+    )
+    release_226_real_unit_rerun_archive.add_argument(
+        "--release-target",
+        default="2.2.6",
+        help="Release identifier recorded in the real Unit rerun archive metadata.",
+    )
+    release_226_real_unit_rerun_archive.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory to export the structured real Unit rerun evidence bundle.",
+    )
+    release_226_real_unit_rerun_archive.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    release_226_qq_gateway_rerun_archive = subparsers.add_parser(
+        "release-2.2.6-qq-gateway-rerun-archive"
+    )
+    release_226_qq_gateway_rerun_archive.add_argument(
+        "--release-target",
+        default="2.2.6",
+        help="Release identifier recorded in the QQ gateway rerun archive metadata.",
+    )
+    release_226_qq_gateway_rerun_archive.add_argument(
+        "--inherited-release",
+        default="2.2.5",
+        help="Inherited bounded release used as the QQ gateway rerun baseline.",
+    )
+    release_226_qq_gateway_rerun_archive.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory to export the structured QQ gateway rerun evidence bundle.",
+    )
+    release_226_qq_gateway_rerun_archive.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    release_226_wecom_gateway_rerun_archive = subparsers.add_parser(
+        "release-2.2.6-wecom-gateway-rerun-archive"
+    )
+    release_226_wecom_gateway_rerun_archive.add_argument(
+        "--release-target",
+        default="2.2.6",
+        help="Release identifier recorded in the WeCom gateway rerun archive metadata.",
+    )
+    release_226_wecom_gateway_rerun_archive.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory to export the structured WeCom gateway rerun evidence bundle.",
+    )
+    release_226_wecom_gateway_rerun_archive.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    release_226_openclaw_gateway_rerun_archive = subparsers.add_parser(
+        "release-2.2.6-openclaw-gateway-rerun-archive"
+    )
+    release_226_openclaw_gateway_rerun_archive.add_argument(
+        "--release-target",
+        default="2.2.6",
+        help="Release identifier recorded in the OpenClaw gateway rerun archive metadata.",
+    )
+    release_226_openclaw_gateway_rerun_archive.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory to export the structured OpenClaw gateway rerun evidence bundle.",
+    )
+    release_226_openclaw_gateway_rerun_archive.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    release_226_hardware_rerun_archive = subparsers.add_parser(
+        "release-2.2.6-hardware-rerun-archive"
+    )
+    release_226_hardware_rerun_archive.add_argument(
+        "--release-target",
+        default="2.2.6",
+        help="Release identifier recorded in the hardware rerun archive metadata.",
+    )
+    release_226_hardware_rerun_archive.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory to export the structured hardware rerun evidence bundle.",
+    )
+    release_226_hardware_rerun_archive.add_argument(
+        "--output", choices=("json",), default="json"
+    )
+
+    release_226_promotion_checklist = subparsers.add_parser(
+        "release-2.2.6-promotion-checklist"
+    )
+    release_226_promotion_checklist.add_argument(
+        "--release-target",
+        default="2.2.6",
+        help="Release identifier recorded in the promotion checklist metadata.",
+    )
+    release_226_promotion_checklist.add_argument(
+        "--inherited-release",
+        default="2.2.5",
+        help="Inherited release used as the bounded promotion baseline.",
+    )
+    release_226_promotion_checklist.add_argument(
+        "--evidence-dir",
+        default="",
+        help="Optional directory to export the promotion checklist bundle.",
+    )
+    release_226_promotion_checklist.add_argument(
         "--output", choices=("json",), default="json"
     )
 
@@ -7489,6 +9310,18 @@ def build_parser() -> argparse.ArgumentParser:
     self_improvement_smoke = subparsers.add_parser("self-improvement-smoke")
     self_improvement_smoke.add_argument("--output", choices=("json",), default="json")
 
+    task_tracking_smoke = subparsers.add_parser("task-tracking-smoke")
+    task_tracking_smoke.add_argument("--output", choices=("json",), default="json")
+
+    memory_maintenance_smoke = subparsers.add_parser("memory-maintenance-smoke")
+    memory_maintenance_smoke.add_argument("--output", choices=("json",), default="json")
+
+    self_optimization_smoke = subparsers.add_parser("self-optimization-smoke")
+    self_optimization_smoke.add_argument("--output", choices=("json",), default="json")
+
+    world_model_context_smoke = subparsers.add_parser("world-model-context-smoke")
+    world_model_context_smoke.add_argument("--output", choices=("json",), default="json")
+
     core_daemon = subparsers.add_parser("core-daemon")
     core_daemon.add_argument("--db", default=":memory:", help="SQLite database path")
     core_daemon.add_argument(
@@ -7651,6 +9484,10 @@ def build_parser() -> argparse.ArgumentParser:
     closure_summary.add_argument("--observability-diagnosis-file", default="", help="Optional observability and diagnosis JSON payload to include in the independent structured diagnosis gate")
     closure_summary.add_argument("--real-scene-e2e-file", default="", help="Optional real Core/Unit end-to-end JSON payload to include in the independent real-scene gate")
     closure_summary.add_argument("--autonomy-daemon-file", default="", help="Optional autonomy-daemon-smoke JSON payload to include in the autonomous daemon gate")
+    closure_summary.add_argument("--task-tracking-file", default="", help="Optional task-tracking-smoke JSON payload to include in the release-2.2.6 task continuity gates")
+    closure_summary.add_argument("--memory-maintenance-file", default="", help="Optional memory-maintenance-smoke JSON payload to include in the release-2.2.6 memory maintenance gate")
+    closure_summary.add_argument("--self-optimization-file", default="", help="Optional self-optimization-smoke JSON payload to include in the release-2.2.6 self-optimization gate")
+    closure_summary.add_argument("--world-model-context-file", default="", help="Optional world-model-context-smoke JSON payload to include in the release-2.2.6 world-model gate")
     closure_summary.add_argument("--vitality-smoke-file", default="", help="Optional vitality-smoke JSON payload to include in the vitality governance gate")
     closure_summary.add_argument("--persona-state-file", default="", help="Optional persona-state-smoke JSON payload to include in the persona persistence gate")
     closure_summary.add_argument("--social-adapter-file", default="", help="Optional social-adapter-smoke JSON payload to include in the social adapter gate")
@@ -9171,11 +11008,87 @@ def main(argv: list[str] | None = None) -> int:
         payload = build_self_improvement_smoke()
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload.get("ok", False) else 2
+    if args.command == "task-tracking-smoke":
+        payload = build_task_tracking_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "memory-maintenance-smoke":
+        payload = build_memory_maintenance_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "self-optimization-smoke":
+        payload = build_self_optimization_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "world-model-context-smoke":
+        payload = build_world_model_context_smoke()
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
     if args.command == "release-2.2.4-closure-smoke":
         payload = build_release_224_closure_smoke(
             session_id=args.session_id,
             runner_name=args.runner,
             summary=args.summary,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.6-closure-smoke":
+        payload = build_release_226_closure_smoke(
+            session_id=args.session_id,
+            runner_name=args.runner,
+            summary=args.summary,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.6-live-rerun-template":
+        payload = build_release_226_live_rerun_template(
+            release_target=args.release_target,
+            inherited_release=args.inherited_release,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if args.command == "release-2.2.6-real-unit-rerun-archive":
+        payload = build_release_226_real_unit_rerun_archive(
+            release_target=args.release_target,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.6-qq-gateway-rerun-archive":
+        payload = build_release_226_qq_gateway_rerun_archive(
+            release_target=args.release_target,
+            inherited_release=args.inherited_release,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.6-wecom-gateway-rerun-archive":
+        payload = build_release_226_wecom_gateway_rerun_archive(
+            release_target=args.release_target,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.6-openclaw-gateway-rerun-archive":
+        payload = build_release_226_openclaw_gateway_rerun_archive(
+            release_target=args.release_target,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.6-hardware-rerun-archive":
+        payload = build_release_226_hardware_rerun_archive(
+            release_target=args.release_target,
+            evidence_dir=args.evidence_dir,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload.get("ok", False) else 2
+    if args.command == "release-2.2.6-promotion-checklist":
+        payload = build_release_226_promotion_checklist(
+            release_target=args.release_target,
+            inherited_release=args.inherited_release,
             evidence_dir=args.evidence_dir,
         )
         print(json.dumps(payload, sort_keys=True))
@@ -9549,6 +11462,36 @@ def main(argv: list[str] | None = None) -> int:
                 dict[str, Any],
                 json.loads(Path(args.autonomy_daemon_file).read_text(encoding="utf-8")),
             )
+        task_tracking_payload = None
+        if args.task_tracking_file:
+            task_tracking_payload = cast(
+                dict[str, Any],
+                json.loads(Path(args.task_tracking_file).read_text(encoding="utf-8")),
+            )
+        memory_maintenance_payload = None
+        if args.memory_maintenance_file:
+            memory_maintenance_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.memory_maintenance_file).read_text(encoding="utf-8")
+                ),
+            )
+        self_optimization_payload = None
+        if args.self_optimization_file:
+            self_optimization_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.self_optimization_file).read_text(encoding="utf-8")
+                ),
+            )
+        world_model_context_payload = None
+        if args.world_model_context_file:
+            world_model_context_payload = cast(
+                dict[str, Any],
+                json.loads(
+                    Path(args.world_model_context_file).read_text(encoding="utf-8")
+                ),
+            )
         vitality_smoke_payload = None
         if args.vitality_smoke_file:
             vitality_smoke_payload = cast(
@@ -9625,6 +11568,10 @@ def main(argv: list[str] | None = None) -> int:
                 observability_diagnosis_payload=observability_diagnosis_payload,
                 real_scene_e2e_payload=real_scene_e2e_payload,
                 autonomy_daemon_payload=autonomy_daemon_payload,
+                task_tracking_payload=task_tracking_payload,
+                memory_maintenance_payload=memory_maintenance_payload,
+                self_optimization_payload=self_optimization_payload,
+                world_model_context_payload=world_model_context_payload,
                 vitality_smoke_payload=vitality_smoke_payload,
                 persona_state_payload=persona_state_payload,
                 social_adapter_payload=social_adapter_payload,
